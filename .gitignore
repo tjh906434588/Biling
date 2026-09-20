@@ -24,6 +24,7 @@ health.txt
 kill_check.txt
 port_check.txt
 _tian_tmp.json
+backend/seed_outline_preview.py
 
 # 编辑器 / 系统
 .idea/

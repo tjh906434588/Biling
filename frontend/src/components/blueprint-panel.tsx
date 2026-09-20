@@ -543,7 +543,7 @@ export default function BlueprintPanel({ novelId }: Props) {
         onCancel={() => setDelTarget(null)}
       />
 
-      {/* 切换生效中风险确认：仅当该书已有大纲数据时弹出（新增未生效蓝图需手动切换） */}
+      {/* 切换生效中风险确认：所有未生效蓝图激活前一律弹风险确认框（新增蓝图不自动生效） */}
       <ConfirmDialog
         open={activateTarget !== null}
         title={activateTarget ? `将 v${activateTarget.version} 设为生效中？` : "设为生效中？"}
