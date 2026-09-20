@@ -197,8 +197,8 @@ export default function BlueprintPanel({ novelId }: Props) {
       /* 忽略存储失败 */
     }
     if (importName) {
-      // 导入模式：以文档全文为素材，落库后由后端自动把文档设定合并进设定库（同名覆盖/无则新增）、
-      // 覆盖全局文风、同步书名（继承设定库为必走流程）
+      // 导入模式：以文档全文为素材生成蓝图；设定/文风不会在生成时自动注入，
+      // 需把该版本「设为生效中」（确认后）才触发后端抽取并注入设定库 + 全局文风
       startBlueprintRun(novelId, inputText, inputText, importName);
     } else {
       startBlueprintRun(novelId, inputText);
@@ -269,8 +269,11 @@ export default function BlueprintPanel({ novelId }: Props) {
     if (activating) return;
     setActivating(true);
     try {
-      await activateBlueprint(novelId, b.id);
+      const res = await activateBlueprint(novelId, b.id);
       message.success(`v${b.version} 已设为生效中，设定与文风已跟随切换。`);
+      if (res.extract_warning) {
+        message.warning(res.extract_warning);
+      }
       await load();
     } catch (e) {
       message.error((e as Error).message);
@@ -392,7 +395,7 @@ export default function BlueprintPanel({ novelId }: Props) {
                     onClick={() => handleActivateClick(selected)}
                     disabled={activating}
                   >
-                    {activating ? "激活中…" : "设为生效中"}
+                    {activating ? "激活中·注入设定与文风中…" : "设为生效中"}
                   </button>
                 )}
                 {selected.status !== "active" && (
@@ -547,7 +550,7 @@ export default function BlueprintPanel({ novelId }: Props) {
       <ConfirmDialog
         open={activateTarget !== null}
         title={activateTarget ? `将 v${activateTarget.version} 设为生效中？` : "设为生效中？"}
-        message={`切换生效蓝图后，对应的设定与文风会同步切换：当前生效蓝图导入的内容将被隐藏（不会删除，可随时切回）、改用 ${activateTarget ? `v${activateTarget.version}` : "新蓝图"} 导入的内容。\n\n若后续的正文、大纲已基于旧蓝图生成，切换后可能导致设定不一致、影响写作连贯性。已生成的大纲和文章不会被修改。\n\n确定切换吗？`}
+        message={`确认后将把 v${activateTarget ? activateTarget.version : ""} 设为生效中：该版本（若为导入生成）会同步抽取设定与文风并注入设定库、全局文风，注入完成按钮的「激活中」才会结束（期间请勿离开页面）；当前生效蓝图导入的内容将被隐藏（不会删除，可随时切回）、改用新蓝图导入的内容。\n\n若后续的正文、大纲已基于旧蓝图生成，切换后可能导致设定不一致、影响写作连贯性。已生成的大纲和文章不会被修改。\n\n确定切换吗？`}
         confirmText="确定切换"
         tone="primary"
         onConfirm={confirmActivate}

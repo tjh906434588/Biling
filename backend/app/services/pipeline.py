@@ -273,13 +273,8 @@ async def _stream_single(
             yield _event("stored", {"action": "dry_run", "data": parsed.model_dump(mode="json")})
         else:
             stored = _persist(db, agent_name, novel_id, params, parsed)
-            # 导入模式：蓝图落库后自动同步——设定按版本合并进设定库 + 文风按版本存入 blueprint_styles。
-            # 这两步各自还要再调 LLM（setting_extractor / style_extractor），若同步执行，蓝图虽已落库、
-            # agent_tasks 却仍保持 running 十几秒到几十秒，前端会出现"蓝图已可见、任务仍显示生成中、
-            # 完成提示迟迟不来"；改为 fire-and-forget 后台任务（失败不阻断蓝图落库）。
-            if agent_name == "blueprint_architect" and (params.get("import_source") or "").strip():
-                bp_id = stored.get("blueprint_id") if isinstance(stored, dict) else None
-                asyncio.create_task(_sync_import_after_blueprint(novel_id, params, bp_id))
+            # 蓝图落库后不再自动抽取设定/文风：设定抽取（setting_extractor）与文风提炼（style_extractor）
+            # 改为「设为生效中」时触发（见 blueprints.activate_blueprint），新增/生成蓝图一律不注入。
             yield _event("stored", stored)
     else:
         _alert_schema_error(db, agent_name, novel_id, error=last_error)
@@ -317,42 +312,19 @@ def _alert_schema_error(
     db.commit()
 
 
-async def _sync_import_after_blueprint(novel_id: uuid.UUID, params: dict, blueprint_id: Optional[str]) -> None:
-    """蓝图导入落库后的设定合并 + 文风同步：后台异步执行，不阻塞"任务完成"信号。
-
-    - 蓝图已先落库（前端立即可见），此处的设定抽取 / 风格提炼各自还要再调一次 LLM，
-      若同步执行会让 agent_tasks 保持 running 十几秒到几十秒，前端"蓝图已出现但仍提示生成中"。
-    - 使用独立 SessionLocal，避免与请求主流程共享会话造成并发访问问题。
-    - 失败不阻断蓝图落库（内部各步已有 try/except，这里仅兜底记录）。
-    - 结果按蓝图版本存储（blueprint_id），不再覆盖/清空其他版本的设定与文风。
-    """
-    from app.db.session import SessionLocal
-
-    bp_uid = uuid.UUID(blueprint_id) if blueprint_id else None
-    if bp_uid is None:
-        return
-    sync_db = SessionLocal()
-    try:
-        await _extract_settings_from_import(sync_db, novel_id, params, bp_uid)
-        await _apply_style_from_import(sync_db, novel_id, params, bp_uid)
-    except Exception:
-        logger.exception("agent=blueprint_architect 导入后设定/文风同步失败（不阻断蓝图落库）")
-    finally:
-        sync_db.close()
-
-
 async def _extract_settings_from_import(
     db: Session, novel_id: uuid.UUID, params: dict, blueprint_id: uuid.UUID
 ) -> dict:
-    """导入模式自动同步设定库：把导入文档交给「设定抽取师」，将结果写入设定库。
+    """把导入文档交给「设定抽取师」，将结果写入设定库（按蓝图版本存储）。
 
+    触发时机：蓝图被「设为生效中」时（blueprints.activate_blueprint），新增/生成蓝图不触发。
     写入规则（作者约定，蓝图导入 = 按版本存储）：
     - 蓝图导入的设定全部标记 source="blueprint" 且 blueprint_id=本版本；
     - 各版本设定互不覆盖、独立保留，激活哪个蓝图前端就显示哪个版本的设定；
       切回旧版本时直接恢复显示，无需重新抽取；
     - 本次未解析出任何有效条目时不动数据（避免误写空），仅计 skipped。
 
-    失败不阻断蓝图落库，返回 {action, created, removed, skipped} 供前端提示。
+    失败不阻断激活，返回 {action, created, removed, skipped} 供前端提示。
     """
     from app.agents.registry import get_agent
 
@@ -497,11 +469,12 @@ def _merge_settings_from_import(
 async def _apply_style_from_import(
     db: Session, novel_id: uuid.UUID, params: dict, blueprint_id: uuid.UUID
 ) -> dict:
-    """导入模式自动同步全局文风：提炼新文档中的风格要点，按蓝图版本存入 blueprint_styles。
+    """提炼导入文档中的风格要点，按蓝图版本存入 blueprint_styles。
 
+    触发时机：蓝图被「设为生效中」时（blueprints.activate_blueprint），新增/生成蓝图不触发。
     作者约定：风格直接写入、不需要确认。该蓝图处于生效中时同时刷新 novel.style_directive；
     未生效的版本仅按版本存好，切回时直接恢复。文档中无风格类内容时不动（applied=False）；
-    失败不阻断蓝图落库，返回 {action, applied, style_directive} 供前端提示。
+    失败不阻断激活，返回 {action, applied, style_directive} 供前端提示。
     """
     from app.agents.registry import get_agent
     from app.db.models import Blueprint, BlueprintStyle
@@ -1124,7 +1097,7 @@ def _persist_blueprint(
       · 激活时才把该蓝图内容注入其他功能页面（文风同步、设定按版本展示、写作/大纲读 active 蓝图），
         新增/生成蓝图不会自动注入。
     - 导入模式：把导入文档全文 + 文件名一并存入该版本（source_doc/doc_name），
-      供「导入后自动校验比对」与溯源使用；设定/文风按版本后台抽取，激活后随蓝图一起生效。
+      供「导入后自动校验比对」与溯源使用；设定/文风在「设为生效中」时按版本抽取，激活后随蓝图一起生效。
     """
     from app.db.models import Blueprint
 

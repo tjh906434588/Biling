@@ -17,6 +17,8 @@ class BlueprintRead(BaseModel):
     status: str  # active（生效中）| inactive（未生效）
     # 导入模式生成时关联的文档名（非导入生成则为 null）；文档全文在 source_doc，体积大不回传列表
     doc_name: Optional[str] = None
+    # 激活时设定/文风抽取未成功的提示（仅 activate 接口可能携带，其余接口恒为 null）
+    extract_warning: Optional[str] = None
     created_at: datetime
 
 

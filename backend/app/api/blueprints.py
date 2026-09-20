@@ -55,13 +55,19 @@ def get_blueprint(novel_id: uuid.UUID, blueprint_id: uuid.UUID, db: Session = De
 
 
 @router.post("/{novel_id}/blueprints/{blueprint_id}/activate", response_model=BlueprintRead)
-def activate_blueprint(novel_id: uuid.UUID, blueprint_id: uuid.UUID, db: Session = Depends(get_db)):
+async def activate_blueprint(novel_id: uuid.UUID, blueprint_id: uuid.UUID, db: Session = Depends(get_db)):
     """激活蓝图：旧 active 置 inactive，本蓝图置 active（全书唯一 active）。
 
+    生效即注入：若该版本为「导入模式」（有 source_doc）且尚未抽取过设定/文风，
+    则在激活请求内同步触发 setting_extractor + style_extractor（各还要调一次 LLM，
+    激活按钮保持「激活中…」直到完成）——保证「设为生效中」成功即意味着设定与文风已注入；
+    抽取失败不阻断激活（蓝图已生效），通过 extract_warning 字段提示前端。
+    已抽取过的版本（切回/再次激活）直接恢复对应版本的设定与文风，不重复抽取。
     同时把全局文风 style_directive 同步为该蓝图的文风（无则清空），
     设定库的"切换"由前端按生效蓝图过滤展示。
     """
-    from app.services.pipeline import sync_active_blueprint_style
+    from app.db.models import BlueprintStyle, Setting
+    from app.services.pipeline import _apply_style_from_import, _extract_settings_from_import, sync_active_blueprint_style
 
     bp = _get_blueprint(novel_id, blueprint_id, db)
     if bp.status == "active":
@@ -75,10 +81,51 @@ def activate_blueprint(novel_id: uuid.UUID, blueprint_id: uuid.UUID, db: Session
     )
     bp.status = "active"
     db.commit()
+
+    # 生效后注入：导入模式且该版本尚未抽取过，则同步等待抽取完成（抽取内部已兜底异常，不阻断激活）
+    warning = None
+    source_doc = (bp.source_doc or "").strip()
+    if source_doc:
+        missing = []
+        has_settings = db.execute(
+            select(Setting.id).where(
+                Setting.novel_id == novel_id,
+                Setting.blueprint_id == blueprint_id,
+                Setting.deleted_at.is_(None),
+            ).limit(1)
+        ).scalar_one_or_none() is not None
+        if not has_settings:
+            await _extract_settings_from_import(
+                db, novel_id, {"import_source": source_doc, "doc_name": bp.doc_name}, blueprint_id
+            )
+            # 抽取失败（无 AI/超时/没解析出条目）时设定库仍无该版本条目，需提示
+            if db.execute(
+                select(Setting.id).where(
+                    Setting.novel_id == novel_id,
+                    Setting.blueprint_id == blueprint_id,
+                    Setting.deleted_at.is_(None),
+                ).limit(1)
+            ).scalar_one_or_none() is None:
+                missing.append("设定")
+        has_style = db.execute(
+            select(BlueprintStyle.id).where(BlueprintStyle.blueprint_id == blueprint_id).limit(1)
+        ).scalar_one_or_none() is not None
+        if not has_style:
+            style_result = await _apply_style_from_import(db, novel_id, {"import_source": source_doc}, blueprint_id)
+            if style_result.get("action") == "error":
+                missing.append("文风")
+        if missing:
+            warning = (
+                f"蓝图已生效，但{'、'.join(missing)}抽取未成功（可能未配置 AI 模型）。"
+                "可在设定/文风页手动补充，或重新激活该蓝图触发重试。"
+            )
     # 全局文风跟随生效蓝图：有该蓝图提炼的文风就用它，否则清空（手动文风不受影响）
     sync_active_blueprint_style(db, novel_id, blueprint_id)
     db.refresh(bp)
-    return bp
+    data = BlueprintRead.model_validate(bp)
+    if warning:
+        data.extract_warning = warning
+    return data
 
 
 @router.post("/{novel_id}/blueprints/import")

@@ -361,6 +361,8 @@ export interface Blueprint {
   status: "active" | "inactive";
   /** 该版本来自的导入文档名（非导入生成则为 null），用于标注可做校验比对 */
   doc_name?: string | null;
+  /** 激活时设定/文风抽取未成功的提示（仅激活接口可能返回，其余接口恒为空） */
+  extract_warning?: string | null;
   created_at: string;
 }
 
