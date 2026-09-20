@@ -1,0 +1,656 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   笔灵 Biling · 设计系统「书房」
+   --------------------------------------------------------------------------
+   设计原则：让文字成为主角，让界面成为背景。
+
+   1. 低饱和低对比  宣纸米白打底（不用纯白）；深色模式用暖深灰（不用纯黑）
+   2. 留白充足      靠留白分组，而不是靠边框和阴影
+   3. 弱化 UI       边框是暖灰发丝线，按钮去掉厚重投影
+   4. 书卷气        标题与阅读正文用宋体系衬线，行距 1.8–2.0
+   5. 传统色点缀    朱砂（印章/强调）· 靛青（信息）· 竹青（成功）· 赭石（提醒）
+
+   实现策略：项目已有 10 个功能面板（约 3000 行）统一使用 Tailwind 的 zinc 灰阶。
+   此处把 zinc 色阶整体重映射为「墨—纸」暖色阶，并同步把 green/red/blue/amber
+   映射为竹青/朱砂/靛青/赭石，使全部面板自动获得统一气质，无需逐文件改写。
+   后续继续用 Tailwind 原生写法即可，新代码也可以直接使用下面注册的语义色。
+   ========================================================================== */
+
+:root {
+  /* —— 纸 —— */
+  --paper: #f6f1e6; /* 页面底色：宣纸 */
+  --surface: #fcfaf4; /* 卡片面：略亮的纸面 */
+  --surface-sunken: #f1ebdd; /* 下沉面：输入框/代码块 */
+
+  /* —— 墨（zinc 色阶重映射：浅 → 深）—— */
+  --zinc-50: #faf7f0;
+  --zinc-100: #f2ebdd;
+  --zinc-200: #e6ddcb;
+  --zinc-300: #d4c8b2;
+  --zinc-400: #b0a288;
+  --zinc-500: #75674f;
+  --zinc-600: #5c5142;
+  --zinc-700: #4a4136;
+  --zinc-800: #322b22;
+  --zinc-900: #241e17;
+  --zinc-950: #17130e;
+
+  /* —— 传统色（点缀，克制使用）—— */
+  --seal: #a8382a; /* 朱砂 */
+  --seal-soft: #f3e2dd;
+  --dai: #35507a; /* 靛青 */
+  --jade: #4a7050; /* 竹青 */
+  --ochre: #a06e22; /* 赭石 */
+  --gold: #b08a4a; /* 淡金（分隔线高光）*/
+
+  /* —— 语义色：竹青 —— */
+  --green-50: #eef3ec;
+  --green-100: #e4ede2;
+  --green-200: #c8dbc7;
+  --green-300: #a9c4a8;
+  --green-400: #7fa47e;
+  --green-500: #5d8a5f;
+  --green-600: #487049;
+  --green-700: #3a5c3c;
+  --green-800: #2e4a30;
+  --green-900: #223726;
+  --green-950: #16251a;
+
+  /* —— 语义色：朱砂 —— */
+  --red-50: #fbf0ed;
+  --red-100: #f7e3de;
+  --red-200: #ebc5bb;
+  --red-300: #dda493;
+  --red-400: #c77a63;
+  --red-500: #b55440;
+  --red-600: #a33d2a;
+  --red-700: #8a3122;
+  --red-800: #6f2a1e;
+  --red-900: #572218;
+  --red-950: #35130d;
+
+  /* —— 语义色：靛青 —— */
+  --blue-50: #eef2f8;
+  --blue-100: #e4ebf4;
+  --blue-200: #c6d5e8;
+  --blue-300: #a3bada;
+  --blue-400: #7b98c2;
+  --blue-500: #587aab;
+  --blue-600: #43628f;
+  --blue-700: #354e73;
+  --blue-800: #2b3f5d;
+  --blue-900: #22334c;
+  --blue-950: #141f2e;
+
+  /* —— 语义色：赭石 —— */
+  --amber-50: #fbf5e9;
+  --amber-100: #f7ecd6;
+  --amber-200: #eed8ab;
+  --amber-300: #e0bd78;
+  --amber-400: #ce9e46;
+  --amber-500: #b8842c;
+  --amber-600: #a06e22;
+  --amber-700: #855a1c;
+  --amber-800: #6b4818;
+  --amber-900: #573a15;
+  --amber-950: #33210b;
+
+  /* —— 字体 —— */
+  /* 中文回退链直接命中系统已装字体：NoTo Sans SC / 苹方 / 微软雅黑；拉丁字形用 Geist */
+  --sans-stack: var(--font-geist-sans), "Noto Sans SC", "PingFang SC", "HarmonyOS Sans SC",
+    "Microsoft YaHei UI", "Microsoft YaHei", "微软雅黑", system-ui, sans-serif;
+  /* 书卷气：思源宋体 → 宋体 → 衬线后备 */
+  --serif-stack: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", SimSun, "宋体",
+    "Times New Roman", Georgia, serif;
+  --kai-stack: "Kaiti SC", KaiTi, "楷体", STKaiti, var(--serif-stack);
+  --mono-stack: var(--font-geist-mono), "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  /* —— 节奏 —— */
+  --rule-color: var(--zinc-300);
+  --rule: 1px solid color-mix(in oklab, var(--rule-color) 62%, transparent);
+  --ease-book: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* —— 语义色：浅色模式下「深字/深底」，深色模式下自动反转 —— */
+  --ink-strong: var(--zinc-900); /* 标题/正文主色 */
+  --ink-body: var(--zinc-600); /* 常规说明文字 */
+  --prose: var(--zinc-800); /* 阅读正文 */
+  --btn-bg: var(--zinc-900);
+  --btn-fg: #fdf8f0;
+  --btn-ghost-fg: var(--zinc-700);
+
+  /* —— 插画（稿纸）：夜间模式下纸面与墨迹一起反转，保持「纸上有字」 —— */
+  --illus-paper: var(--surface);
+  --illus-paper-2: var(--zinc-100);
+  --illus-ink: var(--zinc-800);
+  --illus-line: var(--zinc-400);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --rule-color: var(--zinc-200);
+    --ink-strong: var(--zinc-100);
+    --ink-body: var(--zinc-300);
+    --prose: #d8cfbd;
+    --btn-bg: var(--zinc-100);
+    --btn-fg: #201c17;
+    --btn-ghost-fg: var(--zinc-300);
+
+    --illus-paper: #262219;
+    --illus-paper-2: #1c1913;
+    --illus-ink: #c9bda6;
+    --illus-line: #4a4335;
+  }
+}
+
+/* ==========================================================================
+   深色模式下的 zinc 工具类翻转（仅限「作为语义墨色」使用的场景）
+   --------------------------------------------------------------------------
+   老面板一直用 `dark:text-zinc-*` 成对出现，本表的取值与其一致，因此对它们
+   无副作用；新写的组件则可以放心直接写 text-zinc-900 / bg-zinc-100。
+   注意：bg-zinc-900 不在此列（它是主按钮底色，深色模式下由 --btn-bg 反转）。
+   ========================================================================== */
+@media (prefers-color-scheme: dark) {
+  .text-zinc-900 {
+    color: var(--zinc-100);
+  }
+  .text-zinc-800 {
+    color: var(--zinc-200);
+  }
+  .text-zinc-700 {
+    color: var(--zinc-300);
+  }
+  .text-zinc-600 {
+    color: var(--zinc-300);
+  }
+  .hover\:text-zinc-900:hover {
+    color: var(--zinc-100);
+  }
+  .hover\:text-zinc-700:hover {
+    color: var(--zinc-300);
+  }
+  .bg-zinc-100 {
+    background-color: var(--zinc-800);
+  }
+  .hover\:bg-zinc-100:hover {
+    background-color: var(--zinc-800);
+  }
+  .border-zinc-300 {
+    border-color: var(--zinc-700);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* 深灰而非纯黑：长时间阅读更舒服 */
+    --paper: #1a1815;
+    --surface: #211e19;
+    --surface-sunken: #171512;
+
+    --zinc-50: #23201a;
+    --zinc-100: #ece4d4;
+    --zinc-200: #35312a;
+    --zinc-300: #dcd3bf;
+    --zinc-400: #b0a288;
+    --zinc-500: #9a8d78;
+    --zinc-600: #b5a892;
+    --zinc-700: #453f34;
+    --zinc-800: #2e2b24;
+    --zinc-900: #1e1b16;
+    --zinc-950: #141210;
+
+    --seal: #c9553f;
+    --seal-soft: #3a221d;
+    --dai: #8aa6d2;
+    --jade: #8fb894;
+    --ochre: #cfa155;
+    --gold: #8a6f3c;
+
+    --green-50: #1b2a1f;
+    --green-100: #223527;
+    --green-200: #2f4a35;
+    --green-300: #9dc39f;
+    --green-400: #8bb38d;
+    --green-500: #6f9c72;
+    --green-600: #7fae82;
+    --green-700: #9dc39f;
+    --green-800: #1e3223;
+    --green-900: #25382a;
+    --green-950: #17241b;
+
+    --red-50: #2a1712;
+    --red-100: #361c16;
+    --red-200: #4a251c;
+    --red-300: #e6a898;
+    --red-400: #d98874;
+    --red-500: #c9553f;
+    --red-600: #cf6a52;
+    --red-700: #e6a898;
+    --red-800: #3a1c15;
+    --red-900: #4d2018;
+    --red-950: #2e1310;
+
+    --blue-50: #16212e;
+    --blue-100: #1b283a;
+    --blue-200: #24384f;
+    --blue-300: #a3b9d8;
+    --blue-400: #8aa3c6;
+    --blue-500: #6f8db4;
+    --blue-600: #8aa3c6;
+    --blue-700: #a3b9d8;
+    --blue-800: #1b2c41;
+    --blue-900: #24384f;
+    --blue-950: #16222f;
+
+    --amber-50: #2a2010;
+    --amber-100: #352811;
+    --amber-200: #4a3717;
+    --amber-300: #e0c48a;
+    --amber-400: #d1ad63;
+    --amber-500: #c1933f;
+    --amber-600: #d1ad63;
+    --amber-700: #e0c48a;
+    --amber-800: #3d2c12;
+    --amber-900: #54401a;
+    --amber-950: #2f250f;
+  }
+}
+
+/* 把上面的变量注册进 Tailwind 主题。
+   使用 inline 让工具类直接引用变量本身，从而自动跟随浅/深色模式切换。 */
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-sunken: var(--surface-sunken);
+
+  --color-zinc-50: var(--zinc-50);
+  --color-zinc-100: var(--zinc-100);
+  --color-zinc-200: var(--zinc-200);
+  --color-zinc-300: var(--zinc-300);
+  --color-zinc-400: var(--zinc-400);
+  --color-zinc-500: var(--zinc-500);
+  --color-zinc-600: var(--zinc-600);
+  --color-zinc-700: var(--zinc-700);
+  --color-zinc-800: var(--zinc-800);
+  --color-zinc-900: var(--zinc-900);
+  --color-zinc-950: var(--zinc-950);
+
+  --color-seal: var(--seal);
+  --color-seal-soft: var(--seal-soft);
+  --color-dai: var(--dai);
+  --color-jade: var(--jade);
+  --color-ochre: var(--ochre);
+  --color-gold: var(--gold);
+
+  --color-green-50: var(--green-50);
+  --color-green-100: var(--green-100);
+  --color-green-200: var(--green-200);
+  --color-green-300: var(--green-300);
+  --color-green-400: var(--green-400);
+  --color-green-500: var(--green-500);
+  --color-green-600: var(--green-600);
+  --color-green-700: var(--green-700);
+  --color-green-800: var(--green-800);
+  --color-green-900: var(--green-900);
+  --color-green-950: var(--green-950);
+  --color-emerald-50: var(--green-50);
+  --color-emerald-300: var(--green-300);
+  --color-emerald-500: var(--green-500);
+  --color-emerald-900: var(--green-900);
+  --color-emerald-950: var(--green-950);
+
+  --color-red-50: var(--red-50);
+  --color-red-100: var(--red-100);
+  --color-red-200: var(--red-200);
+  --color-red-300: var(--red-300);
+  --color-red-400: var(--red-400);
+  --color-red-500: var(--red-500);
+  --color-red-600: var(--red-600);
+  --color-red-700: var(--red-700);
+  --color-red-800: var(--red-800);
+  --color-red-900: var(--red-900);
+  --color-red-950: var(--red-950);
+  --color-rose-500: var(--red-500);
+
+  --color-blue-50: var(--blue-50);
+  --color-blue-100: var(--blue-100);
+  --color-blue-200: var(--blue-200);
+  --color-blue-300: var(--blue-300);
+  --color-blue-400: var(--blue-400);
+  --color-blue-500: var(--blue-500);
+  --color-blue-600: var(--blue-600);
+  --color-blue-700: var(--blue-700);
+  --color-blue-800: var(--blue-800);
+  --color-blue-900: var(--blue-900);
+  --color-blue-950: var(--blue-950);
+
+  --color-amber-50: var(--amber-50);
+  --color-amber-100: var(--amber-100);
+  --color-amber-200: var(--amber-200);
+  --color-amber-300: var(--amber-300);
+  --color-amber-400: var(--amber-400);
+  --color-amber-500: var(--amber-500);
+  --color-amber-600: var(--amber-600);
+  --color-amber-700: var(--amber-700);
+  --color-amber-800: var(--amber-800);
+  --color-amber-900: var(--amber-900);
+  --color-amber-950: var(--amber-950);
+
+  --font-sans: var(--sans-stack);
+  --font-serif: var(--serif-stack);
+  --font-kai: var(--kai-stack);
+  --font-mono: var(--mono-stack);
+
+  /* 书卷气的圆角：比默认略小，更像纸张裁切而非按钮胶囊 */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 9px;
+  --radius-xl: 13px;
+  --radius-2xl: 18px;
+}
+
+@layer base {
+  html {
+    /* 分辨率适配：根字号随视口轻微缩放，让笔记本与 4K 屏都有合适的密度 */
+    font-size: clamp(14.5px, 0.28vw + 13.6px, 17px);
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
+  body {
+    background-color: var(--paper);
+    color: var(--ink-strong);
+    font-family: var(--sans-stack);
+    /* 纸纹：极低透明度的分形噪点，制造「纸上」的触感而非纯色背景 */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2 {
+    font-family: var(--serif-stack);
+    letter-spacing: 0.01em;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--seal) 22%, transparent);
+  }
+
+  /* 键盘可达性：焦点环用朱砂，克制但不隐形 */
+  :focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--seal) 55%, transparent);
+    outline-offset: 2px;
+  }
+
+  /* 细窄的暖色滚动条 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--zinc-400) 55%, transparent) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--zinc-400) 45%, transparent);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--zinc-500) 55%, transparent);
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* —— 版心：随屏幕宽度伸缩，避免 4K 下过窄、笔记本下过挤 —— */
+  .shell,
+  .shell-wide {
+    width: 100%;
+    margin-inline: auto;
+    padding-inline: clamp(1rem, 3.2vw, 3rem);
+  }
+  .shell {
+    max-width: min(1320px, 94vw);
+  }
+  .shell-wide {
+    max-width: min(1560px, 96vw);
+  }
+
+  /* —— 纸面卡片 —— */
+  .card {
+    border: var(--rule);
+    border-radius: var(--radius-xl);
+    background: color-mix(in oklab, var(--surface) 78%, transparent);
+  }
+
+  /* —— 区块：一个页面里的「一个功能」= 一张独立卡片 ——
+     面板页容易挤成一长条，靠这个容器给每块功能明确的边界与呼吸感。 */
+  .panel {
+    border: var(--rule);
+    border-radius: var(--radius-xl);
+    background: color-mix(in oklab, var(--surface) 82%, transparent);
+    padding: 1.15rem 1.25rem;
+  }
+  @media (min-width: 640px) {
+    .panel {
+      padding: 1.35rem 1.5rem;
+    }
+  }
+
+  /* 区块标题行：标题 + 右侧说明/操作，之间留足间距 */
+  .panel-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    margin-bottom: 0.85rem;
+  }
+  .panel-title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--ink-strong);
+    letter-spacing: 0.01em;
+  }
+  /* 标题前的序号徽标：①②③，让"第几步"一眼可见 */
+  .panel-step {
+    display: grid;
+    place-items: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--seal) 12%, transparent);
+    color: var(--seal);
+    font-size: 0.6875rem;
+    font-weight: 600;
+  }
+  .panel-hint {
+    font-size: 0.75rem;
+    line-height: 1.6;
+    color: var(--zinc-500);
+  }
+
+  /* —— 小标签：朱砂短线 + 字距放开的说明文字 —— */
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--zinc-500);
+  }
+  .eyebrow::before {
+    content: "";
+    width: 1.25rem;
+    height: 1px;
+    background: var(--seal);
+  }
+
+  /* —— 印章：品牌与编号 —— */
+  .seal {
+    display: grid;
+    place-items: center;
+    background: var(--seal);
+    color: #fdf8f0;
+    font-family: var(--serif-stack);
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, #000 12%, transparent);
+  }
+
+  /* —— 按钮 —— */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border-radius: var(--radius-lg);
+    font-size: 0.875rem;
+    line-height: 1.2;
+    padding: 0.6rem 1.15rem;
+    transition:
+      background-color 0.22s var(--ease-book),
+      border-color 0.22s var(--ease-book),
+      color 0.22s var(--ease-book),
+      transform 0.22s var(--ease-book);
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(0.5px);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* 主按钮：墨底纸字（深色模式自动反转为纸底墨字） */
+  .btn-primary {
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    font-weight: 500;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--btn-bg) 84%, var(--seal));
+  }
+
+  /* 次按钮：只留发丝边框 */
+  .btn-ghost {
+    border: var(--rule);
+    color: var(--btn-ghost-fg);
+    background: transparent;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    border-color: color-mix(in oklab, var(--btn-ghost-fg) 45%, transparent);
+    color: var(--ink-strong);
+  }
+
+  /* 朱砂强调按钮（仅用于最关键的一个动作） */
+  .btn-seal {
+    background: var(--seal);
+    color: #fdf8f0;
+    font-weight: 500;
+  }
+  .btn-seal:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--seal) 88%, #000);
+  }
+
+  /* —— 阅读正文：宋体 + 大行距，模拟纸书 —— */
+  .reading {
+    font-family: var(--serif-stack);
+    font-size: 1.0625rem;
+    line-height: 1.95;
+    letter-spacing: 0.015em;
+    color: var(--prose);
+  }
+  .reading p + p {
+    margin-top: 0.9em;
+  }
+
+  /* 竖排（封面书名、书脊） */
+  .vertical {
+    writing-mode: vertical-rl;
+    text-orientation: upright;
+  }
+}
+
+@layer utilities {
+  /* 发丝分隔线：两端淡出，比实线更安静 */
+  .rule-fade {
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      color-mix(in oklab, var(--zinc-400) 60%, transparent),
+      transparent
+    );
+  }
+
+  .shadow-book {
+    box-shadow:
+      0 1px 2px color-mix(in oklab, var(--zinc-950) 8%, transparent),
+      0 12px 28px -14px color-mix(in oklab, var(--zinc-950) 30%, transparent);
+  }
+
+  /* 入场动效：轻、慢、柔——上浮 + 淡入 */
+  .rise {
+    animation: rise 0.62s var(--ease-book) both;
+    animation-delay: var(--rise-delay, 0ms);
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* 逐字显现：用于品牌字，模拟落笔 */
+  .ink-in {
+    animation: inkIn 0.9s var(--ease-book) both;
+  }
+  @keyframes inkIn {
+    from {
+      opacity: 0;
+      filter: blur(6px);
+      letter-spacing: 0.4em;
+    }
+    to {
+      opacity: 1;
+      filter: blur(0);
+    }
+  }
+
+  /* 无滚动条但可滚动（窄屏导航条） */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .rise,
+    .ink-in {
+      animation: none;
+    }
+  }
+}

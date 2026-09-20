@@ -1,0 +1,13 @@
+# 笔灵（Biling）后端依赖
+fastapi>=0.115
+python-multipart>=0.0.9
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+alembic>=1.13
+pydantic>=2.9
+pydantic-settings>=2.5
+litellm>=1.52
+httpx>=0.27
+python-dotenv>=1.0
+python-docx>=1.1
+pypdf>=4.0

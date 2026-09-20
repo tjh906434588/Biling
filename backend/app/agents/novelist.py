@@ -1,0 +1,189 @@
+"""小说家（Novelist）：基于装配好的上下文，产出章节正文（单版本生成，生成即定稿）。"""
+import uuid
+from sqlalchemy.orm import Session
+
+from app.agents.base import Agent, ContextPack
+from app.agents.context import (
+    get_latest_style_profile,
+    get_novel,
+    get_recent_chapters,
+    get_recent_story_states,
+    get_settings_snapshot,
+    format_settings_for_prompt,
+    get_active_blueprint,
+    format_blueprint_for_prompt,
+    get_graph_relations_text,
+    derive_stage,
+    filter_settings_for_chapter,
+    STAGE_LABELS,
+)
+from app.agents.l1 import L1_ANTI_AI_CONSTRAINTS
+from app.schemas.agents import NovelChapter
+from app.services.detector import detect
+
+SYSTEM_PROMPT = f"""你是「小说家」，一部小说的写作者。
+你的任务：基于给定的大纲/前文/设定，写出一个章节的正文。
+- 输出必须是严格的 JSON：{{"title": "本章标题", "content": "章节正文（不少于200字）", "note": "自评：本章用到的设定、待回收伏笔"}}
+- 标题要求：简洁有力、能概括本章核心；若作者已给定标题则原文沿用。
+- 正文就是正文本身，不要把 JSON 解释写进正文。
+
+{L1_ANTI_AI_CONSTRAINTS}
+"""
+
+class NovelistAgent(Agent[NovelChapter]):
+    task_type = "creation"
+    # 0.82：比原 0.75 略微放开，让句长/用词分布更散（AI 检测器抓的是"过稳"的分布）；
+    # 再高会开始丢设定一致性，这个值是质量与"人味"的折中。
+    temperature = 0.82
+    version_count = 1
+    mock_output = {
+        "title": "雨夜铜币",
+        "content": "（Mock 章节正文）深夜的旧王城只有风在说话。主角坐在占卜房的窗边，盯着左手背上那道早已愈合的印记——它今天又亮了一次。他想起那个自称岚的占卜师说过的话：记忆不是刻在脑子里的，是刻在命里的。窗外的灯一盏盏熄灭，像一段段被篡改的往事。他攥紧拳头，决定明天一早就去旧档案馆查那份本不该存在的出生记录。雨又下起来了，铜币在怀里沉甸甸的，仿佛在回应他加速的心跳。他在心里默默盘算：如果自己的出生记录是假的，那城门口那张通缉令上的人，也许并不陌生。这一夜，他几乎没合眼。",
+        "note": "本章用到的设定：占卜房、左手印记；待回收伏笔：半枚印记的来信。",
+    }
+
+    def __init__(self, db: Session):
+        super().__init__(db)
+
+    def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        novel = get_novel(self.db, novel_id)
+        style = get_latest_style_profile(self.db, novel_id)
+
+        # 设定：M0 骨架全量截断给（M1 起由 RAG + POV 裁剪精确装配）
+        # 按写作进度过滤：隐藏的不给、未到生效章范围的不给、阶段不命中的不给，避免后期设定提前出现
+        chapter_no = 0
+        try:
+            chapter_no = int(params.get("chapter_no") or 0)
+        except (TypeError, ValueError):
+            chapter_no = 0
+        blueprint = get_active_blueprint(self.db, novel_id)
+        stage = derive_stage(chapter_no, blueprint)
+        all_settings = get_settings_snapshot(self.db, novel_id)
+        active_settings = filter_settings_for_chapter(all_settings, chapter_no, stage)
+        settings_text = format_settings_for_prompt(active_settings)
+
+        # 【L3·必现清单】把「必须同时出现的成组内容」从蓝图长句里单独抽出来显式约束。
+        # 根因：这类规则原本埋在 288 字的 world_rule.detail 里（位于蓝图全文 ~80% 处），
+        # 模型注意不到 → 第 2、3 章都漏写了面板的「兴趣爱好」字段。这里单独成条、写前注入。
+        checklist_text = ""
+        try:
+            from app.services.setting_checker import extract_checklist, format_required_list
+
+            bp_content = blueprint.content if hasattr(blueprint, "content") else blueprint
+            checklist = extract_checklist(bp_content, active_settings)
+            checklist_text = format_required_list(checklist)
+        except Exception:  # 抽取失败不影响写作主流程
+            pass
+
+        # 前文记忆：最近 story_state 摘要
+        states = get_recent_story_states(self.db, novel_id)
+        states_text = "\n".join(f"#第{s.chapter_no}章：{s.summary}" for s in states) or "（无前文记忆）"
+
+        # 实体关系图谱：写作一致性对照（不得与已确立关系矛盾，新关系可在正文中自然建立）
+        relations_text = get_graph_relations_text(self.db, novel_id)
+
+        # 最近章节全文（保文风连续性）
+        chapters = get_recent_chapters(self.db, novel_id)
+        prev_text = "\n\n".join(f"[第{c.chapter_no}章 {c.title or ''}]\n{c.content}" for c in reversed(chapters)) or "（无前文）"
+
+        # L2 风格画像（存在则注入）
+        style_text = "（暂无风格画像）"
+        if style:
+            style_text = f"traits: {style.traits}\navoid_list: {style.avoid_list}"
+        # 全局文风：两部分——蓝图识别（导入蓝图自动更新，冲突时优先）+ 手动添加（不可被覆盖，不冲突也必须遵守）
+        blueprint_style = (getattr(novel, "style_directive", None) or "").strip()
+        manual_style = (getattr(novel, "style_directive_manual", None) or "").strip()
+        if blueprint_style:
+            style_text += f"\n【蓝图识别文风（每次导入蓝图自动更新；与手动文风冲突时以本部分为准）】\n{blueprint_style}"
+        if manual_style:
+            style_text += f"\n【手动文风指示（作者手动设定，不可被覆盖；与蓝图识别文风不冲突时必须严格遵守）】\n{manual_style}"
+
+        # L3 节奏/心态指令：由 chapter_function 与写作模式运行时派生（§5.7）
+        chapter_function = params.get("chapter_function", "progression")
+        writing_mode = params.get("writing_mode", "draft_free")
+        if chapter_function in ("climax", "turning"):
+            l3 = "【L3·本章节奏】加快节奏、冲突升级、节拍短促有力。"
+        elif chapter_function in ("buildup", "interlude"):
+            l3 = "【L3·本章节奏】舒缓从容、不急于推进情节，把细节与画面写充分。"
+        else:
+            l3 = "【L3·本章节奏】按大纲节拍稳步推进，保持叙事感。"
+        if writing_mode == "draft_free":
+            l3 += " 心态：不必追求完美，写到哪算哪，让故事自然流淌。"
+        else:  # outline_guided
+            l3 += f" 心态：完成本章目标——{params.get('goal', '')}"
+
+        # 时间线提示：当前章节号 + 所处阶段（有蓝图可推导时），约束 AI 不提前引入后期设定
+        if chapter_no > 0:
+            l3 += f"\n【L3·时间线】当前是第 {chapter_no} 章。"
+            if stage:
+                l3 += f" 故事处于【{STAGE_LABELS.get(stage, stage)}】阶段，只使用当前阶段已出现的设定与伏笔，不得提前引入后期才登场的内容。"
+
+        # L3 反 AI 味：把上一章的实测统计交给模型，避免它模仿自己上一章的节奏
+        # （续写最容易出的问题：越写句长越均匀，AI 检测分数逐章恶化）
+        if chapters:
+            try:
+                det = detect(chapters[0].content or "")
+                bits: list[str] = []
+                if det.burstiness is not None:
+                    bits.append(f"句长变异系数 {det.burstiness}（人类写作一般 ≥0.7，<0.45 偏平）")
+                d = det.density or {}
+                if d.get("short_ratio") is not None:
+                    bits.append(f"极短句 {d['short_ratio']:.0%}（目标 ≥15%）")
+                if d.get("transition_density") is not None:
+                    bits.append(f"连接词密度 {d['transition_density']}/千字（目标 ≤3.5）")
+                if bits:
+                    l3 += (
+                        f"\n【L3·反 AI 味·上一章实测（第 {chapters[0].chapter_no} 章）】"
+                        + "、".join(bits)
+                        + "。本章不要延续上一章的句子节奏，要明显更有起伏。"
+                    )
+            except Exception:  # 统计失败不影响写作主流程
+                pass
+
+        # L3 信息控制（§5.3 info_control，M1 补强）：读者/主角知道什么、必须隐瞒什么
+        info = params.get("info_control") or {}
+        if info:
+            l3 += (
+                f"\n【L3·信息控制】读者已知：{info.get('reader_knows', '无')}；"
+                f"主角已知：{info.get('protagonist_knows', '无')}；"
+                f"必须向读者隐瞒：{info.get('must_hide', '无')}；"
+                f"只能点到为止：{info.get('hint_only', '无')}。"
+                f"正文不得提前泄露『必须隐瞒』的内容，伏笔只能暗示。"
+            )
+
+        user_content = (
+            f"项目：《{novel.title if novel else novel_id}》\n"
+            f"项目前提：{novel.premise if novel and novel.premise else '（未填）'}\n\n"
+            f"【蓝图（active）】\n{format_blueprint_for_prompt(get_active_blueprint(self.db, novel_id))}\n\n"
+            f"【本章大纲】{params.get('outline', '（自由续写，无大纲）')}\n"
+            f"章节功能：{chapter_function}｜写作模式：{writing_mode}\n\n"
+            f"{l3}\n\n"
+            f"【相关设定】\n{settings_text}\n\n"
+            f"【实体关系图谱（写作时不得与已确立关系矛盾，新关系可在正文中自然建立，下一章提取师会记录）】\n{relations_text}\n\n"
+            f"【前文记忆】\n{states_text}\n\n"
+            f"【最近章节全文】\n{prev_text}\n\n"
+            f"【L2 风格画像】\n{style_text}\n\n"
+            f"【本章目标】{params.get('goal', '')}"
+            + (
+                # 放在最靠近“开始写”的位置：末尾注意力最高，硬约束不应被埋在长上下文中间
+                f"\n\n【必现清单（硬约束，优先级高于一切文笔要求）】\n{checklist_text}\n"
+                "以上每一组都是『要么整体不写，要写就必须写全』。动笔前先确认本章会涉及哪几组，"
+                "写完再逐组自查一遍，缺一项就补进去。"
+                if checklist_text
+                else ""
+            )
+        )
+        return ContextPack(
+            novel_id=novel_id,
+            agent="novelist",
+            system_prompt=SYSTEM_PROMPT,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            meta={"params": params},
+            temperature=self.temperature,
+        )
+
+    def parse_output(self, text: str) -> NovelChapter:
+        return NovelChapter.model_validate_json(text.strip())

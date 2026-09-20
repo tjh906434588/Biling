@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.env
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# DB / 本地产物
+*.db
+*.db.*
+*.sqlite3
+
+# 调试/诊断残留
+clean_*.txt
+health.txt
+kill_check.txt
+port_check.txt
+_tian_tmp.json
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
