@@ -468,6 +468,9 @@ function AutoTextarea({
 }
 
 export default function WritingPanel({ novelId }: Props) {
+  // 组件实例被 App Router 跨小说复用：记录「当前正在显示的小说」，AI 流回调/收尾据此判断是否已切小说
+  const liveNovelRef = useRef(novelId);
+  if (liveNovelRef.current !== novelId) liveNovelRef.current = novelId;
   // 初始数据（章节目录 / 已批准大纲 / 卷结构）加载中：遮罩过渡
   const [loading, setLoading] = useState(true);
   const [chapters, setChapters] = useState<ChapterListItem[]>([]);
@@ -840,6 +843,7 @@ export default function WritingPanel({ novelId }: Props) {
       chapter_no: form.chapter_no,
       title: form.title.trim() || undefined,
       outline: form.outline.trim() || undefined,
+      outline_id: targetOutline?.id ?? undefined, // 正文-大纲版本关联：记录用的是哪个已批大纲版本
       chapter_function: form.chapter_function || undefined, // 空 = 交给小说家自动判定
       writing_mode: form.writing_mode,
       goal: form.goal.trim() || undefined,
@@ -849,6 +853,8 @@ export default function WritingPanel({ novelId }: Props) {
     try {
       ensureReady();
       await runAgent("novelist", novelId, params, (ev) => {
+        // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
+        if (liveNovelRef.current !== novelId) return;
         const d = ev.data as {
           delta?: string;
           status?: string;
@@ -880,10 +886,11 @@ export default function WritingPanel({ novelId }: Props) {
         }
       });
     } catch (e) {
-      showToast((e as Error).message, "error");
+      if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
     } finally {
       setGenerating(false);
       setGenRun((r) => (r ? { ...r, running: false } : r));
+      if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
       setActiveNo(form.chapter_no);
       await loadChapters();
       await loadDetail(form.chapter_no);
@@ -951,6 +958,8 @@ export default function WritingPanel({ novelId }: Props) {
         novelId,
         { chapter_no: activeChapter.chapter_no, chapter_text: activeChapter.active_content },
         (ev) => {
+          // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
+          if (liveNovelRef.current !== novelId) return;
           if (ev.event === "stored") {
             out = JSON.stringify(ev.data, null, 2);
             setExtractResult(out);
@@ -973,7 +982,7 @@ export default function WritingPanel({ novelId }: Props) {
       );
       if (!out) showToast("提取完成（未返回 stored 事件）", "warning");
     } catch (e) {
-      showToast((e as Error).message, "error");
+      if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
     } finally {
       setExtracting(false);
     }
@@ -1003,6 +1012,8 @@ export default function WritingPanel({ novelId }: Props) {
           outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
         },
         (ev) => {
+          // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
+          if (liveNovelRef.current !== novelId) return;
           const d = ev.data as { delta?: string; status?: string; message?: string };
           if (ev.event === "thinking_delta" && d.delta) {
             setReviewRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
@@ -1021,7 +1032,7 @@ export default function WritingPanel({ novelId }: Props) {
         },
       );
     } catch (e) {
-      showToast((e as Error).message, "error");
+      if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
     } finally {
       setReviewing(false);
       setReviewRun((r) => (r ? { ...r, running: false } : r));
@@ -1044,6 +1055,8 @@ export default function WritingPanel({ novelId }: Props) {
       const doneRewrite: number[] = [];
       const doneExtract: number[] = [];
       for (const no of target) {
+        // 处理过程中切到其他小说：立即停止，不弹任何本小说的提示
+        if (liveNovelRef.current !== novelId) return;
         const o = approvedOutlines.find((x) => x.chapter_no === no) ?? null;
         const ch = chapters.find((c) => c.chapter_no === no) ?? null;
         // ── 1. 重写正文（按当前大纲，不按评价）──
@@ -1057,9 +1070,12 @@ export default function WritingPanel({ novelId }: Props) {
               chapter_no: no,
               title: o?.title ?? ch?.title ?? undefined,
               outline: o ? summarizeOutline(o) : undefined,
+              outline_id: o?.id ?? undefined, // 正文-大纲版本关联
               writing_mode: o ? "outline_guided" : "draft_free",
             },
             (ev) => {
+              // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
+              if (liveNovelRef.current !== novelId) return;
               const d = ev.data as { delta?: string; status?: string; message?: string };
               if (ev.event === "thinking_delta" && d.delta) {
                 setGenRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
@@ -1072,6 +1088,7 @@ export default function WritingPanel({ novelId }: Props) {
             },
           );
         } catch (e) {
+          if (liveNovelRef.current !== novelId) return;
           failedChapter = no;
           showToast((e as Error).message, "error");
         } finally {
@@ -1096,6 +1113,8 @@ export default function WritingPanel({ novelId }: Props) {
             novelId,
             { chapter_no: no, chapter_text: freshCh?.active_content ?? ch?.active_content },
             (ev) => {
+              // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
+              if (liveNovelRef.current !== novelId) return;
               if (ev.event === "stream_error") {
                 failedChapter = no;
                 showToast((ev.data as { message?: string }).message ?? `第 ${no} 章提取出错`, "error");
@@ -1103,6 +1122,7 @@ export default function WritingPanel({ novelId }: Props) {
             },
           );
         } catch (e) {
+          if (liveNovelRef.current !== novelId) return;
           failedChapter = no;
           showToast((e as Error).message, "error");
         }
@@ -1114,6 +1134,7 @@ export default function WritingPanel({ novelId }: Props) {
       }
 
       await loadChapters();
+      if (liveNovelRef.current !== novelId) return; // 已切小说：不再弹本小说的汇总提示
       if (failedChapter != null) {
         // 失败即停止：分章列出「正文未重写 / 记忆层未提取」，交作者手动补齐（含失败后还没轮到处理的章节）
         const remainingRewrite = target.filter((n) => !doneRewrite.includes(n));
@@ -1164,6 +1185,7 @@ export default function WritingPanel({ novelId }: Props) {
           chapter_text: activeChapter.active_content,
           writing_mode: form.writing_mode,
           outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
+          outline_id: approvedOutline?.id ?? undefined, // 正文-大纲版本关联
           chapter_function: form.chapter_function,
           review: {
             overall_score: review.overall_score,
@@ -1174,6 +1196,8 @@ export default function WritingPanel({ novelId }: Props) {
           },
         },
         (ev) => {
+          // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
+          if (liveNovelRef.current !== novelId) return;
           const d = ev.data as { delta?: string; message?: string };
           if (ev.event === "thinking_delta" && d.delta) {
             setReviseRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
@@ -1193,10 +1217,11 @@ export default function WritingPanel({ novelId }: Props) {
         },
       );
     } catch (e) {
-      showToast((e as Error).message, "error");
+      if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
     } finally {
       setRevising(false);
       setReviseRun((r) => (r ? { ...r, running: false } : r));
+      if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
       setActiveNo(activeChapter.chapter_no);
       await loadChapters();
       await loadDetail(activeChapter.chapter_no);

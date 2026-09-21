@@ -5,9 +5,11 @@ import {
   activateBlueprint,
   checkOutlineSkeleton,
   deleteBlueprint,
+  getBlueprintActivationStatus,
   importBlueprintFile,
   listBlueprints,
   type Blueprint,
+  type BlueprintActivationStatusResult,
   type OutlineSkeletonModule,
 } from "@/lib/api";
 import {
@@ -46,8 +48,8 @@ export default function BlueprintPanel({ novelId }: Props) {
   const [delTarget, setDelTarget] = useState<Blueprint | null>(null);
   // 激活确认：激活会把该蓝图内容注入写作/大纲/设定等页面，先弹风险确认框
   const [activateTarget, setActivateTarget] = useState<Blueprint | null>(null);
-  // 激活中 / 删除中：防重复点击（按钮防抖）
-  const [activating, setActivating] = useState(false);
+  // 正在后台激活的蓝图 id（按钮防抖 + 刷新/切页后从后端恢复「激活中…」；成功/失败才置空）
+  const [activatingId, setActivatingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   // 生成过程弹窗（DeepSeek 风格：思考过程折叠块 + 正文流式滚动）；thinkingOpen 为思考块展开状态
   const [showStreamModal, setShowStreamModal] = useState(false);
@@ -104,6 +106,95 @@ export default function BlueprintPanel({ novelId }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 激活轮询：后台激活期间每 1.5s 查询一次激活状态，「激活中…」保持到成功或失败才退出。
+  // 刷新/切页后由 mount 恢复逻辑重新接管；组件卸载/切换小说时停止轮询（任务仍在后台跑）。
+  const stopActivationPoll = useRef<() => void>(() => {});
+  /** 当前面板所属小说：切换小说时用它让旧小说的轮询立即退场，不误弹提示 */
+  const lastActivationNovelRef = useRef<string | null>(null);
+  const pollActivation = useCallback(
+    (novelId: string) => {
+      stopActivationPoll.current(); // 停止上一轮（同一小说只保留一个轮询）
+      let stopped = false;
+      stopActivationPoll.current = () => {
+        stopped = true;
+      };
+      void (async () => {
+        while (!stopped) {
+          await new Promise((r) => setTimeout(r, 1500));
+          if (stopped) return;
+          // 期间切换到其他小说：立即退场，不弹本小说的完成提示（状态由新小说自己的恢复逻辑接管）
+          if (lastActivationNovelRef.current !== novelId) {
+            stopActivationPoll.current = () => {};
+            return;
+          }
+          let r: BlueprintActivationStatusResult;
+          try {
+            r = await getBlueprintActivationStatus(novelId);
+          } catch {
+            continue; // 查询失败静默，下轮再试
+          }
+          if (r.running) continue; // 仍在后台激活：按钮保持「激活中…」
+          stopActivationPoll.current = () => {}; // 收尾后清掉停止句柄
+          const t = r.task;
+          if (t && t.status === "error") {
+            setActivatingId(null);
+            message.error(`蓝图激活失败：${t.error ?? "请稍后重试"}`);
+          } else if (t && t.blueprint_id) {
+            setActivatingId(null);
+            message.success(t.msg ?? "已设为生效中，设定与文风已跟随切换。");
+            if (t.warning) message.warning(t.warning);
+          } else {
+            // 无任务记录（异常情况）：直接退出激活中
+            setActivatingId(null);
+          }
+          void load();
+          return;
+        }
+      })();
+    },
+    [load],
+  );
+
+  // 切换小说：停止上一部小说的激活轮询、清空「激活中…」状态——各小说的激活状态互相隔离，
+  // 上一部小说的激活任务完成/失败不会在当前小说工作台误弹提示。
+  useEffect(() => {
+    if (lastActivationNovelRef.current !== novelId) {
+      lastActivationNovelRef.current = novelId;
+      stopActivationPoll.current();
+      stopActivationPoll.current = () => {};
+      setActivatingId(null);
+    }
+  }, [novelId]);
+
+  // 页面刷新 / 切页回来：若后端有该小说进行中的激活任务，恢复对应蓝图的「激活中…」并轮询到完成
+  useEffect(() => {
+    let stopped = false;
+    void (async () => {
+      let r: BlueprintActivationStatusResult;
+      try {
+        r = await getBlueprintActivationStatus(novelId);
+      } catch {
+        return;
+      }
+      if (stopped) return;
+      if (!r.running || !r.task?.blueprint_id) return;
+      setActivatingId(r.task.blueprint_id);
+      setSelectedId(r.task.blueprint_id);
+      pollActivation(novelId);
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [novelId, pollActivation]);
+
+  // 组件卸载时停止激活轮询（任务在后台继续，回来后由上方 mount 效果重新接管）
+  useEffect(() => {
+    return () => {
+      stopActivationPoll.current();
+      stopActivationPoll.current = () => {};
+    };
+  }, []);
 
   // 页面刷新 / 组件卸载时：取消进行中的骨架 LLM 校验请求（浏览器断开前主动 abort，避免残留请求继续跑）
   useEffect(() => {
@@ -197,9 +288,10 @@ export default function BlueprintPanel({ novelId }: Props) {
       /* 忽略存储失败 */
     }
     if (importName) {
-      // 导入模式：以文档全文为素材生成蓝图；设定/文风不会在生成时自动注入，
-      // 需把该版本「设为生效中」（确认后）才触发后端抽取并注入设定库 + 全局文风
-      startBlueprintRun(novelId, inputText, inputText, importName);
+      // 导入模式：以文档全文为素材生成蓝图；use_settings=false 意味着本次完全独立，
+      // 不读取/核对之前任何蓝图激活注入的设定（每个版本独立启用，不与旧版本混合）；
+      // 设定/文风不会在生成时自动注入，需把该版本「设为生效中」（确认后）才触发后端抽取并注入设定库 + 全局文风
+      startBlueprintRun(novelId, inputText, inputText, importName, false);
     } else {
       startBlueprintRun(novelId, inputText);
     }
@@ -266,24 +358,32 @@ export default function BlueprintPanel({ novelId }: Props) {
   }
 
   async function doActivate(b: Blueprint) {
-    if (activating) return;
-    setActivating(true);
+    if (activatingId) return;
+    // 先置「激活中…」：按钮立即反馈，且防止重复点击（后端同样有并发兜底 409）
+    setActivatingId(b.id);
+    setSelectedId(b.id);
+    let res;
     try {
-      const res = await activateBlueprint(novelId, b.id);
-      message.success(`v${b.version} 已设为生效中，设定与文风已跟随切换。`);
-      if (res.extract_warning) {
-        message.warning(res.extract_warning);
-      }
-      await load();
+      res = await activateBlueprint(novelId, b.id);
     } catch (e) {
+      // 请求失败（如已有任务在激活 409 / 网络错误）：立即退出激活中
+      setActivatingId(null);
       message.error((e as Error).message);
-    } finally {
-      setActivating(false);
+      return;
     }
+    if (!res.running) {
+      // 已生效（并发下其他请求已完成）：无需轮询，直接刷新展示
+      setActivatingId(null);
+      message.success(`v${b.version} 已设为生效中，设定与文风已跟随切换。`);
+      void load();
+      return;
+    }
+    // 后台激活进行中：轮询到成功/失败才退出「激活中…」（刷新/切页不中断）
+    pollActivation(novelId);
   }
 
   async function confirmActivate() {
-    if (!activateTarget || activating) return;
+    if (!activateTarget || activatingId) return;
     const b = activateTarget;
     setActivateTarget(null);
     await doActivate(b);
@@ -393,15 +493,16 @@ export default function BlueprintPanel({ novelId }: Props) {
                   <button
                     className="rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => handleActivateClick(selected)}
-                    disabled={activating}
+                    disabled={activatingId !== null}
                   >
-                    {activating ? "激活中·注入设定与文风中…" : "设为生效中"}
+                    {activatingId !== null ? "激活中…" : "设为生效中"}
                   </button>
                 )}
                 {selected.status !== "active" && (
                   <button
-                    className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+                    className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
                     onClick={() => handleDelete(selected)}
+                    disabled={activatingId !== null}
                   >
                     删除
                   </button>
@@ -550,7 +651,7 @@ export default function BlueprintPanel({ novelId }: Props) {
       <ConfirmDialog
         open={activateTarget !== null}
         title={activateTarget ? `将 v${activateTarget.version} 设为生效中？` : "设为生效中？"}
-        message={`确认后将把 v${activateTarget ? activateTarget.version : ""} 设为生效中：该版本（若为导入生成）会同步抽取设定与文风并注入设定库、全局文风，注入完成按钮的「激活中」才会结束（期间请勿离开页面）；当前生效蓝图导入的内容将被隐藏（不会删除，可随时切回）、改用新蓝图导入的内容。\n\n若后续的正文、大纲已基于旧蓝图生成，切换后可能导致设定不一致、影响写作连贯性。已生成的大纲和文章不会被修改。\n\n确定切换吗？`}
+        message={`确认后将把 v${activateTarget ? activateTarget.version : ""} 设为生效中：该版本（若为导入生成）会同步抽取设定与文风并注入设定库、全局文风，注入完成按钮的「激活中」才会结束（期间刷新页面或切换页面不会中断，按钮会保持「激活中…」直到成功或失败）；当前生效蓝图导入的内容将被隐藏（不会删除，可随时切回）、改用新蓝图导入的内容。\n\n若后续的正文、大纲已基于旧蓝图生成，切换后可能导致设定不一致、影响写作连贯性。已生成的大纲和文章不会被修改。\n\n确定切换吗？`}
         confirmText="确定切换"
         tone="primary"
         onConfirm={confirmActivate}

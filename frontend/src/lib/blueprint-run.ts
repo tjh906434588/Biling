@@ -7,7 +7,7 @@
  * - 生成不因切换页面而中断；
  * - 回到蓝图页时流式输出、进度、结果自动恢复显示。
  */
-import { friendlyRunError, getAgentRunningTask, runAgent } from "./api";
+import { friendlyRunError, getAgentRunningTask, getStreamStatus, runAgent, type AgentRunningTaskResult } from "./api";
 
 export type BlueprintRunStatus = "idle" | "running" | "done" | "error";
 
@@ -150,6 +150,42 @@ export function startBlueprintRun(
     let buf = "";
     let tbuf = "";
     let failed = false;
+    let settled = false; // 收尾标记：SSE 正常结束或看门狗兜底结束，只允许一次
+
+    // 兜底看门狗：SSE 的结束帧可能因代理/网络问题丢失，导致 runAgent 永不 resolve、
+    // store 一直卡在 running（弹窗永远「生成中」、版本列表不自动刷新、弹窗不自动关闭）。
+    // 这里轮询后端任务状态，任务一不在运行就把 store 收尾成 done/error，与 SSE 正常结束殊途同归。
+    void (async () => {
+      while (true) {
+        await sleep(1500);
+        if (settled) return;
+        if (state.novelId !== novelId) return;
+        let r: AgentRunningTaskResult;
+        try {
+          r = await getAgentRunningTask("blueprint_architect", novelId);
+        } catch {
+          continue; // 查询失败静默，下轮再试
+        }
+        if (r.running) continue; // 后端仍在跑，SSE 正常流式，继续等待
+        settled = true;
+        const s = getBlueprintRun();
+        if (s.status !== "running") return; // SSE 已把结果置为 done/error（如 stream_error），不覆盖
+        // 尽力识别后端失败：/status 的 recent 若是本角色的 error 任务，则报错而非误报完成
+        try {
+          const st = await getStreamStatus(novelId);
+          if (st.recent && st.recent.agent === "blueprint_architect" && st.recent.status === "error") {
+            apply({ status: "error", errMsg: st.recent.error ?? "生成失败，请重试。" });
+            return;
+          }
+        } catch {
+          /* 忽略，按完成处理 */
+        }
+        // 保留 SSE 已送达的版本文案（如「蓝图 v1 已生成完毕」）；没收到则用兜底文案
+        apply({ status: "done", msg: s.msg ?? "生成完成。" });
+        return;
+      }
+    })();
+
     try {
       await runAgent(
         "blueprint_architect",
@@ -186,8 +222,10 @@ export function startBlueprintRun(
           }
         },
       );
+      settled = true;
       apply({ status: failed ? "error" : "done" });
     } catch (e) {
+      settled = true;
       apply({ status: "error", errMsg: friendlyRunError(e) });
     }
   })();

@@ -6,13 +6,16 @@ import {
   friendlyRunError,
   getActiveBlueprint,
   listOutlines,
+  listOutlineVersions,
   listSettings,
+  outlineHasChapter,
   runAgent,
   type Blueprint,
   type Outline,
   type Setting,
 } from "@/lib/api";
 import Modal from "./modal";
+import ConfirmDialog from "./confirm-dialog";
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
 import { CostHint, useAiStatus } from "@/lib/ai-status";
@@ -176,7 +179,14 @@ function groupByVolume(outlines: Outline[], volumes: VolumeInfo[] | undefined): 
 }
 
 export default function OutlinePanel({ novelId }: Props) {
+  // 组件实例被 App Router 跨小说复用：记录「当前正在显示的小说」，AI 流回调/收尾据此判断是否已切小说
+  const liveNovelRef = useRef(novelId);
+  if (liveNovelRef.current !== novelId) liveNovelRef.current = novelId;
   const [outlines, setOutlines] = useState<Outline[]>([]);
+  /** 当前选中章的版本历史（同一章可多版本，轻量历史版本用）。 */
+  const [versions, setVersions] = useState<Outline[]>([]);
+  /** 详情当前展示的版本 id：默认 = 选中章当前生效版；点历史版本项时切到该版本预览。 */
+  const [viewVersionId, setViewVersionId] = useState<string | null>(null);
   // 数据加载中：遮罩过渡，加载完成后解除
   const [loading, setLoading] = useState(true);
   const [volumes, setVolumes] = useState<VolumeInfo[]>([]);
@@ -194,8 +204,15 @@ export default function OutlinePanel({ novelId }: Props) {
   const [outlineSearch, setOutlineSearch] = useState("");
   // 新增大纲弹窗（参考蓝图页「新增蓝图」：按钮 + Modal）
   const [showAddModal, setShowAddModal] = useState(false);
-  // 本次生成成功落库的章节号（stored 事件写入，供完成后关闭弹窗、顺延默认章节号、选中新草稿）
+  /** 新增弹窗的模式：null = 新增大纲（章节号自动推导）；number = 重写指定章（章节号锁定，标题行「重写」按钮进入）。 */
+  const [rewriteChapterNo, setRewriteChapterNo] = useState<number | null>(null);
+  /** 版本选择弹窗（点击详情标题右侧的 vN 打开）。 */
+  const [showVersionModal, setShowVersionModal] = useState(false);
+  /** 批准二次确认：该章已生成正文时，切换大纲版本需确认（正文不会自动重写）。 */
+  const [confirmApprove, setConfirmApprove] = useState<Outline | null>(null);
+  // 本次生成成功落库的章节号 + 新版本 id（stored 事件写入，供完成后选中新草稿、顺延默认章节号）
   const storedChapterRef = useRef<number | null>(null);
+  const storedIdRef = useRef<string | null>(null);
   const { ensureReady } = useAiStatus();
 
   // 思考过程文字自动滚到底部
@@ -216,7 +233,11 @@ export default function OutlinePanel({ novelId }: Props) {
       setOutlines(outs);
       setVolumes(bp?.content?.volumes ?? []);
       setBlueprintTitle(bp?.content?.title ?? null);
-      setCharacters(chars);
+      // 视角角色只保留「手动/批量」+ 当前生效蓝图导入的设定；未生效蓝图版本导入的角色不出现（与设定页一致）
+      const visibleChars = chars.filter(
+        (s) => s.source !== "blueprint" || s.blueprint_id === bp?.id,
+      );
+      setCharacters(visibleChars);
       // 有数据时默认选中最新一章（章节号最大）；无选中才生效，不覆盖用户当前选择
       setSelectedId((cur) => {
         if (cur) return cur;
@@ -235,6 +256,26 @@ export default function OutlinePanel({ novelId }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 选中章变化时：拉取该章全部版本（历史切换用），详情默认展示当前生效版
+  useEffect(() => {
+    if (!selectedId) {
+      setVersions([]);
+      setViewVersionId(null);
+      return;
+    }
+    let cancelled = false;
+    listOutlineVersions(novelId, selectedId)
+      .then((vs) => {
+        if (cancelled) return;
+        setVersions(vs);
+        setViewVersionId((cur) => cur && vs.some((v) => v.id === cur) ? cur : null);
+      })
+      .catch(() => { /* 版本历史加载失败不阻塞详情 */ });
+    return () => {
+      cancelled = true;
+    };
+  }, [novelId, selectedId]);
 
   const selected = outlines.find((o) => o.id === selectedId) ?? null;
   const groups = groupByVolume(outlines, volumes);
@@ -260,13 +301,20 @@ export default function OutlinePanel({ novelId }: Props) {
     return Math.max(...list.map((o) => o.chapter_no)) + 1;
   }
 
-  /** 打开「新增大纲」弹窗：每次打开按当前大纲重算自动章节号，并清空上次表单 */
-  function openAddModal() {
-    setForm({ ...EMPTY_FORM, chapter_no: nextAutoChapterNo(outlines, volumes) });
+  /** 打开「新增大纲」弹窗：每次打开按当前大纲重算自动章节号，并清空上次表单。
+   *  rewriteNo 不为 null 时是「重写指定章」模式：章节号锁定为 rewriteNo，不参与自动推导。 */
+  function openAddModal(rewriteNo: number | null = null) {
+    setRewriteChapterNo(rewriteNo);
+    setForm({
+      ...EMPTY_FORM,
+      chapter_no: rewriteNo ?? nextAutoChapterNo(outlines, volumes),
+    });
     setShowAddModal(true);
   }
 
-  const content = selected?.content as
+  /** 详情当前展示的版本：有正在预览的历史版本就用它，否则是选中章当前生效版。 */
+  const viewing = versions.find((v) => v.id === viewVersionId) ?? selected;
+  const content = viewing?.content as
     | {
         no?: number;
         title?: string;
@@ -286,6 +334,7 @@ export default function OutlinePanel({ novelId }: Props) {
     setDraftText("");
     setThinkingText("");
     storedChapterRef.current = null;
+    storedIdRef.current = null;
     const params: Record<string, unknown> = {
       chapter_no: form.chapter_no,
       goal: form.goal.trim() || undefined,
@@ -295,7 +344,9 @@ export default function OutlinePanel({ novelId }: Props) {
     try {
       ensureReady();
       await runAgent("outliner", novelId, params, (ev) => {
-        const d = ev.data as { delta?: string; status?: string; chapter_no?: number };
+        // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
+        if (liveNovelRef.current !== novelId) return;
+        const d = ev.data as { delta?: string; status?: string; chapter_no?: number; id?: string };
         if (ev.event === "thinking_delta" && d.delta) {
           setThinkingText((prev) => prev + d.delta);
         } else if (ev.event === "stream_delta" && d.delta) {
@@ -304,37 +355,71 @@ export default function OutlinePanel({ novelId }: Props) {
           if (d.status !== "ok") message.error("大纲 schema 校验失败，可重试。");
         } else if (ev.event === "stored") {
           if (typeof d.chapter_no === "number") storedChapterRef.current = d.chapter_no;
-          message.success("大纲已落库（draft），并登记伏笔账本。可在详情里批准生效。");
+          if (typeof d.id === "string") storedIdRef.current = d.id;
+          message.success("大纲已落库（draft）。可在详情里批准生效。");
         } else if (ev.event === "stream_error") {
           message.error((ev.data as { message?: string }).message ?? "AI 生成大纲出错，请稍后重试。");
         }
       });
     } catch (e) {
-      message.error(friendlyRunError(e));
+      if (liveNovelRef.current === novelId) message.error(friendlyRunError(e));
     } finally {
       setGenerating(false);
       setDraftText("");
       setThinkingText("");
+      if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
       const outs = await load();
       const storedNo = storedChapterRef.current;
+      const storedId = storedIdRef.current;
       storedChapterRef.current = null;
+      storedIdRef.current = null;
       if (storedNo != null) {
-        // 生成成功：关闭弹窗、默认章节号顺延到下一条、选中刚生成的草稿
+        // 生成成功：关闭弹窗、精确选中刚生成的草稿版本
         setShowAddModal(false);
-        const created = outs.find((o) => o.chapter_no === storedNo);
-        setSelectedId(created?.id ?? null);
-        setForm({ ...EMPTY_FORM, chapter_no: storedNo + 1 });
+        const created = storedId ? outs.find((o) => o.id === storedId) ?? null : null;
+        setSelectedId(created?.id ?? outs.find((o) => o.chapter_no === storedNo)?.id ?? null);
+        // 刷新该章版本历史（新版本并入），详情定位到新草稿
+        if (storedId) {
+          const vs = await listOutlineVersions(novelId, storedId).catch(() => [] as Outline[]);
+          setVersions(vs);
+          setViewVersionId(storedId);
+        }
+        // 重写模式：保持该章（表单下次打开再算）；新增模式：默认章节号顺延到下一条
+        if (rewriteChapterNo == null) setForm({ ...EMPTY_FORM, chapter_no: storedNo + 1 });
+        setRewriteChapterNo(null);
       }
     }
   }
 
-  async function handleApprove(o: Outline) {
+  /** 真正执行批准（handleApprove 二次确认通过后调用）。 */
+  async function doApprove(o: Outline) {
     try {
       await approveOutline(novelId, o.id);
-      message.success(`第 ${o.chapter_no} 章大纲已批准生效（小说家生成时将优先引用）。`);
+      message.success(`第 ${o.chapter_no} 章大纲 v${o.version_no} 已批准生效（小说家生成时将优先引用）。`);
       await load();
+      // 刷新版本历史，并把详情/列表选中都切到刚批准（当前生效）的版本
+      const vs = await listOutlineVersions(novelId, o.id).catch(() => [] as Outline[]);
+      setVersions(vs);
+      setViewVersionId(o.id);
+      setSelectedId(o.id);
     } catch (e) {
       message.error((e as Error).message);
+    }
+  }
+
+  /** 批准（或切换）大纲版本：若该章已生成过正文，先二次确认（正文不会自动重写）。 */
+  async function handleApprove(o: Outline) {
+    try {
+      const { has_chapter } = await outlineHasChapter(novelId, o.id);
+      if (has_chapter) {
+        // 该章已有正文：批准新版本等于替换该章大纲，正文与之脱钩，需用户确认自行决定
+        setConfirmApprove(o);
+        return;
+      }
+      await doApprove(o);
+    } catch {
+      // 查询失败不阻塞批准（判定接口异常时按无正文处理，直接批准）
+      await doApprove(o);
     }
   }
 
@@ -434,7 +519,7 @@ export default function OutlinePanel({ novelId }: Props) {
                                       </span>
                                     ) : (
                                       <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                                        草稿
+                                        未批准
                                       </span>
                                     )}
                                   </div>
@@ -469,12 +554,12 @@ export default function OutlinePanel({ novelId }: Props) {
         )}
 
         {/* 大纲详情 */}
-        {selected && (
+        {selected && viewing && (
           <div className="panel flex max-h-[calc(100dvh-6rem)] min-h-0 flex-col overflow-hidden">
             <div className="panel-head shrink-0">
               <h3 className="panel-title">
-                第 {selected.chapter_no} 章大纲
-                {selected.title ? ` ${selected.title}` : ""}
+                第 {viewing.chapter_no} 章大纲
+                {viewing.title ? ` ${viewing.title}` : ""}
                 {content?.pov ? <span className="ml-2 text-xs font-normal text-zinc-500">视角：{content.pov}</span> : null}
                 {content?.chapter_function ? (
                   <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-normal text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
@@ -482,14 +567,43 @@ export default function OutlinePanel({ novelId }: Props) {
                   </span>
                 ) : null}
               </h3>
-              {selected.status === "draft" && (
+              <div className="flex shrink-0 items-center gap-2">
+                {/* 版本号按钮：点击打开版本选择弹窗；旁标当前展示版本是否已批准 */}
                 <button
-                  className="rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600"
-                  onClick={() => handleApprove(selected)}
+                  type="button"
+                  onClick={() => setShowVersionModal(true)}
+                  className="flex items-center gap-1 rounded-lg border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  title="点击切换大纲版本"
                 >
-                  批准生效
+                  <span>v{viewing.version_no}</span>
+                  {viewing.status === "approved" ? (
+                    <span className="text-green-600 dark:text-green-400" title="该版本已批准，小说家写本章时优先引用">✓</span>
+                  ) : (
+                    <span className="text-zinc-400" title="该版本是草稿，未批准生效">○</span>
+                  )}
                 </button>
-              )}
+                {/* 重写当前章大纲：复用新增大纲弹窗，章节号锁定为本章（生成的新版本与旧版本各自独立） */}
+                <button
+                  type="button"
+                  onClick={() => openAddModal(viewing.chapter_no)}
+                  className="rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  title="重写本章大纲：生成一个新版本（草稿），批准后切换生效"
+                >
+                  重写
+                </button>
+                {viewing.status === "draft" ? (
+                  <button
+                    className="rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600"
+                    onClick={() => handleApprove(viewing)}
+                  >
+                    {versions.length > 1 ? "批准此版本" : "批准生效"}
+                  </button>
+                ) : (
+                  <span className="rounded bg-green-100 px-2 py-1 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">
+                    当前生效
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* 详情正文：超出页面高度时在该区域内滚动，头部「批准生效」保持可见 */}
@@ -585,11 +699,16 @@ export default function OutlinePanel({ novelId }: Props) {
         )}
       </section>
 
-      {/* ── 新增大纲弹窗（参考蓝图页「新增蓝图」/写作页「新增章节」：按钮 + Modal） ── */}
+      {/* ── 新增大纲弹窗（参考蓝图页「新增蓝图」/写作页「新增章节」：按钮 + Modal）。
+           rewriteChapterNo != null 时是「重写本章」：章节号锁定，生成的是本章的新版本（与旧版本各自独立）。 ── */}
       <Modal
         open={showAddModal}
-        title="新增大纲"
-        subtitle="大纲 = 单章的施工图。大纲师按当前生效蓝图，排出这一章的目标、节拍（beats）、冲突和视角。生成的是「草稿」，批准生效后，小说家写这一章时会优先照它来。"
+        title={rewriteChapterNo != null ? `重写第 ${rewriteChapterNo} 章大纲` : "新增大纲"}
+        subtitle={
+          rewriteChapterNo != null
+            ? "重写本章：生成一个新版本（草稿），与本章已有版本各自独立、互不影响。批准新版本后，小说家写本章时才优先引用它。"
+            : "大纲 = 单章的施工图。大纲师按当前生效蓝图，排出这一章的目标、节拍（beats）、冲突和视角。生成的是「草稿」，批准生效后，小说家写这一章时会优先照它来。"
+        }
         onClose={() => setShowAddModal(false)}
         maxWidth="max-w-xl"
         footer={
@@ -611,7 +730,7 @@ export default function OutlinePanel({ novelId }: Props) {
                 disabled={generating || !blueprintTitle}
                 className="btn btn-primary px-4 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {generating ? "生成中…" : "生成大纲"}
+                {generating ? "生成中…" : rewriteChapterNo != null ? "重新生成大纲" : "生成大纲"}
               </button>
             </div>
           </div>
@@ -629,8 +748,17 @@ export default function OutlinePanel({ novelId }: Props) {
 
           {/* 章节号不手动填写：打开弹窗时已自动推导（已有大纲最大章号 + 1，无则从第一卷第一章开始） */}
           <span className="text-[11px] text-zinc-400">
-            将自动生成：第 {form.chapter_no} 章
-            {stage ? `（当前处于：${STAGE_LABEL[stage]}，视角角色按此过滤）` : ""}
+            {rewriteChapterNo != null ? (
+              <>
+                将重写：第 {rewriteChapterNo} 章
+                {stage ? `（当前处于：${STAGE_LABEL[stage]}，视角角色按此过滤）` : ""}
+              </>
+            ) : (
+              <>
+                将自动生成：第 {form.chapter_no} 章
+                {stage ? `（当前处于：${STAGE_LABEL[stage]}，视角角色按此过滤）` : ""}
+              </>
+            )}
           </span>
 
           <label className="flex flex-col gap-1">
@@ -741,6 +869,93 @@ export default function OutlinePanel({ novelId }: Props) {
           )}
         </div>
       </Modal>
+
+      {/* ── 版本选择弹窗：点击详情标题右侧的 vN 打开，列出本章全部版本，标明已批准项 ── */}
+      <Modal
+        open={showVersionModal}
+        title={viewing ? `第 ${viewing.chapter_no} 章 · 选择大纲版本` : "选择大纲版本"}
+        subtitle="同一章可能有多个版本（轻量历史版本）。点击版本可预览其内容；已批准版本标 ✓。切换生效需在详情顶部点「批准此版本」。"
+        onClose={() => setShowVersionModal(false)}
+        maxWidth="max-w-lg"
+        footer={
+          <div className="flex w-full justify-end">
+            <button
+              type="button"
+              onClick={() => setShowVersionModal(false)}
+              className="btn btn-ghost px-4 py-1.5"
+            >
+              关闭
+            </button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-2">
+          {versions.length === 0 && (
+            <p className="py-6 text-center text-xs text-zinc-400">该章还没有任何大纲版本。</p>
+          )}
+          {versions.map((v) => {
+            const active = v.id === viewing?.id;
+            const approved = v.status === "approved";
+            return (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => {
+                  setViewVersionId(v.id);
+                  setShowVersionModal(false);
+                }}
+                className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                  active
+                    ? "border-zinc-500 bg-zinc-100 dark:bg-zinc-800"
+                    : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
+                }`}
+              >
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="flex items-center gap-2 font-medium">
+                    <span>v{v.version_no}</span>
+                    {approved ? (
+                      <span className="rounded bg-green-100 px-1.5 py-px text-[10px] text-green-700 dark:bg-green-900 dark:text-green-300">
+                        ✓ 已批准
+                      </span>
+                    ) : (
+                      <span className="rounded bg-zinc-100 px-1.5 py-px text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                        未批准
+                      </span>
+                    )}
+                    {active && <span className="text-[10px] text-blue-600 dark:text-blue-400">当前展示</span>}
+                  </span>
+                  {v.title && <span className="truncate text-xs text-zinc-500">{v.title}</span>}
+                </span>
+                <span className="shrink-0 text-[11px] text-zinc-400">
+                  {new Date(v.created_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </Modal>
+
+      {/* ── 批准二次确认：该章已生成正文，切换大纲版本后正文不会自动重写 ── */}
+      <ConfirmDialog
+        open={confirmApprove != null}
+        title="该章已生成正文，确认切换大纲？"
+        message={
+          confirmApprove
+            ? `第 ${confirmApprove.chapter_no} 章已经生成过正文。\n\n批准 v${confirmApprove.version_no} 后，该章大纲将切换为新版本，但已生成的正文不会自动重写，二者可能不一致。是否继续？\n\n如需保持一致，请切到「写作」页重新生成该章正文。`
+            : ""
+        }
+        confirmText="确认切换"
+        cancelText="取消"
+        tone="danger"
+        onConfirm={() => {
+          if (confirmApprove) {
+            const o = confirmApprove;
+            setConfirmApprove(null);
+            void doApprove(o);
+          }
+        }}
+        onCancel={() => setConfirmApprove(null)}
+      />
       </div>
     </Loading>
   );

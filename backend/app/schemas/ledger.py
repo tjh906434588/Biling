@@ -41,6 +41,7 @@ class OutlineRead(BaseModel):
     id: uuid.UUID
     novel_id: uuid.UUID
     chapter_no: int
+    version_no: int = 1  # 同章版本号（轻量历史版本，批准版是下游唯一依据）
     title: Optional[str]
     content: dict
     status: str  # draft|approved

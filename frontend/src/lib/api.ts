@@ -232,6 +232,7 @@ export interface Outline {
   id: string;
   novel_id: string;
   chapter_no: number;
+  version_no: number;
   title: string | null;
   content: Record<string, unknown>;
   status: "draft" | "approved";
@@ -242,6 +243,23 @@ export async function listOutlines(novelId: string, status?: string): Promise<Ou
   const url = status ? `${BASE}/novels/${novelId}/outlines?status=${status}` : `${BASE}/novels/${novelId}/outlines`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`加载大纲失败：${res.status}`);
+  return res.json();
+}
+
+/** 某一大纲所属章节的全部版本（历史版本切换用），按版本号升序。 */
+export async function listOutlineVersions(novelId: string, outlineId: string): Promise<Outline[]> {
+  const res = await fetch(`${BASE}/novels/${novelId}/outlines/${outlineId}/versions`);
+  if (!res.ok) throw new Error(`加载大纲版本失败：${res.status}`);
+  return res.json();
+}
+
+/** 该大纲所属章节是否已生成正文（批准新大纲时的二次确认依据）。 */
+export async function outlineHasChapter(
+  novelId: string,
+  outlineId: string,
+): Promise<{ chapter_no: number; has_chapter: boolean }> {
+  const res = await fetch(`${BASE}/novels/${novelId}/outlines/${outlineId}/has-chapter`);
+  if (!res.ok) throw new Error(`查询章节状态失败：${res.status}`);
   return res.json();
 }
 
@@ -381,11 +399,47 @@ export async function getActiveBlueprint(novelId: string): Promise<Blueprint | n
   return res.json();
 }
 
-export async function activateBlueprint(novelId: string, blueprintId: string): Promise<Blueprint> {
+export interface ActivateBlueprintResult {
+  /** true=已在后台启动激活（前端轮询激活状态直到成功/失败）；false=已生效/无需激活 */
+  running: boolean;
+  task_id: string | null;
+  blueprint_id: string;
+  version: number;
+}
+
+export async function activateBlueprint(novelId: string, blueprintId: string): Promise<ActivateBlueprintResult> {
   const res = await fetch(`${BASE}/novels/${novelId}/blueprints/${blueprintId}/activate`, { method: "POST" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `激活蓝图失败：${res.status}`);
+  }
+  return res.json();
+}
+
+export interface BlueprintActivationTask {
+  id: string;
+  blueprint_id: string | null;
+  version: number | null;
+  status: "running" | "done" | "error";
+  msg: string | null;
+  error: string | null;
+  /** 激活成功但设定/文风抽取未成功的提示（可手动补充或重新激活重试） */
+  warning: string | null;
+  started_at: string | null;
+  updated_at: string | null;
+}
+
+export interface BlueprintActivationStatusResult {
+  running: boolean;
+  task: BlueprintActivationTask | null;
+}
+
+/** 查询该小说最近一次「蓝图激活」任务：刷新/切页后恢复「激活中…」按钮状态并轮询到完成。 */
+export async function getBlueprintActivationStatus(novelId: string): Promise<BlueprintActivationStatusResult> {
+  const res = await fetch(`${BASE}/novels/${novelId}/blueprints/activation`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `查询激活状态失败：${res.status}`);
   }
   return res.json();
 }

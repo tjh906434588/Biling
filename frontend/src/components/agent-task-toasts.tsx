@@ -7,6 +7,7 @@ import { notification } from "@/components/notification";
 /** AI 角色 → 中文标签（后台任务悬浮框用，与各面板的叫法保持一致）。 */
 const AGENT_LABELS: Record<string, string> = {
   blueprint_architect: "蓝图师",
+  blueprint_activation: "蓝图激活",
   outliner: "大纲师",
   novelist: "小说家",
   reviser: "修订师",
@@ -36,9 +37,20 @@ export default function AgentTaskToasts({ novelId, tab }: { novelId: string; tab
   const switchedAway = useRef<Set<string>>(new Set());
   /** 组件是否已跑过第一轮轮询（区分"页面刚加载恢复任务"与"页内新发起任务"）。 */
   const firstPoll = useRef(true);
+  /** 最近一次轮询的小说 id：切换小说时清空所有跟踪状态，避免上一部小说的任务误弹提醒。 */
+  const lastNovelIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!novelId) return;
+    // 换小说：上一部小说的任务不能在当前小说工作台里提醒，全部跟踪状态清空（App Router 切参不重挂载组件）
+    if (lastNovelIdRef.current !== novelId) {
+      lastNovelIdRef.current = novelId;
+      prevRunningRef.current = null;
+      doneNotified.current.clear();
+      tabAtFirstSeen.current.clear();
+      switchedAway.current.clear();
+      firstPoll.current = true;
+    }
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -60,17 +72,22 @@ export default function AgentTaskToasts({ novelId, tab }: { novelId: string; tab
         const info = st.recent && st.recent.id === prev.id ? st.recent : prev;
         const firstSeenTab = tabAtFirstSeen.current.get(prev.id);
         const crossPage = switchedAway.current.has(prev.id) || (firstSeenTab != null && firstSeenTab !== tab);
-        // 蓝图完成：用户当前在蓝图页时，由蓝图页自身的 Message（居中靠上）提示，这里不重复弹；
+        // 蓝图（生成/激活）完成：用户当前在蓝图页时，由蓝图页自身的 Message（居中靠上）提示，这里不重复弹；
         // 在其他页面时由本 Notification（右上角）提示。其余 agent 仍只在离开发起页时提示。完成只提示一次。
-        const isBlueprint = prev.agent === "blueprint_architect";
+        const isBlueprint = prev.agent === "blueprint_architect" || prev.agent === "blueprint_activation";
         const shouldNotify = isBlueprint ? tab !== "blueprint" : crossPage;
         if (!doneNotified.current.has(prev.id) && shouldNotify) {
           doneNotified.current.add(prev.id);
           const label = taskLabel(info);
           if (info.status === "error") {
-            notification.error({ title: `${label} 生成失败`, message: info.error ?? undefined });
+            notification.error({
+              title: prev.agent === "blueprint_activation" ? "蓝图激活失败" : `${label} 生成失败`,
+              message: info.error ?? undefined,
+            });
+          } else if (prev.agent === "blueprint_activation") {
+            notification.success({ title: info.msg ?? "蓝图已设为生效中" });
           } else {
-            // 蓝图：用后端落库时写入的带版本号文案（如"蓝图 v1 已生成完毕"）；跨页由 Notification 通知
+            // 蓝图生成：用后端落库时写入的带版本号文案（如"蓝图 v1 已生成完毕"）；跨页由 Notification 通知
             notification.success({ title: isBlueprint ? (info.msg ?? "蓝图已生成完毕") : `${label} 已生成完毕，可以去看了` });
           }
           // 通知当前面板：后台任务已落库，可刷新数据（如写作页章节目录）

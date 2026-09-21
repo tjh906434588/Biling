@@ -337,7 +337,9 @@ async def _extract_settings_from_import(
         out = ""
         async for piece in agent.run(ctx):
             out += piece
-        parsed = agent.parse_output(out)
+        # 用带容错的 validate 而非 parse_output：模型输出可能被 ```json 代码块包裹或夹杂说明文字，
+        # 直接 parse_output 会 json_invalid 导致设定抽取失败（激活已生效但设定库无数据）
+        parsed = agent.validate(out)
         return _merge_settings_from_import(db, novel_id, parsed, blueprint_id)
     except Exception:
         logger.exception("agent=setting_extractor 导入设定合并失败（不阻断蓝图落库）")
@@ -466,6 +468,11 @@ def _merge_settings_from_import(
     }
 
 
+# 文风抽取自动重试次数：LLM 调用偶发失败（超时/限流/只思考不输出导致空结果）时重跑整次抽取
+MAX_STYLE_EXTRACT_RETRY = 3
+STYLE_RETRY_DELAY_SECONDS = 2
+
+
 async def _apply_style_from_import(
     db: Session, novel_id: uuid.UUID, params: dict, blueprint_id: uuid.UUID
 ) -> dict:
@@ -474,47 +481,69 @@ async def _apply_style_from_import(
     触发时机：蓝图被「设为生效中」时（blueprints.activate_blueprint），新增/生成蓝图不触发。
     作者约定：风格直接写入、不需要确认。该蓝图处于生效中时同时刷新 novel.style_directive；
     未生效的版本仅按版本存好，切回时直接恢复。文档中无风格类内容时不动（applied=False）；
-    失败不阻断激活，返回 {action, applied, style_directive} 供前端提示。
+    LLM 抽取失败自动重试 MAX_STYLE_EXTRACT_RETRY 次（含异常与空输出），全部失败才返回
+    {action:"error"}，不阻断激活，由调用方记 warning 供前端提示。
     """
     from app.agents.registry import get_agent
     from app.db.models import Blueprint, BlueprintStyle
 
-    try:
-        agent = get_agent(db, "style_extractor")
-        ctx = agent.build_context(novel_id, {
-            "source_doc": params.get("import_source", ""),
-        })
-        out = ""
-        async for piece in agent.run(ctx):
-            out += piece
-        parsed = agent.parse_output(out)
-        directive = (parsed.style_directive or "").strip()
-        if not directive:
-            return {"action": "skipped", "applied": False, "style_directive": ""}
-        bp = db.execute(
-            select(Blueprint).where(Blueprint.id == blueprint_id).limit(1)
-        ).scalar_one_or_none()
-        if bp is None:
-            return {"action": "skipped", "applied": False, "style_directive": ""}
-        # 按蓝图版本存（幂等：同版本只存一份）
-        st = db.execute(
-            select(BlueprintStyle).where(BlueprintStyle.blueprint_id == blueprint_id).limit(1)
-        ).scalar_one_or_none()
-        if st is None:
-            st = BlueprintStyle(blueprint_id=blueprint_id, novel_id=novel_id, directive=directive)
-            db.add(st)
-        else:
-            st.directive = directive
-        # 仅当该蓝图处于生效中时刷新全局文风
-        if bp.status == "active":
-            db.flush()  # autoflush=False：先落库，sync 里才能按 blueprint_id 查到刚写入的文风
-            sync_active_blueprint_style(db, novel_id, blueprint_id)
-        else:
-            db.commit()
-        return {"action": "applied", "applied": True, "style_directive": directive}
-    except Exception:
-        logger.exception("agent=style_extractor 导入风格同步失败（不阻断蓝图落库）")
-        return {"action": "error", "applied": False, "style_directive": ""}
+    source_doc = params.get("import_source", "")
+    directive = ""
+    last_err: str | None = None
+    for attempt in range(1, MAX_STYLE_EXTRACT_RETRY + 1):
+        try:
+            agent = get_agent(db, "style_extractor")
+            ctx = agent.build_context(novel_id, {"source_doc": source_doc})
+            out = ""
+            async for piece in agent.run(ctx):
+                out += piece
+            # 用带容错的 validate 而非 parse_output：模型输出可能被 ```json 代码块包裹或夹杂说明文字，
+            # 直接 parse_output 会 json_invalid 导致文风抽取失败（激活已生效但风格页无数据）
+            parsed = agent.validate(out)
+            directive = (parsed.style_directive or "").strip()
+        except Exception as e:
+            last_err = str(e)
+            logger.warning(
+                "agent=style_extractor 第 %s/%s 次抽取失败：%s", attempt, MAX_STYLE_EXTRACT_RETRY, e
+            )
+            if attempt < MAX_STYLE_EXTRACT_RETRY:
+                await asyncio.sleep(STYLE_RETRY_DELAY_SECONDS)
+            continue
+        if directive:
+            break
+        # 空输出：可能是推理模型偶发"只思考不输出正文"，继续重试；重试耗尽仍为空视为"文档无风格内容"
+        if attempt < MAX_STYLE_EXTRACT_RETRY:
+            await asyncio.sleep(STYLE_RETRY_DELAY_SECONDS)
+
+    if not directive:
+        if last_err is not None:
+            logger.error(
+                "agent=style_extractor 重试 %s 次后仍失败：%s", MAX_STYLE_EXTRACT_RETRY, last_err
+            )
+            return {"action": "error", "applied": False, "style_directive": ""}
+        return {"action": "skipped", "applied": False, "style_directive": ""}
+
+    bp = db.execute(
+        select(Blueprint).where(Blueprint.id == blueprint_id).limit(1)
+    ).scalar_one_or_none()
+    if bp is None:
+        return {"action": "skipped", "applied": False, "style_directive": ""}
+    # 按蓝图版本存（幂等：同版本只存一份）
+    st = db.execute(
+        select(BlueprintStyle).where(BlueprintStyle.blueprint_id == blueprint_id).limit(1)
+    ).scalar_one_or_none()
+    if st is None:
+        st = BlueprintStyle(blueprint_id=blueprint_id, novel_id=novel_id, directive=directive)
+        db.add(st)
+    else:
+        st.directive = directive
+    # 仅当该蓝图处于生效中时刷新全局文风
+    if bp.status == "active":
+        db.flush()  # autoflush=False：先落库，sync 里才能按 blueprint_id 查到刚写入的文风
+        sync_active_blueprint_style(db, novel_id, blueprint_id)
+    else:
+        db.commit()
+    return {"action": "applied", "applied": True, "style_directive": directive}
 
 
 async def _validate_with_retry(
@@ -875,6 +904,12 @@ def _persist_novelist(
         db.add(chapter)
         db.flush()
 
+    # 正文与大纲版本关联：记录本章当前正文所用的具体大纲版本（同章不同版本内容可能不同，
+    # 关联必须精确到版本）。writer/reviser 均携带 outline_id；未携带（如自由草稿）则保留原值。
+    outline_id = params.get("outline_id")
+    if outline_id is not None:
+        chapter.outline_id = uuid.UUID(str(outline_id))
+
     last_ver = db.execute(
         select(func.max(ChapterVersion.version_no)).where(ChapterVersion.chapter_id == chapter.id)
     ).scalar() or 0
@@ -933,6 +968,9 @@ def _check_setting_gaps(db: Session, novel_id: uuid.UUID, content: str) -> list[
 def _persist_outliner(db: Session, novel_id: uuid.UUID, parsed: BaseModel) -> dict:
     """大纲师落库：outlines(draft)。账本不在大纲生成时维护——草稿章不碰账本，
     章节成稿时由 sync_ledger_from_outline 从该章大纲统一登记伏笔动作。
+
+    版本语义：同一章可存多个版本，新大纲按 (chapter_no) 最大 version_no + 1 插入，
+    不覆盖删除旧版（轻量历史版本，用户可回看/切换）。批准版是下游唯一依据。
     """
     from app.db.models import Outline
     from app.schemas.agents import ChapterOutline
@@ -941,17 +979,26 @@ def _persist_outliner(db: Session, novel_id: uuid.UUID, parsed: BaseModel) -> di
     ch = parsed.chapter
     chapter_no = ch.no
 
-    # 同 (novel, chapter_no) 覆盖旧大纲
-    db.query(Outline).filter(Outline.novel_id == novel_id, Outline.chapter_no == chapter_no).delete()
-    db.add(Outline(
+    # 同章已有版本数 → 新版本号 +1（无历史版本时从 1 开始）
+    max_ver = (
+        db.query(func.max(Outline.version_no))
+        .filter(Outline.novel_id == novel_id, Outline.chapter_no == chapter_no)
+        .scalar()
+    )
+    version_no = (max_ver or 0) + 1
+    row = Outline(
         novel_id=novel_id,
         chapter_no=chapter_no,
+        version_no=version_no,
         title=ch.title,
         content=ch.model_dump(mode="json"),  # mode=json：UUID → str，适配 JSON 列
         status="draft",
-    ))
+    )
+    db.add(row)
+    db.flush()  # 取回新大纲 id（供 stored 事件携带，前端可精确选中新版本）
+    new_id = str(row.id)
     db.commit()
-    return {"action": "persisted", "table": "outlines", "chapter_no": chapter_no}
+    return {"action": "persisted", "table": "outlines", "chapter_no": chapter_no, "version_no": version_no, "id": new_id}
 
 
 def sync_ledger_from_outline(db: Session, novel_id: uuid.UUID, chapter_no: int) -> None:
@@ -962,11 +1009,23 @@ def sync_ledger_from_outline(db: Session, novel_id: uuid.UUID, chapter_no: int) 
     """
     from app.db.models import Outline
 
+    # 同一章可能有多个版本（轻量历史版本）：账本只认「批准版」；
+    # 该章还没有批准版时，退回最新一版（避免多版本时 scalar_one_or_none 报错）。
     outline = db.execute(
-        select(Outline).where(
-            Outline.novel_id == novel_id, Outline.chapter_no == chapter_no
+        select(Outline)
+        .where(
+            Outline.novel_id == novel_id,
+            Outline.chapter_no == chapter_no,
+            Outline.status == "approved",
         )
-    ).scalar_one_or_none()
+        .order_by(Outline.version_no.desc())
+    ).scalars().first()
+    if outline is None:
+        outline = db.execute(
+            select(Outline)
+            .where(Outline.novel_id == novel_id, Outline.chapter_no == chapter_no)
+            .order_by(Outline.version_no.desc())
+        ).scalars().first()
     if outline is None:
         return  # 该章没有大纲，无可登记
 

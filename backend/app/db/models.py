@@ -119,16 +119,17 @@ class BlueprintStyle(Base):
 
 
 class Outline(Base):
-    """章节大纲（一章节一条）。"""
+    """章节大纲（同一章可存多个版本，version_no 递增；批准版是下游唯一依据）。"""
     __tablename__ = "outlines"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     novel_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("novels.id"), index=True)
     blueprint_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, ForeignKey("blueprints.id"), nullable=True)
     chapter_no: Mapped[int] = mapped_column(Integer, index=True)
+    version_no: Mapped[int] = mapped_column(Integer, default=1)  # 同章版本号，生成新大纲时递增
     title: Mapped[Optional[str]] = mapped_column(String(255))
     content: Mapped[dict] = mapped_column(JSON)  # goal/chapter_function/beats/pov/characters/locations/conflicts/plant/resolve/thread_updates
-    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|approved
+    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|approved（同章最多一个 approved）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
