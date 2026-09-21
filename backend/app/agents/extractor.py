@@ -3,8 +3,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.agents.base import Agent, ContextPack
-from app.agents.context import get_graph_relations_text, get_novel, get_settings_snapshot
-from app.db.models import PlotLedger
+from app.agents.context import get_graph_relations_text, get_novel, get_settings_snapshot, get_visible_open_ledger
 from app.schemas.agents import StoryStateExtract
 
 SYSTEM_PROMPT = """你是「提取师」，把成稿章节压缩为结构化记忆。
@@ -59,9 +58,8 @@ class ExtractorAgent(Agent[StoryStateExtract]):
         known_text = "、".join(s.name for s in known) or "（无）"
         # 待回收伏笔账本：resolved_foreshadowing 只能引用其中的真实 id，不得编造。
         # 按"紧迫度高优先 → 引入早优先"排序，最多 20 条，超出部分仅提示数量。
-        ledger_rows = self.db.query(PlotLedger).filter(
-            PlotLedger.novel_id == novel_id, PlotLedger.status == "open"
-        ).all()
+        # 只注入「来源版本仍批准」的账本（大纲来源），未批准版本的行对提取师不可见。
+        ledger_rows = get_visible_open_ledger(self.db, novel_id)
         ledger_rows.sort(key=lambda r: (-(r.urgency or 0), r.chapter_introduced or 0))
         top = ledger_rows[:20]
         ledger_text = "\n".join(

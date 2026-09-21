@@ -12,8 +12,11 @@ class ChapterVersionRead(BaseModel):
     id: uuid.UUID
     version_no: int
     source: str
+    title: Optional[str] = None  # 该版本自己的标题（草稿各自独立，供版本列表/正文区展示）
     content: str
     note: Optional[str]
+    outline_id: Optional[uuid.UUID] = None  # 该版本所用大纲版本
+    parent_version_id: Optional[uuid.UUID] = None  # 版本树父节点 id（null=根：新增/重新生成；非 null=评价优化产物）
     is_active: bool
     created_at: datetime
 

@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   getActiveBlueprint,
+  getAgentRunningTask,
   getChapter,
   listChapters,
   listOutlines,
   listReviews,
   runAgent,
   selectVersion,
+  type AgentRunningTaskResult,
   type Blueprint,
   type ChapterDetail,
   type ChapterListItem,
@@ -19,7 +21,8 @@ import {
 } from "@/lib/api";
 import InfoTip from "./info-tip";
 import Modal from "./modal";
-import AiRunDialog from "./agent-run-dialog";
+import AgentStreamModal from "./agent-stream-modal";
+import { useElapsed } from "@/lib/use-elapsed";
 import Loading from "@/components/loading";
 import { message } from "@/components/message";
 import { notification, closeNotification, removeNotification } from "@/components/notification";
@@ -167,12 +170,6 @@ function renderRewriteFailNotif(novelId: string) {
               <li className="rounded-md bg-red-100/70 px-2 py-1 dark:bg-red-900/50">
                 正文未重写：第 <span className="font-medium">{data.remainingRewrite.join("、")}</span> 章
                 （请「重新生成正文」）
-              </li>
-            )}
-            {data.remainingExtract.length > 0 && (
-              <li className="rounded-md bg-red-100/70 px-2 py-1 dark:bg-red-900/50">
-                记忆层未提取：第 <span className="font-medium">{data.remainingExtract.join("、")}</span> 章
-                （请点「提取 → 记忆层」）
               </li>
             )}
           </ul>
@@ -425,14 +422,26 @@ function groupChaptersByVolume(
 
 /** 版本来源的友好标签（章节详情版本列表用）。 */
 const SOURCE_LABELS: Record<string, string> = {
-  novelist: "初稿",
-  reviser: "按评价优化",
+  novelist: "初稿", // 新增章节首次生成
+  regenerate: "再稿", // 重新生成正文（novelist，根层平级）
+  reviser: "修订稿", // 评价优化（按评价修订）
   merged: "手动合并",
 };
 
 function sourceLabel(source: string): string {
   if (source.startsWith("novelist")) return "初稿";
   return SOURCE_LABELS[source] ?? source;
+}
+
+/** 版本来源 chip 配色（版本树弹窗用）：初稿=蓝、再稿=紫、修订稿=琥珀、其他=灰。 */
+function sourceChipClass(source: string): string {
+  if (source.startsWith("novelist"))
+    return "bg-sky-50 text-sky-700 ring-sky-500/25 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-500/25";
+  if (source === "regenerate")
+    return "bg-violet-50 text-violet-700 ring-violet-500/25 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/25";
+  if (source === "reviser")
+    return "bg-amber-50 text-amber-700 ring-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/25";
+  return "bg-zinc-100 text-zinc-600 ring-zinc-500/25 dark:bg-zinc-500/10 dark:text-zinc-300 dark:ring-zinc-500/25";
 }
 
 /** 自动增高文本框：高度跟随内容，封顶后内部滚动（用于「本章大纲目标」）。 */
@@ -442,12 +451,14 @@ function AutoTextarea({
   placeholder,
   className,
   maxHeight = 320,
+  disabled = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   className?: string;
   maxHeight?: number;
+  disabled?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
@@ -463,6 +474,7 @@ function AutoTextarea({
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       className={className}
+      disabled={disabled}
     />
   );
 }
@@ -516,6 +528,14 @@ export default function WritingPanel({ novelId }: Props) {
   const [reviewRun, setReviewRun] = useState<AiRunState | null>(null);
   const [showReviewRun, setShowReviewRun] = useState(false);
   const [reviseRun, setReviseRun] = useState<AiRunState | null>(null);
+
+  /** 各 AI 流程开始时间戳：供 AgentStreamModal 统计已用秒数（与蓝图/大纲页一致）。 */
+  const genStartRef = useRef<number | null>(null);
+  const reviewStartRef = useRef<number | null>(null);
+  const reviseStartRef = useRef<number | null>(null);
+  const genElapsed = useElapsed(genRun?.running ?? false, genStartRef.current);
+  const reviewElapsed = useElapsed(reviewRun?.running ?? false, reviewStartRef.current);
+  const reviseElapsed = useElapsed(reviseRun?.running ?? false, reviseStartRef.current);
   const [showReviseRun, setShowReviseRun] = useState(false);
   /**
    * 写后设定自检命中的疑似漏项：蓝图/设定里要求「成组同时出现」的内容只写了一部分
@@ -529,11 +549,17 @@ export default function WritingPanel({ novelId }: Props) {
    *  按章节隔离：切换章节后只对当前章做对比，不会把上一章的提取状态误带到本章。 */
   const [extractedChapterNo, setExtractedChapterNo] = useState<number | null>(null);
   const [extractedVersionId, setExtractedVersionId] = useState<string | null>(null);
+  /** 版本预览选中（本地态，不触发激活）：点版本 tab 切换预览的版本。
+   *  null = 走默认规则（有已定稿版本选已定稿版；全部未定稿选最新版）。
+   *  生成新草稿后不自动切换选中，只弹提示；切章/刷新详情时重置。 */
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
 
   // 弹窗开关
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
+  /** 版本树弹窗：标题旁版本号点击打开，多级无序列表展示全部版本（新增/重新生成=根，评价优化=子级）。 */
+  const [showVersionModal, setShowVersionModal] = useState(false);
   /** 重新生成模式：非 null 时新增章节弹窗以"重新生成当前章正文"语义工作（章节号锁定当前章）。 */
   const [regenerateNo, setRegenerateNo] = useState<number | null>(null);
 
@@ -590,6 +616,16 @@ export default function WritingPanel({ novelId }: Props) {
     (v) => v.trim(),
   ).length;
 
+  /** 当前预览选中的正文版本：决定正文区显示、复制/提取/评价的对象、顶部「定稿」按钮目标。
+   *  默认规则——有已定稿版本选已定稿版；全部未定稿选最新版；点版本 tab 可本地切换预览。 */
+  const selectedVersion =
+    (selectedVersionId != null
+      ? (detail?.versions.find((v) => v.id === selectedVersionId) ?? null)
+      : null) ??
+    (detail?.versions.find((v) => v.is_active) ?? detail?.versions[detail.versions.length - 1] ?? null);
+  /** 选中版本是否为已定稿（激活）版本：决定「定稿」/「提取」按钮是否可用。 */
+  const selectedIsFinal = selectedVersion?.is_active ?? false;
+
   /** 打开「新增章节」弹窗：按当前目录算好目标章号、回填该章已批大纲（若有）。 */
   const openAddModal = useCallback(() => {
     const o =
@@ -608,21 +644,23 @@ export default function WritingPanel({ novelId }: Props) {
   }, [approvedOutlines, form.writing_mode, nextNo]);
 
   /** 打开「重新生成正文」弹窗：复用新增章节弹窗，章节号锁定为当前章，其余字段可改。
-   *  后端 _persist_novelist 会基于该 chapter_no 追加一个新版本并自动定稿。 */
+   *  后端 _persist_novelist 会基于该 chapter_no 追加一个新草稿版本（需手动定稿）。
+   *  版本树：重新生成与新增章节平级，产物为根节点（handleGenerate 不传 parent_version_id）。 */
   const openRegenerateModal = useCallback(() => {
     if (activeNo == null) return;
     const o = approvedOutlines.find((x) => x.chapter_no === activeNo) ?? null;
     setForm((f) => ({
       ...f,
       chapter_no: activeNo,
-      title: detail?.title ?? o?.title ?? "",
+      // 预填当前选中版本的标题（草稿各自独立，谁被选中就用谁的标题）
+      title: selectedVersion?.title ?? detail?.title ?? o?.title ?? "",
       outline: o ? summarizeOutline(o) : "",
       chapter_function: "",
       writing_mode: o ? "outline_guided" : "draft_free",
     }));
     setRegenerateNo(activeNo);
     setShowAddModal(true);
-  }, [approvedOutlines, activeNo, detail]);
+  }, [approvedOutlines, activeNo, detail, selectedVersion]);
 
   /** 弹窗内切换写作模式：同步重算目标章号与大纲回填。 */
   function changeWritingMode(mode: string) {
@@ -665,7 +703,10 @@ export default function WritingPanel({ novelId }: Props) {
   const loadDetail = useCallback(
     async (no: number) => {
       try {
-        setDetail(await getChapter(novelId, no));
+        const d = await getChapter(novelId, no);
+        setDetail(d);
+        // 切章/刷新详情：重置版本预览选中，回到默认规则（有已定稿选已定稿、全草稿选最新）
+        setSelectedVersionId(null);
       } catch (e) {
         const msg = (e as Error).message;
         // 章节正文尚未生成（如大纲已批准但正文还没生成/上次生成未落库）→ 静默，不报红色错误
@@ -689,19 +730,27 @@ export default function WritingPanel({ novelId }: Props) {
   useEffect(() => {
     (async () => {
       try {
-        await Promise.all([
-          loadChapters(),
+        const [chs] = await Promise.all([
+          listChapters(novelId),
           loadApprovedOutlines(), // 默认：大纲约束 + 最新一章章节大纲
           // 拉取当前生效蓝图，用于章节目录按卷分组
           getActiveBlueprint(novelId)
             .then((bp) => setVolumes(bp?.content?.volumes ?? []))
             .catch(() => setVolumes([])),
         ]);
+        setChapters(chs);
+        // 进入页面默认选最新一章：有已定稿版本选中定稿正文、无定稿选最新创建的正文
+        // （selectedVersionId=null 走默认规则，loadDetail 内部会重置选中态）
+        if (chs.length > 0) {
+          const latest = chs.reduce((a, b) => (b.chapter_no > a.chapter_no ? b : a));
+          setActiveNo(latest.chapter_no);
+          void loadDetail(latest.chapter_no);
+        }
       } finally {
         setLoading(false);
       }
     })();
-  }, [loadChapters, loadApprovedOutlines, novelId]);
+  }, [loadChapters, loadApprovedOutlines, loadDetail, novelId]);
 
   // 后台任务（跨页/刷新恢复）由全局 AgentTaskToasts 轮询并提示；完成后派发
   // biling:agent-task-done 事件，这里负责刷新目录/正文，保持"自动落库并刷新"的行为
@@ -715,30 +764,80 @@ export default function WritingPanel({ novelId }: Props) {
     return () => window.removeEventListener("biling:agent-task-done", onDone);
   }, [loadChapters, loadDetail]);
 
+  /** 生成中状态持久化：刷新/切页后重新进入页面时，若后端仍有该小说的 novelist 任务进行中
+   *  （agent_tasks），恢复「生成中」状态（弹窗按钮禁用 + 计时 + 「查看生成过程」可用）并轮询到
+   *  任务结束，避免刷新后状态丢失、误以为可以再次生成。与大纲页 outliner 恢复同机制；
+   *  完成通知与数据刷新由全局 AgentTaskToasts（biling:agent-task-done）负责。 */
+  useEffect(() => {
+    let stopped = false;
+    void (async () => {
+      let r: AgentRunningTaskResult;
+      try {
+        r = await getAgentRunningTask("novelist", novelId);
+      } catch {
+        return; // 查询失败：不强行恢复
+      }
+      if (stopped || !r.running || !r.task) return;
+      const task = r.task;
+      // 恢复生成中状态：用后端累积的流式文字与任务真实开始时间（刷新前已流出的内容不丢）
+      genStartRef.current = task.started_at ? new Date(task.started_at).getTime() : Date.now();
+      setGenerating(true);
+      setGenRun({
+        thinking: task.progress?.thinking ?? "",
+        output: task.progress?.draft ?? "",
+        running: true,
+      });
+      // 轮询到任务结束（成功/失败均退出）
+      while (!stopped) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        let r2: AgentRunningTaskResult;
+        try {
+          r2 = await getAgentRunningTask("novelist", novelId);
+        } catch {
+          break; // 查询失败：停止轮询，不再强行维持「生成中」
+        }
+        if (r2.running && r2.task) {
+          const p = r2.task.progress;
+          if (p) setGenRun({ thinking: p.thinking, output: p.draft, running: true });
+          continue;
+        }
+        break;
+      }
+      if (!stopped) {
+        setGenerating(false);
+        setGenRun((g) => (g ? { ...g, running: false } : g));
+        setShowGenRun(false);
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [novelId]);
+
   const activeChapter = chapters.find((c) => c.chapter_no === activeNo) ?? null;
-  /** 当前激活（选中）的正文版本，用于把评价对齐到"你现在看到的这一版"。 */
-  const activeVersion = detail?.versions.find((v) => v.is_active) ?? null;
-  /** 只保留对得上当前正文的评价；接口已按时间倒序，取第一条即最近一次。 */
-  const currentReviews = (reviews ?? []).filter((r) => r.is_current);
+  /** 只保留属于当前选中版本的评价（原 is_current 过滤 → 绑定选中版本的 chapter_version_id）；
+   *  接口已按时间倒序，取第一条即最近一次。 */
+  const currentReviews = (reviews ?? []).filter((r) => r.chapter_version_id === selectedVersion?.id);
   const currentReview = currentReviews[0] ?? null;
-  /** 当前定稿正文还没有评价 → 「评价本章」按钮高亮提醒。
+  /** 当前选中版本还没有评价 → 「评价本章」按钮高亮提醒。
    *  reviews 为 null 表示评价还没加载完，此时一律不高亮，避免切换章节时的高亮闪烁。 */
   const reviewPending =
-    !!activeChapter?.active_content && reviews != null && !currentReview;
+    !!selectedVersion && reviews != null && !currentReview;
   /** 右侧正文区是否"有内容"：有正文版本或已选中某章时为 true → 撑满页面高度；
    *  无内容（未选章）时为 false → 自然高度，不让它强行占满整屏，也不反向把左侧模块带高。 */
   const hasContent = detail != null || activeNo != null;
-  /** 当前定稿正文还没提取过记忆层 → 高亮「提取→记忆层」。
+  /** 选中版本（须已定稿）还没提取过记忆层 → 高亮「提取→记忆层」。
    *  判定依据（任一命中即视为"已提取"，不高亮）：
    *    1. 本会话刚提取过当前章/当前版本（即时反馈）；
-   *    2. 持久化的提取记录（story_state.chapter_version_id）== 当前激活版本（刷新后仍准确）。
-   *  activeVersion 尚未加载（null）时不高亮，避免切换章节时闪烁。 */
+   *    2. 持久化的提取记录（story_state.chapter_version_id）== 当前选中版本（刷新后仍准确）。
+   *  选中版本尚未加载（null）时不高亮，避免切换章节时闪烁。 */
   const extractedMatch =
-    (extractedChapterNo === activeNo && extractedVersionId === activeVersion?.id) ||
+    (extractedChapterNo === activeNo && extractedVersionId === selectedVersion?.id) ||
     (activeChapter?.extracted_version_id != null &&
-      activeChapter.extracted_version_id === activeVersion?.id);
+      activeChapter.extracted_version_id === selectedVersion?.id);
   const extractPending =
-    !!activeChapter?.active_content && activeVersion != null && !extractedMatch;
+    !!selectedVersion && selectedIsFinal && !extractedMatch;
 
   /** 章节目录按卷分组（搜索为空时按卷归组；搜索时仅过滤、不折叠）。 */
   const volGroups = groupChaptersByVolume(chapters, volumes);
@@ -822,31 +921,43 @@ export default function WritingPanel({ novelId }: Props) {
     };
   }, [novelId, rewriteFail]);
 
-  async function handleGenerate() {
+  async function handleGenerate(override?: Partial<typeof form>) {
     setGenerating(true);
     setExtractResult(null);
     setSettingGaps(null);
+    genStartRef.current = Date.now();
     // 弹窗保持打开、不自动关闭；生成过程通过「查看 AI 过程」按钮实时查看
     setGenRun({ thinking: "", output: "", running: true });
 
+    // 用传入覆盖（如评价弹窗的「生成正文」）合成本次生成配置；form 保持新增弹窗的表单状态不动
+    const f = override ? { ...form, ...override } : form;
+
     const infoControl: Record<string, string> = {};
     for (const [k, v] of [
-      ["reader_knows", form.reader_knows],
-      ["protagonist_knows", form.protagonist_knows],
-      ["must_hide", form.must_hide],
-      ["hint_only", form.hint_only],
+      ["reader_knows", f.reader_knows],
+      ["protagonist_knows", f.protagonist_knows],
+      ["must_hide", f.must_hide],
+      ["hint_only", f.hint_only],
     ] as const) {
       if (v.trim()) infoControl[k] = v.trim();
     }
 
+    const tgt =
+      f.writing_mode === "outline_guided"
+        ? approvedOutlines.find((o) => o.chapter_no === f.chapter_no) ?? null
+        : null;
     const params: Record<string, unknown> = {
-      chapter_no: form.chapter_no,
-      title: form.title.trim() || undefined,
-      outline: form.outline.trim() || undefined,
-      outline_id: targetOutline?.id ?? undefined, // 正文-大纲版本关联：记录用的是哪个已批大纲版本
-      chapter_function: form.chapter_function || undefined, // 空 = 交给小说家自动判定
-      writing_mode: form.writing_mode,
-      goal: form.goal.trim() || undefined,
+      chapter_no: f.chapter_no,
+      title: f.title.trim() || undefined,
+      outline: f.outline.trim() || undefined,
+      outline_id: tgt?.id ?? undefined, // 正文-大纲版本关联：记录用的是哪个已批大纲版本
+      chapter_function: f.chapter_function || undefined, // 空 = 交给小说家自动判定
+      writing_mode: f.writing_mode,
+      goal: f.goal.trim() || undefined,
+      // 版本树：新增章节与重新生成正文平级，都是根节点（不传 parent_version_id）；
+      // 评价优化（reviser）单独传 parent_version_id=被优化版本，挂为子节点
+      // 来源标记：重新生成正文落 source="regenerate"（版本名「再稿」），与新增「初稿」区分
+      regenerate: regenerateNo != null ? true : undefined,
     };
     if (Object.keys(infoControl).length > 0) params.info_control = infoControl;
 
@@ -874,7 +985,7 @@ export default function WritingPanel({ novelId }: Props) {
             );
           } else if (action !== "dry_run") {
             showToast(
-              `第 ${form.chapter_no} 章新版本已生成并自动定稿。想换回旧版，请在下方章节详情点选历史版本。`,
+              `第 ${f.chapter_no} 章已生成草稿（新版本），可在版本列表切换预览，满意后手动定稿。`,
               "success",
             );
           }
@@ -890,23 +1001,37 @@ export default function WritingPanel({ novelId }: Props) {
     } finally {
       setGenerating(false);
       setGenRun((r) => (r ? { ...r, running: false } : r));
+      // 生成完成（成功或失败均视为完成）：关闭新增/重写弹窗与 AI 过程弹窗（对齐大纲页，弹窗不常驻）
+      setShowAddModal(false);
+      setRegenerateNo(null);
+      setShowGenRun(false);
       if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
-      setActiveNo(form.chapter_no);
+      setActiveNo(f.chapter_no);
       await loadChapters();
-      await loadDetail(form.chapter_no);
+      await loadDetail(f.chapter_no);
     }
   }
 
-  async function handleSelectVersion(versionId: string) {
+  /** 点版本 tab = 仅本地预览选中（不请求、不激活）。
+   *  定稿操作统一走顶部「定稿」按钮（handleFinalizeSelected），这里不做任何激活切换。 */
+  function handleSelectVersion(versionId: string) {
     if (!detail) return;
-    // 自己点自己（当前已定稿版本）：无意义，直接忽略，不处理也不弹提示
-    const target = detail.versions.find((v) => v.id === versionId);
-    if (target?.is_active) return;
+    if (!detail.versions.some((v) => v.id === versionId)) return;
+    setSelectedVersionId(versionId);
+  }
+
+  /** 顶部「定稿」按钮：将当前选中的草稿版本定稿激活（复用 select_version 接口，同步章级正文/标题/大纲），
+   *  原定稿版本随之变回草稿（同一时间只能定稿一个版本）。 */
+  async function handleFinalizeSelected() {
+    if (!detail || !selectedVersion || selectedIsFinal) return;
     try {
-      const updated = await selectVersion(novelId, detail.chapter_no, versionId);
+      const updated = await selectVersion(novelId, detail.chapter_no, selectedVersion.id);
       setDetail(updated);
-      // 页面正上方悬浮条（最新一条顶掉旧的），不再用含糊的蓝色横幅
-      showToast(`已切换到第 ${updated.chapter_no} 章定稿正文（v${activeVersionOf(updated)} · ${sourceLabel(versionOf(updated, versionId))}）`, "success");
+      setSelectedVersionId(selectedVersion.id);
+      showToast(
+        `第 ${updated.chapter_no} 章已定稿（v${selectedVersion.version_no} · ${sourceLabel(selectedVersion.source)}），可继续提取记忆层或生成下一章。`,
+        "success",
+      );
       await loadChapters();
       try {
         setReviews(await listReviews(novelId, updated.chapter_no));
@@ -918,17 +1043,10 @@ export default function WritingPanel({ novelId }: Props) {
     }
   }
 
-  function versionOf(d: ChapterDetail, versionId: string): string {
-    return d.versions.find((v) => v.id === versionId)?.source ?? "?";
-  }
-  function activeVersionOf(d: ChapterDetail): number {
-    return d.versions.find((v) => v.is_active)?.version_no ?? 0;
-  }
-
   async function handleCopyContent() {
-    if (!activeChapter?.active_content) return;
+    if (!selectedVersion?.content) return;
     try {
-      await navigator.clipboard.writeText(activeChapter.active_content);
+      await navigator.clipboard.writeText(selectedVersion.content);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -941,13 +1059,18 @@ export default function WritingPanel({ novelId }: Props) {
       showToast("请先在章节目录选择一章", "warning");
       return;
     }
-    if (!activeChapter.active_content) {
+    if (!selectedVersion) {
       showToast("该章尚未选定版本，无法提取。请先完成生成与选定。", "warning");
       return;
     }
-    // 提取时锁定「当前章节 + 当前激活版本」，用于后续判断正文是否被切换过
+    // 提取记忆层只对已定稿版本开放：草稿正文还没定稿，先定稿再提取
+    if (!selectedIsFinal) {
+      showToast("只有已定稿的正文才能提取入记忆层。请先点上方「定稿」再提取。", "warning");
+      return;
+    }
+    // 提取时锁定「当前章节 + 当前选中版本」，用于后续判断正文是否被切换过
     const chapterNo = activeChapter.chapter_no;
-    const versionId = activeVersion?.id ?? null;
+    const versionId = selectedVersion.id;
     setExtracting(true);
     setExtractResult(null);
     let out = "";
@@ -956,7 +1079,7 @@ export default function WritingPanel({ novelId }: Props) {
       await runAgent(
         "extractor",
         novelId,
-        { chapter_no: activeChapter.chapter_no, chapter_text: activeChapter.active_content },
+        { chapter_no: activeChapter.chapter_no, chapter_text: selectedVersion.content },
         (ev) => {
           // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
           if (liveNovelRef.current !== novelId) return;
@@ -993,12 +1116,13 @@ export default function WritingPanel({ novelId }: Props) {
       showToast("请先在章节目录选择一章", "warning");
       return;
     }
-    if (!activeChapter.active_content) {
+    if (!selectedVersion) {
       showToast("该章尚未选定版本，无法评价。请先完成生成与选定。", "warning");
       return;
     }
     setReviewing(true);
     setReviews(null);
+    reviewStartRef.current = Date.now();
     setReviewRun({ thinking: "", output: "", running: true });
     try {
       ensureReady();
@@ -1007,7 +1131,8 @@ export default function WritingPanel({ novelId }: Props) {
         novelId,
         {
           chapter_no: activeChapter.chapter_no,
-          chapter_text: activeChapter.active_content,
+          chapter_text: selectedVersion.content,
+          chapter_version_id: selectedVersion.id, // 评价绑定当前选中的版本（后端据此落 quality_reviews.chapter_version_id）
           writing_mode: "draft_free",
           outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
         },
@@ -1036,13 +1161,14 @@ export default function WritingPanel({ novelId }: Props) {
     } finally {
       setReviewing(false);
       setReviewRun((r) => (r ? { ...r, running: false } : r));
+      setShowReviewRun(false);
     }
   }
 
   /** 根部关系被删/改后，按序串行处理受影响的下游章节：
-   *   第 A 章重写正文（按该章已批大纲，无大纲则自由草稿）→ 第 A 章「提取→记忆层」→ 第 B 章重写 → 第 B 章提取 …
-   *  重写用的是 novelist（按大纲写新正文、追加为版本并自动定稿），不按评价来。
-   *  任一章失败即停止整个流程，弹右上角 error 通知分章列出未完成的正文/提取，交作者手动补齐（15s 自动关闭）。
+   *   第 A 章重写正文（按该章已批大纲，无大纲则自由草稿）→ 第 B 章重写 → …
+   *  重写用的是 novelist（按大纲写新正文、追加为草稿版本），不自动「提取→记忆层」：作者查看满意后手动定稿再提取。
+   *  任一章失败即停止整个流程，弹右上角 error 通知列出未重写的章节，交作者手动补齐（15s 自动关闭）。
    *  进度查看与手动生成完全一致：Message 提示 + 「查看 AI 过程」弹窗 + 目录/详情刷新。 */
   async function handleRerunAffected() {
     if (!affectedChapters || affectedChapters.length === 0) return;
@@ -1053,7 +1179,6 @@ export default function WritingPanel({ novelId }: Props) {
       ensureReady();
       let failedChapter: number | null = null;
       const doneRewrite: number[] = [];
-      const doneExtract: number[] = [];
       for (const no of target) {
         // 处理过程中切到其他小说：立即停止，不弹任何本小说的提示
         if (liveNovelRef.current !== novelId) return;
@@ -1096,59 +1221,24 @@ export default function WritingPanel({ novelId }: Props) {
         }
         if (failedChapter != null) break;
         doneRewrite.push(no);
-        showToast(`第 ${no} 章已按大纲重写完成`, "success");
-
-        // ── 2. 提取记忆层（用重写后的新正文）──
-        let fresh: ChapterListItem[] = [];
-        try {
-          fresh = await listChapters(novelId); // 目录刷新后才能拿到该章新定稿正文
-          setChapters(fresh);
-        } catch {
-          fresh = chapters;
-        }
-        const freshCh = fresh.find((c) => c.chapter_no === no) ?? null;
-        try {
-          await runAgent(
-            "extractor",
-            novelId,
-            { chapter_no: no, chapter_text: freshCh?.active_content ?? ch?.active_content },
-            (ev) => {
-              // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
-              if (liveNovelRef.current !== novelId) return;
-              if (ev.event === "stream_error") {
-                failedChapter = no;
-                showToast((ev.data as { message?: string }).message ?? `第 ${no} 章提取出错`, "error");
-              }
-            },
-          );
-        } catch (e) {
-          if (liveNovelRef.current !== novelId) return;
-          failedChapter = no;
-          showToast((e as Error).message, "error");
-        }
-        if (failedChapter != null) break;
-        doneExtract.push(no);
-        showToast(`第 ${no} 章已提取入记忆层`, "success");
-        void loadChapters();
-        if (activeNo === no) void loadDetail(no);
+        // 联动重写只生成草稿：不自动「提取→记忆层」，作者查看正文满意后手动定稿再提取
+        showToast(`第 ${no} 章已重写完成（草稿），可查看并手动定稿`, "success");
       }
 
       await loadChapters();
       if (liveNovelRef.current !== novelId) return; // 已切小说：不再弹本小说的汇总提示
       if (failedChapter != null) {
-        // 失败即停止：分章列出「正文未重写 / 记忆层未提取」，交作者手动补齐（含失败后还没轮到处理的章节）
+        // 失败即停止：列出「正文未重写」的章节，交作者手动补齐（含失败后还没轮到处理的章节）
         const remainingRewrite = target.filter((n) => !doneRewrite.includes(n));
-        const remainingExtract = target.filter((n) => !doneExtract.includes(n));
-        setRewriteFail({ failedChapter, remainingRewrite, remainingExtract });
+        setRewriteFail({ failedChapter, remainingRewrite, remainingExtract: [] });
         const tip = [];
         if (remainingRewrite.length > 0) tip.push(`正文未重写：第 ${remainingRewrite.join("、")} 章`);
-        if (remainingExtract.length > 0) tip.push(`记忆层未提取：第 ${remainingExtract.join("、")} 章`);
         showToast(
           `第 ${failedChapter} 章处理失败，联动已停止。${tip.length > 0 ? `剩余 ${tip.join("；")}，请手动补齐。` : ""}`,
           "error",
         );
       } else {
-        showToast("受影响章节已全部重写并重新提取，关系链已对齐", "success");
+        showToast(`已为第 ${target.join("、")} 章生成草稿，可逐个查看并手动定稿`, "success");
       }
     } catch (e) {
       showToast((e as Error).message, "error");
@@ -1161,19 +1251,20 @@ export default function WritingPanel({ novelId }: Props) {
       showToast("请先在章节目录选择一章", "warning");
       return;
     }
-    if (!activeChapter.active_content) {
+    if (!selectedVersion) {
       showToast("该章尚未选定版本，无法优化。请先完成生成与选定。", "warning");
       return;
     }
-    if (!review.is_current) {
+    if (review.chapter_version_id !== selectedVersion.id) {
       showToast(
-        `这条评价针对 v${review.version_no ?? "?"}，已不是当前正文。请先还原到该版本，或对当前正文重新评价。`,
+        `这条评价针对 v${review.version_no ?? "?"}，不是当前选中的正文。请先选中对应版本，或对当前正文重新评价。`,
         "warning",
       );
       return;
     }
     setRevising(true);
     setSettingGaps(null);
+    reviseStartRef.current = Date.now();
     setReviseRun({ thinking: "", output: "", running: true });
     try {
       ensureReady();
@@ -1182,11 +1273,12 @@ export default function WritingPanel({ novelId }: Props) {
         novelId,
         {
           chapter_no: activeChapter.chapter_no,
-          chapter_text: activeChapter.active_content,
+          chapter_text: selectedVersion.content,
           writing_mode: form.writing_mode,
           outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
           outline_id: approvedOutline?.id ?? undefined, // 正文-大纲版本关联
           chapter_function: form.chapter_function,
+          parent_version_id: selectedVersion.id, // 版本树：优化产物挂为被优化版本的子节点（可继续评价→优化递归）
           review: {
             overall_score: review.overall_score,
             rubric: review.rubric,
@@ -1208,7 +1300,7 @@ export default function WritingPanel({ novelId }: Props) {
             setSettingGaps(items.length ? items : null);
           } else if (ev.event === "stored") {
             showToast(
-              `已按评价问题优化第 ${activeChapter.chapter_no} 章并定稿为新版本。不满意可点下方版本列表里的旧版本一键还原（可重新评价）。`,
+              `已按评价问题优化第 ${activeChapter.chapter_no} 章，新版本为草稿，请手动定稿。`,
               "success",
             );
           } else if (ev.event === "stream_error") {
@@ -1221,12 +1313,75 @@ export default function WritingPanel({ novelId }: Props) {
     } finally {
       setRevising(false);
       setReviseRun((r) => (r ? { ...r, running: false } : r));
+      setShowReviseRun(false);
       if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
       setActiveNo(activeChapter.chapter_no);
       await loadChapters();
       await loadDetail(activeChapter.chapter_no);
     }
   }
+
+  /** 版本树递归渲染：新增章节与重新生成正文平级，均为根节点（parent_version_id=null）；
+   *  评价优化（reviser）挂在「当前选中版本」之下（parent=选中版本 id），可沿「选中→评价→优化」无限递进。
+   *  点击节点=选中预览该版本（与旧版本 tab 一致），选中后关闭弹窗。 */
+  const renderVersionNodes = (parentId: string | null): ReactNode[] => {
+    if (!detail) return [];
+    return detail.versions
+      .filter((v) => (parentId == null ? v.parent_version_id == null : v.parent_version_id === parentId))
+      .map((v) => {
+        const isSel = selectedVersion?.id === v.id;
+        const kids = renderVersionNodes(v.id);
+        return (
+          <li key={v.id}>
+            <button
+              type="button"
+              onClick={() => {
+                handleSelectVersion(v.id);
+                setShowVersionModal(false);
+              }}
+              title={v.is_active ? "已定稿版本（点击预览）" : isSel ? "当前预览的草稿版本（点上方「定稿」可定稿）" : "点击预览此版本（草稿，定稿需点上方「定稿」）"}
+              className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
+                isSel
+                  ? "bg-zinc-200/70 ring-1 ring-inset ring-zinc-400 dark:bg-zinc-700/70 dark:ring-zinc-500"
+                  : "hover:bg-zinc-100 dark:hover:bg-zinc-700/40"
+              }`}
+            >
+              {/* 节点圆点：绿=已定稿，灰=草稿 */}
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${
+                  v.is_active ? "bg-green-500 dark:bg-green-400" : "bg-zinc-300 dark:bg-zinc-600"
+                }`}
+              />
+              {/* 来源 chip */}
+              <span className={`shrink-0 rounded px-1.5 py-px text-[11px] font-medium ring-1 ring-inset ${sourceChipClass(v.source)}`}>
+                {sourceLabel(v.source)}
+              </span>
+              {/* 版本号 */}
+              <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">v{v.version_no}</span>
+              {/* 定稿/草稿 状态 */}
+              <span
+                className={`ml-auto shrink-0 font-medium ${
+                  v.is_active ? "text-green-600 dark:text-green-400" : "text-zinc-400 dark:text-zinc-500"
+                }`}
+              >
+                {v.is_active ? "已定稿" : "草稿"}
+              </span>
+              {/* 当前选中 */}
+              {isSel && (
+                <span className="shrink-0 rounded-md bg-zinc-800 px-1.5 py-px text-[10px] font-medium text-white dark:bg-zinc-200 dark:text-zinc-800">
+                  当前
+                </span>
+              )}
+            </button>
+            {kids.length > 0 && (
+              <ul className="mt-0.5 space-y-0.5 border-l border-zinc-200 pl-3.5 dark:border-zinc-700">
+                {kids}
+              </ul>
+            )}
+          </li>
+        );
+      });
+  };
 
   return (
     <Loading loading={loading}>
@@ -1241,8 +1396,21 @@ export default function WritingPanel({ novelId }: Props) {
               <span className="panel-hint">{chapters.length} 章</span>
               <button
                 type="button"
-                onClick={openAddModal}
-                className="btn btn-primary px-2.5 py-1 text-xs font-medium"
+                onClick={() => {
+                  // 最新一章尚未定稿 → 拦截：必须先定稿才能新增章节（空小说除外）
+                  const latest = [...chapters].sort((a, b) => b.chapter_no - a.chapter_no)[0];
+                  if (latest && latest.status !== "complete") {
+                    showToast(
+                      `最新一章（第 ${latest.chapter_no} 章）还是草稿，请先定稿后再新增章节。`,
+                      "warning",
+                    );
+                    return;
+                  }
+                  openAddModal();
+                }}
+                disabled={generating}
+                title={generating ? "正文生成中，暂不能新增章节" : undefined}
+                className="btn btn-primary px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
               >
                 新增章节
               </button>
@@ -1308,16 +1476,11 @@ export default function WritingPanel({ novelId }: Props) {
                                       : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
                                   }`}
                                   onClick={() => {
-                                    if (activeNo === c.chapter_no) {
-                                      setActiveNo(null);
-                                      setDetail(null);
-                                      setExtractResult(null);
-                                      setReviews(null);
-                                      return;
-                                    }
+                                    // 章节目录不允许取消选中：点击任意章节（含已选中）都保持/设为选中
                                     setActiveNo(c.chapter_no);
                                     setExtractResult(null);
                                     setReviews(null);
+                                    setSelectedVersionId(null);
                                     void loadDetail(c.chapter_no);
                                   }}
                                 >
@@ -1369,15 +1532,15 @@ export default function WritingPanel({ novelId }: Props) {
                   : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-700 dark:text-zinc-300 disabled:hover:border-zinc-300 dark:disabled:hover:border-zinc-700"
               } disabled:cursor-not-allowed disabled:opacity-100`}
               onClick={handleReview}
-              disabled={activeNo == null || reviewing || !activeChapter?.active_content}
+              disabled={activeNo == null || reviewing || !selectedVersion}
               title={
                 activeNo == null
                   ? "请先在章节目录选择一章"
-                  : !activeChapter?.active_content
+                  : !selectedVersion
                     ? "先选定版本再评价"
                     : currentReview
                       ? "对照蓝图/伏笔账本评价本章"
-                      : "当前定稿正文还没有评价，建议先评价本章"
+                      : "当前选中的正文还没有评价，建议先评价本章"
               }
             >
               {reviewing ? "评价中…" : "评价本章"}
@@ -1390,15 +1553,17 @@ export default function WritingPanel({ novelId }: Props) {
                   : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-700 dark:text-zinc-300 disabled:hover:border-zinc-300 dark:disabled:hover:border-zinc-700"
               } disabled:cursor-not-allowed disabled:opacity-100`}
               onClick={handleExtract}
-              disabled={activeNo == null || extracting}
+              disabled={activeNo == null || extracting || !selectedVersion || !selectedIsFinal}
               title={
                 activeNo == null
                   ? "请先在章节目录选择一章"
-                  : !activeChapter?.active_content
+                  : !selectedVersion
                     ? "先选定版本再提取"
-                    : extractPending
-                      ? "当前定稿正文还没提取过记忆层（或已切到新版本），建议先提取"
-                      : "把本章摘要/角色状态/伏笔写进记忆层"
+                    : !selectedIsFinal
+                      ? "只有已定稿的正文才能提取入记忆层，请先点上方「定稿」"
+                      : extractPending
+                        ? "当前版本尚未提取记忆层，重新提取后才会进入记忆（或已切到新版本）"
+                        : "把本章摘要/角色状态/伏笔写进记忆层"
               }
             >
               {extracting ? "提取中…" : "提取 → 记忆层"}
@@ -1419,7 +1584,7 @@ export default function WritingPanel({ novelId }: Props) {
             <button
               type="button"
               onClick={handleCopyContent}
-              disabled={activeNo == null || !activeChapter?.active_content}
+              disabled={activeNo == null || !selectedVersion}
               className="w-full cursor-pointer rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-600 hover:border-zinc-500 disabled:cursor-not-allowed disabled:hover:border-zinc-300 disabled:opacity-100 dark:border-zinc-700 dark:text-zinc-300 dark:disabled:hover:border-zinc-700"
             >
               {copied ? "已复制 ✓" : "复制本章正文"}
@@ -1439,18 +1604,55 @@ export default function WritingPanel({ novelId }: Props) {
             <div className="panel-head">
               <h3 className="panel-title">
                 第 {detail.chapter_no} 章
-                {detail.title ? ` ${detail.title}` : ""}
+                {(selectedVersion?.title ?? detail.title) ? ` ${selectedVersion?.title ?? detail.title}` : ""}
+                {/* 标题旁版本标识：版本名 · v{n}，点击弹出多级版本树弹窗（新增/重新生成=根，评价优化=子级） */}
+                <button
+                  type="button"
+                  onClick={() => setShowVersionModal(true)}
+                  className="ml-1 inline-flex cursor-pointer items-baseline gap-1 rounded-md px-1.5 py-0.5 align-middle transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  title="点击查看全部版本（多级版本树，可点击切换预览）"
+                >
+                  {selectedVersion ? (
+                    <>
+                      <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                        {sourceLabel(selectedVersion.source)}
+                      </span>
+                      <span className="text-xs font-semibold tabular-nums text-zinc-600 dark:text-zinc-300">
+                        · v{selectedVersion.version_no}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">v?</span>
+                  )}
+                </button>
                 <span className="ml-1 text-xs font-normal text-zinc-500">
-                  {detail.status === "complete" ? "已定稿" : "草稿"}
+                  {selectedIsFinal ? "已定稿" : "草稿"}
                 </span>
               </h3>
               <div className="flex items-center gap-2">
+                {/* 定稿：把当前选中的草稿版本定稿激活（同一时间只能定稿一个版本）；选中已定稿版本时隐藏 */}
+                {!selectedIsFinal && (
+                  <button
+                    type="button"
+                    onClick={() => void handleFinalizeSelected()}
+                    disabled={activeNo == null || generating || !selectedVersion}
+                    className="btn btn-primary px-3 py-1.5 text-xs font-medium"
+                    title={
+                      activeNo == null || !selectedVersion
+                        ? "请先选择一章"
+                        : "将当前选中的草稿版本定稿为本章正文"
+                    }
+                  >
+                    定稿
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={openRegenerateModal}
-                  disabled={activeNo == null || generating}
+                  // 生成中不禁用：要能再次打开弹窗查看「查看生成过程」进度（弹窗内「生成正文」仍禁用防重复）
+                  disabled={activeNo == null}
                   className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                  title="复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个版本）"
+                  title="复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）"
                 >
                   重新生成正文
                 </button>
@@ -1464,24 +1666,6 @@ export default function WritingPanel({ novelId }: Props) {
                   评价与优化
                 </button>
               </div>
-            </div>
-            <div className="mb-3 flex shrink-0 flex-wrap gap-1.5">
-              {detail.versions.map((v) => (
-                <button
-                  key={v.id}
-                  title={v.is_active ? "当前版本（已定稿）" : "点击还原到此版本"}
-                  disabled={v.is_active}
-                  className={`cursor-pointer rounded-lg border px-2.5 py-1 text-xs transition-colors disabled:cursor-default disabled:opacity-100 ${
-                    v.is_active
-                      ? "border-green-500 bg-green-50 text-green-700 dark:bg-green-900 dark:text-green-300"
-                      : "border-zinc-300 hover:border-zinc-500 dark:border-zinc-700"
-                  }`}
-                  onClick={() => handleSelectVersion(v.id)}
-                >
-                  {sourceLabel(v.source)} · v{v.version_no}
-                  {v.is_active ? " ✓" : ""}
-                </button>
-              ))}
             </div>
             {/* 写后设定自检：本轮 AI 输出疑似漏写了某组成组内容时给出明确告警 */}
             {settingGaps && settingGaps.length > 0 && (
@@ -1502,13 +1686,13 @@ export default function WritingPanel({ novelId }: Props) {
                 </p>
               </div>
             )}
-            {activeChapter?.active_content ? (
+            {selectedVersion ? (
               <div className="reading flex-1 min-h-0 overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50 p-5 whitespace-pre-wrap dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
-                {activeChapter.active_content}
+                {selectedVersion.content}
               </div>
             ) : (
               <p className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs text-zinc-400 dark:border-zinc-700">
-                本章还没有定稿正文。
+                本章还没有已选定的正文版本。
               </p>
             )}
           </div>
@@ -1562,7 +1746,7 @@ export default function WritingPanel({ novelId }: Props) {
         subtitle={
           regenerateNo != null
             ? `将基于当前章节设置重新生成第 ${form.chapter_no} 章正文（新增为一个版本），标题 / 大纲目标 / 章节功能等均可修改。`
-            : `将追加为第 ${nextNo} 章（目录最新一章的下一章），生成后自动定稿。`
+            : `将追加为第 ${nextNo} 章（目录最新一章的下一章），生成后为草稿，需手动定稿。`
         }
         onClose={() => {
           setShowAddModal(false);
@@ -1583,19 +1767,20 @@ export default function WritingPanel({ novelId }: Props) {
               </span>
               <button
                 type="button"
-                onClick={handleGenerate}
+                onClick={() => void handleGenerate()}
                 disabled={generating || !canAdd}
                 className="btn btn-primary px-4 py-1.5 disabled:opacity-50"
               >
                 {generating ? "生成中…" : "生成正文"}
               </button>
-              {genRun && (
+              {/* 点击生成后出现：打开生成过程弹窗（与大纲新增弹窗一致，仅生成中显示） */}
+              {generating && (
                 <button
                   type="button"
                   onClick={() => setShowGenRun(true)}
                   className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
                 >
-                  {genRun.running ? "查看 AI 过程…" : "查看 AI 过程"}
+                  查看生成过程
                 </button>
               )}
             </div>
@@ -1613,9 +1798,10 @@ export default function WritingPanel({ novelId }: Props) {
               </InfoTip>
             </span>
             <select
-              className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
               value={form.writing_mode}
               onChange={(e) => changeWritingMode(e.target.value)}
+              disabled={generating}
             >
               <option value="outline_guided">大纲约束（按大纲）</option>
               <option value="draft_free">自由草稿（不按大纲）</option>
@@ -1642,10 +1828,11 @@ export default function WritingPanel({ novelId }: Props) {
             <label className="flex flex-col gap-1">
               <span className="text-xs text-zinc-500">章节名称</span>
               <input
-                className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                 placeholder="章节标题（留空则 AI 自动生成）"
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
+                disabled={generating}
               />
             </label>
           )}
@@ -1653,9 +1840,10 @@ export default function WritingPanel({ novelId }: Props) {
           <label className="flex flex-col gap-1">
             <span className="text-xs text-zinc-500">章节功能</span>
             <select
-              className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
               value={form.chapter_function}
               onChange={(e) => setForm({ ...form, chapter_function: e.target.value })}
+              disabled={generating}
             >
               <option value="">章节功能：自动判定</option>
               {FUNCTIONS.map(([v, l]) => (
@@ -1672,6 +1860,7 @@ export default function WritingPanel({ novelId }: Props) {
               value={form.outline}
               onChange={(v) => setForm({ ...form, outline: v })}
               maxHeight={200}
+              disabled={generating}
               placeholder={
                 form.writing_mode === "outline_guided"
                   ? "已自动来自该章已批大纲，可微调后交给小说家"
@@ -1696,7 +1885,8 @@ export default function WritingPanel({ novelId }: Props) {
             <button
               type="button"
               onClick={openInfoModal}
-              className="btn btn-ghost px-2.5 py-1 text-xs font-medium"
+              disabled={generating}
+              className="btn btn-ghost px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
             >
               {infoFilledCount > 0 ? `已填 ${infoFilledCount} 项 · 编辑` : "填写"}
             </button>
@@ -1781,7 +1971,7 @@ export default function WritingPanel({ novelId }: Props) {
         maxWidth="max-w-2xl"
         subtitle={
           detail
-            ? `第 ${detail.chapter_no} 章${detail.title ? ` ${detail.title}` : ""} · 当前正文：v${activeVersion?.version_no ?? "?"}${activeVersion ? ` ${sourceLabel(activeVersion.source)}` : ""}`
+            ? `第 ${detail.chapter_no} 章${(selectedVersion?.title ?? detail.title) ? ` ${selectedVersion?.title ?? detail.title}` : ""} · 当前选中正文：v${selectedVersion?.version_no ?? "?"}${selectedVersion ? ` ${sourceLabel(selectedVersion.source)}` : ""}`
             : undefined
         }
         onClose={() => setShowReviewModal(false)}
@@ -1792,14 +1982,15 @@ export default function WritingPanel({ novelId }: Props) {
               review={currentReview}
               onRevise={handleRevise}
               revising={revising}
+              activeVersionId={selectedVersion?.id ?? null}
               viewButton={
-                reviseRun ? (
+                revising ? (
                   <button
                     type="button"
                     onClick={() => setShowReviseRun(true)}
                     className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
                   >
-                    {reviseRun.running ? "查看 AI 过程…" : "查看 AI 过程"}
+                    查看生成过程
                   </button>
                 ) : undefined
               }
@@ -1807,10 +1998,10 @@ export default function WritingPanel({ novelId }: Props) {
           ) : (
             <div className="rounded-lg border border-dashed border-zinc-300 p-5 text-center dark:border-zinc-700">
               <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
-                {activeChapter?.active_content ? (
+                {selectedVersion ? (
                   <>
-                    当前正文（v{activeVersion?.version_no ?? "?"}
-                    {activeVersion ? ` ${sourceLabel(activeVersion.source)}` : ""}）还没有评价。
+                    当前选中正文（v{selectedVersion.version_no}
+                    {selectedVersion ? ` ${sourceLabel(selectedVersion.source)}` : ""}）还没有评价。
                     点下方「评价本章」，评价师会对照蓝图、伏笔账本与设定逐项打分。
                   </>
                 ) : (
@@ -1820,18 +2011,18 @@ export default function WritingPanel({ novelId }: Props) {
               <div className="mt-2.5 flex items-center justify-center gap-2">
                 <button
                   onClick={handleReview}
-                  disabled={reviewing || !activeChapter?.active_content}
+                  disabled={reviewing || !selectedVersion}
                   className="btn btn-primary px-3 py-1.5 text-xs font-medium"
                 >
                   {reviewing ? "评价中…" : "评价本章"}
                 </button>
-                {reviewRun && (
+                {reviewing && (
                   <button
                     type="button"
                     onClick={() => setShowReviewRun(true)}
                     className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
                   >
-                    {reviewRun.running ? "查看 AI 过程…" : "查看 AI 过程"}
+                    查看生成过程
                   </button>
                 )}
               </div>
@@ -1842,33 +2033,80 @@ export default function WritingPanel({ novelId }: Props) {
         )}
       </Modal>
 
-      {/* ── AI 处理过程弹窗（通用组件）：生成正文 / 评价 / 优化共用 ── */}
-      <AiRunDialog
+      {/* ── 版本树弹窗：标题旁版本号点击打开，多级无序列表展示全部版本（新增/重新生成=根，评价优化=子级，可递进） ── */}
+      <Modal
+        open={showVersionModal}
+        title={detail ? `第 ${detail.chapter_no} 章版本` : "版本"}
+        maxWidth="max-w-md"
+        subtitle="新增章节与重新生成正文为平级根节点；「评价优化」的产物挂在被优化版本之下，可一直递进。点击节点切换预览。"
+        onClose={() => setShowVersionModal(false)}
+      >
+        {detail && detail.versions.length > 0 ? (
+          <div className="space-y-3">
+            {/* 当前选中摘要 */}
+            <div className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400">
+              <span className="shrink-0">当前选中：</span>
+              {selectedVersion ? (
+                <span className="flex min-w-0 items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-100">
+                  <span className={`shrink-0 rounded px-1.5 py-px text-[11px] font-medium ring-1 ring-inset ${sourceChipClass(selectedVersion.source)}`}>
+                    {sourceLabel(selectedVersion.source)}
+                  </span>
+                  <span className="shrink-0 tabular-nums">v{selectedVersion.version_no}</span>
+                  <span className={`shrink-0 ${selectedIsFinal ? "text-green-600 dark:text-green-400" : "text-zinc-400 dark:text-zinc-500"}`}>
+                    {selectedIsFinal ? "已定稿" : "草稿"}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-zinc-400">无</span>
+              )}
+            </div>
+            {/* 版本树：根=新增/重新生成，子=评价优化 */}
+            <ul className="space-y-1">{renderVersionNodes(null)}</ul>
+          </div>
+        ) : (
+          <p className="py-6 text-center text-xs text-zinc-400">本章还没有任何版本，先去生成正文吧。</p>
+        )}
+      </Modal>
+
+      {/* ── AI 处理过程弹窗：生成正文 / 评价 / 优化统一复用蓝图、大纲页的公共组件（DeepSeek 同款交互） ── */}
+      <AgentStreamModal
         open={showGenRun}
-        title={`小说家 · 第 ${form.chapter_no} 章 · ${regenerateNo != null ? "重新生成正文" : "新增正文"}`}
-        subtitle="AI 正在生成正文，思考过程与输出文字实时滚动显示；关闭弹窗不会中断任务。"
-        thinking={genRun?.thinking ?? ""}
-        output={genRun?.output ?? ""}
-        running={genRun?.running ?? false}
         onClose={() => setShowGenRun(false)}
+        title={`小说家 · 第 ${regenerateNo ?? form.chapter_no} 章 · ${regenerateNo != null ? "重新生成正文" : "新增正文"}`}
+        running={genRun?.running ?? false}
+        draftText={genRun?.output ?? ""}
+        thinkingText={genRun?.thinking ?? ""}
+        elapsed={genElapsed}
+        emptyRunningText={
+          "小说家正在构思正文（推理模型思考期约 1-3 分钟，此阶段通常没有正文输出），\n正文开始生成后会在这里实时滚动显示…"
+        }
+        emptyDoneText="生成完成，正文已落库为草稿版本，请手动定稿。"
       />
-      <AiRunDialog
+      <AgentStreamModal
         open={showReviewRun}
-        title={`评价师 · 评价第 ${activeNo ?? "?"} 章`}
-        subtitle="评价师正在对照蓝图、伏笔账本与设定逐项打分；思考过程与输出文字实时滚动显示。"
-        thinking={reviewRun?.thinking ?? ""}
-        output={reviewRun?.output ?? ""}
-        running={reviewRun?.running ?? false}
         onClose={() => setShowReviewRun(false)}
+        title={`评价师 · 评价第 ${activeNo ?? "?"} 章`}
+        running={reviewRun?.running ?? false}
+        draftText={reviewRun?.output ?? ""}
+        thinkingText={reviewRun?.thinking ?? ""}
+        elapsed={reviewElapsed}
+        emptyRunningText={
+          "评价师正在对照蓝图、伏笔账本与设定逐项评审（推理模型思考期约 1-3 分钟），\n评价内容开始输出后会在这里实时滚动显示…"
+        }
+        emptyDoneText="评价完成，结果已展示在下方评价卡片。"
       />
-      <AiRunDialog
+      <AgentStreamModal
         open={showReviseRun}
-        title={`修订师 · 优化第 ${activeNo ?? "?"} 章`}
-        subtitle="修订师正在逐条对照评价问题优化正文；思考过程与输出文字实时滚动显示。"
-        thinking={reviseRun?.thinking ?? ""}
-        output={reviseRun?.output ?? ""}
-        running={reviseRun?.running ?? false}
         onClose={() => setShowReviseRun(false)}
+        title={`修订师 · 优化第 ${activeNo ?? "?"} 章`}
+        running={reviseRun?.running ?? false}
+        draftText={reviseRun?.output ?? ""}
+        thinkingText={reviseRun?.thinking ?? ""}
+        elapsed={reviseElapsed}
+        emptyRunningText={
+          "修订师正在逐条对照评价问题优化正文（推理模型思考期约 1-3 分钟），\n优化后的正文开始输出后会在这里实时滚动显示…"
+        }
+        emptyDoneText="优化完成，已生成新草稿版本，请手动定稿。"
       />
       </div>
     </Loading>
@@ -1880,11 +2118,14 @@ function ReviewCard({
   review,
   onRevise,
   revising,
+  activeVersionId,
   viewButton,
 }: {
   review: QualityReview;
   onRevise: (r: QualityReview) => void;
   revising: boolean;
+  /** 当前预览选中的版本 id：评价与选中版本对得上才可「按评价优化」。 */
+  activeVersionId: string | null;
   /** 出现在「按评价优化本章」左侧的附加按钮（如：查看 AI 过程）。 */
   viewButton?: ReactNode;
 }) {
@@ -1892,6 +2133,8 @@ function ReviewCard({
   const rubricEntries = Object.entries(rubric);
   const scoreColor = (s?: number) =>
     s == null ? "" : s >= 80 ? "text-green-600" : s >= 60 ? "text-amber-600" : "text-red-600";
+  /** 评价是否针对当前预览选中的版本（原 is_current 由后端按激活版本标记 → 改为按选中版本判断）。 */
+  const matchesActive = activeVersionId != null && review.chapter_version_id === activeVersionId;
   return (
     <div className="rounded-lg bg-sunken/40 p-4">
       <div className="mb-3 flex items-center gap-3">
@@ -1904,19 +2147,19 @@ function ReviewCard({
             {review.version_no != null && (
               <span
                 title={
-                  review.is_current
-                    ? `针对当前正文 v${review.version_no}`
-                    : "针对已被取代的旧版本"
+                  matchesActive
+                    ? `针对当前选中的正文 v${review.version_no}`
+                    : "针对其他版本（当前未选中）"
                 }
                 className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                  review.is_current
+                  matchesActive
                     ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
                     : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
                 }`}
               >
                 v{review.version_no}
                 {review.version_source ? ` ${sourceLabel(review.version_source)}` : ""}
-                {review.is_current ? "" : " · 旧版本"}
+                {matchesActive ? "" : " · 未选中"}
               </span>
             )}
           </div>
@@ -1988,9 +2231,9 @@ function ReviewCard({
         )}
       </div>
 
-      {review.is_current ? (
+      {matchesActive ? (
         <div className="mt-3 flex items-center justify-between gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-          <p className="text-[11px] text-zinc-400">修订师会逐条对照以上问题优化当前正文（v{review.version_no}），保留原情节走向，修订版存为新版本。</p>
+          <p className="text-[11px] text-zinc-400">修订师会逐条对照以上问题优化当前选中的正文（v{review.version_no}），保留原情节走向，优化后存为新草稿版本。</p>
           <div className="flex shrink-0 items-center gap-2">
             {viewButton}
             <button
@@ -2007,8 +2250,8 @@ function ReviewCard({
           <p className="text-[11px] text-zinc-400">
             这条评价针对 v{review.version_no}
             {review.version_source ? `（${sourceLabel(review.version_source)}）` : ""}，
-            当前正文已是更新的版本，评价不再对得上。要点上方版本列表的「v{review.version_no}」
-            还原后再优化，或直接对当前正文重新评价。
+            当前选中的正文不是该版本，评价对不上。先在下方版本列表选中「v{review.version_no}」
+            再优化，或直接对当前选中的正文重新评价。
           </p>
         </div>
       )}

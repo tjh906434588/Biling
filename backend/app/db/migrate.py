@@ -20,10 +20,18 @@ _ADD_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("aliases", "TEXT"),
         ("merged_into_id", "CHAR(36)"),
         ("source", "VARCHAR(16) NOT NULL DEFAULT 'manual'"),
+        ("outline_ids", "TEXT"),  # 大纲批准时注入的角色设定：来源大纲版本（可多值，跨章多个），任一来源仍批准即可见
     ],
     "plot_ledger": [
         ("since_chapter", "INTEGER"),
         ("invalidated_at_chapter", "INTEGER"),
+        ("source", "VARCHAR(16) NOT NULL DEFAULT 'outline'"),  # 数据来源（隐形）：outline|extractor|manual
+        ("outline_id", "CHAR(36)"),  # 来源大纲版本 id（source=outline 时，隐形字段不展示）
+    ],
+    "chapter_versions": [
+        ("title", "VARCHAR(255)"),  # 该版本自己的标题（草稿各自独立，定稿时同步回章）
+        ("outline_id", "CHAR(36)"),  # 该版本正文所用的大纲版本 id
+        ("parent_version_id", "CHAR(36)"),  # 版本树父节点：评价优化产物挂到被优化版本下（多级树）
     ],
     "story_state": [
         ("since_chapter", "INTEGER"),

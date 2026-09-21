@@ -61,14 +61,49 @@ def list_settings(
     q: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """设定条目列表；GET 支持 ?type=&q=（M1 起 q 走语义检索，M0 为名称/描述 LIKE）。"""
+    """设定条目列表；GET 支持 ?type=&q=（M1 起 q 走语义检索，M0 为名称/描述 LIKE）。
+
+    版本过滤（与 agent 上下文 get_settings_snapshot 一致）：
+    - source="blueprint"：只显示当前生效蓝图的导入设定，其余版本隐藏（可切回恢复）；
+    - source="outline"：大纲注入设定记录来源版本（outline_ids，可跨章多值），
+      只要任一来源版本仍是「该章当前批准版」即显示，全部来源不再批准才隐藏。
+    手动/批量设定（batch/manual）始终显示。
+    """
+    from app.db.models import Blueprint, Outline
+
+    # 当前生效蓝图的 id（无则 None → 蓝图设定整体隐藏）
+    active_bp_id = db.execute(
+        select(Blueprint.id)
+        .where(Blueprint.novel_id == novel_id, Blueprint.status == "active")
+        .order_by(Blueprint.version.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    # 各章当前批准版大纲 id（无则空集 → outline 注入设定整体隐藏）；与 outline_ids 均按字符串比较
+    approved_outline_ids = {
+        str(x)
+        for x in db.execute(
+            select(Outline.id).where(Outline.novel_id == novel_id, Outline.status == "approved")
+        ).scalars()
+    }
+
     stmt = select(Setting).where(Setting.novel_id == novel_id, Setting.deleted_at.is_(None))
     if type:
         stmt = stmt.where(Setting.type == type)
     if q:
         like = f"%{q}%"
         stmt = stmt.where(Setting.name.like(like) | Setting.description.like(like))
-    return db.execute(stmt.order_by(Setting.type, Setting.name)).scalars().all()
+    rows = db.execute(stmt.order_by(Setting.type, Setting.name)).scalars().all()
+    rows = [
+        s
+        for s in rows
+        if s.source != "blueprint" or (s.blueprint_id is not None and s.blueprint_id == active_bp_id)
+    ]
+    rows = [
+        s
+        for s in rows
+        if s.source != "outline" or (s.outline_ids and any(o in approved_outline_ids for o in s.outline_ids))
+    ]
+    return rows
 
 
 @router.post("/{novel_id}/settings", response_model=SettingRead)

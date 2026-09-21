@@ -20,6 +20,7 @@ import {
   type BlueprintRunStatus,
 } from "@/lib/blueprint-run";
 import { useElapsed } from "@/lib/use-elapsed";
+import AgentStreamModal from "./agent-stream-modal";
 import ConfirmDialog from "./confirm-dialog";
 import InfoTip from "./info-tip";
 import Modal from "./modal";
@@ -51,9 +52,8 @@ export default function BlueprintPanel({ novelId }: Props) {
   // 正在后台激活的蓝图 id（按钮防抖 + 刷新/切页后从后端恢复「激活中…」；成功/失败才置空）
   const [activatingId, setActivatingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  // 生成过程弹窗（DeepSeek 风格：思考过程折叠块 + 正文流式滚动）；thinkingOpen 为思考块展开状态
+  // 生成过程弹窗（DeepSeek 风格：思考过程折叠块 + 正文流式滚动），内容展示复用公共组件
   const [showStreamModal, setShowStreamModal] = useState(false);
-  const [thinkingOpen, setThinkingOpen] = useState(true);
   const { ensureReady } = useAiStatus();
 
   // 输入框内容：可手填作者要求，或「导入大纲」后填入文档全文（此时点「识别为蓝图」）
@@ -253,18 +253,7 @@ export default function BlueprintPanel({ novelId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.status, run.novelId, novelId, run.errMsg, run.msg]);
 
-  // 流式输出自动滚到底部（含思考过程）
-  const streamRef = useRef<HTMLPreElement | null>(null);
-  useEffect(() => {
-    const el = streamRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [run.draftText, run.thinkingText, running]);
-
-  // 思考过程折叠块：生成中自动展开，生成完成后自动收起（DeepSeek 网页版同款交互）
-  useEffect(() => {
-    if (running) setThinkingOpen(true);
-    else if (run.status === "done") setThinkingOpen(false);
-  }, [running, run.status]);
+  // 生成过程弹窗：流式滚动与思考折叠在公共组件 AgentStreamModal 内处理
 
   // 默认选中当前生效中的蓝图（无则回退第一条）；用户手动点选后以点选为准
   const selected = items.find((b) => b.id === selectedId) ?? items.find((b) => b.status === "active") ?? items[0] ?? null;
@@ -691,10 +680,7 @@ export default function BlueprintPanel({ novelId }: Props) {
               {run.novelId === novelId && running && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setThinkingOpen(running);
-                    setShowStreamModal(true);
-                  }}
+                  onClick={() => setShowStreamModal(true)}
                   className="btn btn-ghost px-3 py-1.5"
                 >
                   查看生成过程
@@ -827,79 +813,21 @@ export default function BlueprintPanel({ novelId }: Props) {
         </div>
       </Modal>
 
-      {/* ── 生成过程弹窗：DeepSeek 网页版同款交互——思考过程 + 蓝图正文流式滚动显示 ── */}
-      <Modal
+      {/* ── 生成过程弹窗：DeepSeek 网页版同款交互（复用公共组件） ── */}
+      <AgentStreamModal
         open={showStreamModal}
-        title="蓝图师生成过程"
-        subtitle={
-          running
-            ? "生成进行中，正文实时滚动…（用时见下方统计）"
-            : run.status === "error"
-              ? "生成出错，已通过消息提示告知原因"
-              : "生成已完成"
-        }
         onClose={() => setShowStreamModal(false)}
-        maxWidth="max-w-2xl"
-        fullHeight
-      >
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
-          {/* 蓝图内容（DeepSeek 网页版同款流式输出）：思考过程折叠在模块内，下方正文实时滚动 */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-3.5 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-              <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">蓝图内容</h4>
-              <span className="font-mono text-[11px] text-zinc-400">
-                {running ? `已输出 ${run.draftText.length} 字 · 已用时 ${elapsed}s` : `共 ${run.draftText.length} 字`}
-              </span>
-            </div>
-
-            {/* 深度思考折叠条：生成中自动展开、完成自动收起，可点击展开/收起（豆包/DeepSeek 折叠样式） */}
-            {run.thinkingText ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setThinkingOpen((v) => !v)}
-                  className="flex w-full shrink-0 items-center gap-2 border-b border-zinc-200 bg-zinc-50/60 px-3.5 py-1.5 text-left text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                >
-                  <span className="relative flex h-2 w-2 shrink-0">
-                    {running && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-60" />}
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-400" />
-                  </span>
-                  深度思考
-                  <span className="ml-auto font-mono text-[11px] text-zinc-400">
-                    {thinkingOpen ? "收起" : "展开"}
-                  </span>
-                </button>
-                {thinkingOpen && (
-                  <pre className="max-h-40 shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-zinc-200 bg-zinc-50/60 px-3.5 py-2.5 font-mono text-xs leading-5 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
-                    {run.thinkingText}
-                  </pre>
-                )}
-              </>
-            ) : null}
-
-            {/* 正文：流式滚动输出 */}
-            <pre
-              ref={streamRef}
-              className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap bg-zinc-50 px-4 py-3 font-mono text-xs leading-6 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-            >
-              {run.draftText ||
-                (running ? (
-                  <span className="text-zinc-400 dark:text-zinc-500">
-                    模型正在深度思考与整理蓝图（推理模型思考期约 1-3 分钟，此阶段通常没有正文输出），
-                    {"\n"}正文开始生成后会在这里实时滚动显示…
-                  </span>
-                ) : (
-                  <span className="text-zinc-400 dark:text-zinc-500">
-                    生成完成，新蓝图已出现在版本列表，可关闭此弹窗查看。
-                  </span>
-                ))}
-              {running && (
-                <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-blue-500 align-middle" />
-              )}
-            </pre>
-          </div>
-        </div>
-      </Modal>
+        title="蓝图师生成过程"
+        running={running}
+        draftText={run.draftText}
+        thinkingText={run.thinkingText}
+        error={run.status === "error"}
+        elapsed={elapsed}
+        emptyRunningText={
+          "模型正在深度思考与整理蓝图（推理模型思考期约 1-3 分钟，此阶段通常没有正文输出），\n正文开始生成后会在这里实时滚动显示…"
+        }
+        emptyDoneText="生成完成，新蓝图已出现在版本列表，可关闭此弹窗查看。"
+      />
       </div>
     </Loading>
   );

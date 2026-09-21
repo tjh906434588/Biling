@@ -137,7 +137,7 @@ def main():
     out = ChapterOutline(chapter=data)
     from app.db.session import SessionLocal
     with SessionLocal() as db:
-        res = _persist_outliner(db, _uuid.UUID(nid), out)
+        res = _persist_outliner(db, _uuid.UUID(nid), {"chapter_no": 4}, out)
     check("resolve 自动置 closed", res.get("chapter_no") == 4, json.dumps(res, ensure_ascii=False))
     after = call("GET", f"/api/novels/{nid}/ledger?status=closed")
     closed_target = [r for r in after if r["description"] == "待回收伏笔X"]

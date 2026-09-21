@@ -46,3 +46,4 @@ class OutlineRead(BaseModel):
     content: dict
     status: str  # draft|approved
     created_at: datetime
+    injected_characters: list[str] = []  # 仅批准响应携带：本次批准时注入设定库的新角色名（ORM 无此属性，默认空）

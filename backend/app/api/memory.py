@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Chapter, Novel, PlotLedger, Setting, StoryState
+from app.agents.context import get_story_states_matching_active
+from app.db.models import Chapter, Novel, PlotLedger, Setting
 from app.db.session import get_db
 
 router = APIRouter(prefix="/api/novels", tags=["memory"])
@@ -44,11 +45,12 @@ def memory_review(novel_id: uuid.UUID, db: Session = Depends(get_db)):
     ).scalars().all()
 
     # 3. 角色状态链：每角色最新 character_state（as-of 最新章）
-    states = db.execute(
-        select(StoryState)
-        .where(StoryState.novel_id == novel_id, StoryState.character_states.is_not(None))
-        .order_by(StoryState.chapter_no.desc())
-    ).scalars().all()
+    #    版本校验：只读「快照版本 == 该章当前激活版本」的快照，过期版本快照跳过（防时间泄漏）
+    states = sorted(
+        (s for s in get_story_states_matching_active(db, novel_id) if s.character_states),
+        key=lambda s: s.chapter_no,
+        reverse=True,
+    )
     character_states: dict[str, dict] = {}
     for st in states:
         for cs in st.character_states or []:

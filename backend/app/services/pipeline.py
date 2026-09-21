@@ -596,7 +596,7 @@ def _persist(
         # 修订师产出与小说家同构（完整章节正文），复用定稿逻辑，版本来源标记为 reviser
         return _persist_novelist(db, novel_id, params, parsed, "reviser")
     if agent_name == "outliner":
-        return _persist_outliner(db, novel_id, parsed)
+        return _persist_outliner(db, novel_id, params, parsed)
     if agent_name == "critic":
         return _persist_critic(db, novel_id, params, parsed)
     if agent_name == "blueprint_architect":
@@ -878,8 +878,8 @@ def _persist_novelist(
 ) -> dict:
     """小说家落库：chapters 行（无则建）+ chapter_versions 版本行。
 
-    单版本模式：生成即选定——新版本 is_active=true 并同步 chapter 正文/字数/状态为 complete，
-    无需再手动对比选择（章节详情仍可点选历史版本）。
+    草稿追加模式：生成只追加一个 is_active=False 的草稿版本（版本级 title/outline_id），
+    不激活、不写章级正文/状态。章保持 draft，直到手动定稿（select_version）才激活并同步章。
     """
     from app.schemas.agents import NovelChapter
 
@@ -904,33 +904,33 @@ def _persist_novelist(
         db.add(chapter)
         db.flush()
 
-    # 正文与大纲版本关联：记录本章当前正文所用的具体大纲版本（同章不同版本内容可能不同，
-    # 关联必须精确到版本）。writer/reviser 均携带 outline_id；未携带（如自由草稿）则保留原值。
-    outline_id = params.get("outline_id")
-    if outline_id is not None:
-        chapter.outline_id = uuid.UUID(str(outline_id))
-
     last_ver = db.execute(
         select(func.max(ChapterVersion.version_no)).where(ChapterVersion.chapter_id == chapter.id)
     ).scalar() or 0
 
-    # 单版本：新版本直接激活为正式稿，同章历史版本归档
-    db.query(ChapterVersion).filter(ChapterVersion.chapter_id == chapter.id).update({"is_active": False})
+    # 草稿追加：新版本 is_active=False，不动其他版本激活状态、不动章级正文/状态。
+    # 标题与大纲版本关联精确到版本：生成时记到版本行，定稿时由 select_version 同步回章。
+    # 版本树：新增/重新生成不传 parent_version_id=根；评价优化（reviser）传被优化版本 id=子节点。
+    outline_id = params.get("outline_id")
+    parent_version_id = params.get("parent_version_id")
+    # 来源区分版本类型：新增章节=novelist（初稿）；重新生成正文=regenerate（再稿）；
+    # 评价优化=reviser（修订稿）。前端据此显示版本名，并在版本树里区分层级。
+    ver_source = source or "novelist"
+    if params.get("regenerate"):
+        ver_source = "regenerate"
     db.add(ChapterVersion(
         chapter_id=chapter.id,
         version_no=last_ver + 1,
-        source=source or "novelist",
+        source=ver_source,
+        title=params.get("title") or getattr(parsed, "title", None) or chapter.title,
         content=parsed.content,
         note=parsed.note,
-        is_active=True,
+        outline_id=uuid.UUID(str(outline_id)) if outline_id is not None else None,
+        parent_version_id=uuid.UUID(str(parent_version_id)) if parent_version_id is not None else None,
+        is_active=False,
     ))
-    chapter.title = params.get("title") or getattr(parsed, "title", None) or chapter.title
-    chapter.content = parsed.content
-    chapter.word_count = len(parsed.content)
-    chapter.status = "complete"
     db.commit()
-    # 成稿即登记：把该章大纲里的伏笔动作写入账本（草稿阶段不碰账本）
-    sync_ledger_from_outline(db, novel_id, chapter_no)
+    # 账本不在成稿时登记：伏笔动作改由「大纲批准」时进入账本（draft 不生效，与设定同语义）
     return {
         "action": "persisted",
         "table": "chapter_versions",
@@ -965,19 +965,40 @@ def _check_setting_gaps(db: Session, novel_id: uuid.UUID, content: str) -> list[
         return []
 
 
-def _persist_outliner(db: Session, novel_id: uuid.UUID, parsed: BaseModel) -> dict:
+def _persist_outliner(
+    db: Session, novel_id: uuid.UUID, params: dict, parsed: BaseModel
+) -> dict:
     """大纲师落库：outlines(draft)。账本不在大纲生成时维护——草稿章不碰账本，
     章节成稿时由 sync_ledger_from_outline 从该章大纲统一登记伏笔动作。
 
     版本语义：同一章可存多个版本，新大纲按 (chapter_no) 最大 version_no + 1 插入，
     不覆盖删除旧版（轻量历史版本，用户可回看/切换）。批准版是下游唯一依据。
+
+    章号权威性：用户在前端明确选择/锁定的 chapter_no 是落库章号，AI 自报的
+    chapter.no 仅作参考。若两者不符（模型把目标章号当成了别的章，如续写最近一章），
+    强制以用户选择为准，避免大纲落进用户没有要求的章节。
     """
     from app.db.models import Outline
     from app.schemas.agents import ChapterOutline
 
     assert isinstance(parsed, ChapterOutline)
     ch = parsed.chapter
+    requested: Optional[int] = None
+    if params:
+        try:
+            requested = int(params.get("chapter_no"))
+        except (TypeError, ValueError):
+            requested = None
     chapter_no = ch.no
+    if requested and requested > 0:
+        if ch.no != requested:
+            logger.warning(
+                "outliner 章号纠正：AI 输出 no=%s，用户要求 chapter_no=%s，以用户选择为准",
+                ch.no,
+                requested,
+            )
+        ch.no = requested  # content 序列化时同步带出正确章号
+        chapter_no = requested
 
     # 同章已有版本数 → 新版本号 +1（无历史版本时从 1 开始）
     max_ver = (
@@ -1001,25 +1022,42 @@ def _persist_outliner(db: Session, novel_id: uuid.UUID, parsed: BaseModel) -> di
     return {"action": "persisted", "table": "outlines", "chapter_no": chapter_no, "version_no": version_no, "id": new_id}
 
 
-def sync_ledger_from_outline(db: Session, novel_id: uuid.UUID, chapter_no: int) -> None:
-    """章节成稿时登记账本：从该章最新大纲提取伏笔动作（plant/resolve/thread）重算账本贡献。
+def sync_ledger_from_outline(
+    db: Session,
+    novel_id: uuid.UUID,
+    chapter_no: int,
+    outline_id: Optional[uuid.UUID] = None,
+) -> None:
+    """章节批准时登记账本：从该章大纲提取伏笔动作（plant/resolve/thread）重算账本贡献。
 
-    覆盖语义：先清掉本章此前登记的账本行与"本章已回收"标记，再按最新大纲重写，
-    保证账本只反映最新成稿的定论。该章无大纲时不登记。
+    覆盖语义：先清掉本章此前登记的「大纲来源」账本行与"本章已回收"标记，再按最新大纲重写，
+    保证账本只反映当前生效版本的定论。该章无大纲时不登记。
+
+    大纲来源的账本行带 source="outline" + outline_id（来源版本，隐形字段不展示）：
+    列表/上下文只显示「来源版本仍批准」的行，切版本后隐藏（不删除，切回恢复）。
+
+    outline_id 提供时（批准流程）直接用该版本重算（此时尚未置 approved 也可）；
+    缺省回退到「批准版优先，无则最新版」的查询。
     """
     from app.db.models import Outline
 
-    # 同一章可能有多个版本（轻量历史版本）：账本只认「批准版」；
-    # 该章还没有批准版时，退回最新一版（避免多版本时 scalar_one_or_none 报错）。
-    outline = db.execute(
-        select(Outline)
-        .where(
-            Outline.novel_id == novel_id,
-            Outline.chapter_no == chapter_no,
-            Outline.status == "approved",
-        )
-        .order_by(Outline.version_no.desc())
-    ).scalars().first()
+    outline = None
+    if outline_id is not None:
+        outline = db.get(Outline, outline_id)
+        if outline is not None and outline.novel_id != novel_id:
+            outline = None
+    if outline is None:
+        # 同一章可能有多个版本（轻量历史版本）：账本只认「批准版」；
+        # 该章还没有批准版时，退回最新一版（避免多版本时 scalar_one_or_none 报错）。
+        outline = db.execute(
+            select(Outline)
+            .where(
+                Outline.novel_id == novel_id,
+                Outline.chapter_no == chapter_no,
+                Outline.status == "approved",
+            )
+            .order_by(Outline.version_no.desc())
+        ).scalars().first()
     if outline is None:
         outline = db.execute(
             select(Outline)
@@ -1034,16 +1072,18 @@ def sync_ledger_from_outline(db: Session, novel_id: uuid.UUID, chapter_no: int) 
     thread = content.get("thread_updates") or []
     resolve = content.get("resolve_foreshadowing") or []
 
-    # 清旧：本章此前登记的账本行 + 上一版"本章已回收"标记，随后按新大纲重算
+    # 清旧：本章此前登记的大纲账本行 + 上一版"本章已回收"标记，随后按新大纲重算
     db.query(PlotLedger).filter(
         PlotLedger.novel_id == novel_id,
         PlotLedger.chapter_introduced == chapter_no,
         PlotLedger.item_type.in_(["setup", "thread"]),
+        PlotLedger.source == "outline",
     ).delete()
     db.query(PlotLedger).filter(
         PlotLedger.novel_id == novel_id,
         PlotLedger.chapter_resolved == chapter_no,
         PlotLedger.status == "closed",
+        PlotLedger.source == "outline",
     ).update({"status": "open", "chapter_resolved": None})
 
     for p in plant:
@@ -1055,6 +1095,8 @@ def sync_ledger_from_outline(db: Session, novel_id: uuid.UUID, chapter_no: int) 
             target_reveal_chapter=p.get("latest_payoff_chapter"),
             status="open",
             confidence="high",
+            source="outline",
+            outline_id=outline.id,
         ))
     for t in thread:
         db.add(PlotLedger(
@@ -1065,6 +1107,8 @@ def sync_ledger_from_outline(db: Session, novel_id: uuid.UUID, chapter_no: int) 
             chapter_introduced=chapter_no,
             status="open",
             confidence="high",
+            source="outline",
+            outline_id=outline.id,
         ))
     for r in resolve:
         try:

@@ -70,8 +70,8 @@ export const SETTING_TYPES = [
 
 export type SettingType = (typeof SETTING_TYPES)[number];
 
-/** 设定数据来源：blueprint 蓝图导入（按版本存储，仅当前生效蓝图的导入设定可见）| batch 批量新增 | manual 单个新增 */
-export type SettingSource = "blueprint" | "batch" | "manual";
+/** 设定数据来源：blueprint 蓝图导入（按版本存储，仅当前生效蓝图的导入设定可见）| outline 大纲批准时注入（按来源版本切换显示/隐藏）| batch 批量新增 | manual 单个新增 */
+export type SettingSource = "blueprint" | "batch" | "manual" | "outline";
 
 export interface Setting {
   id: string;
@@ -142,15 +142,20 @@ export async function deleteSetting(novelId: string, settingId: string): Promise
   if (!res.ok) throw new Error(`删除设定失败：${res.status}`);
 }
 
-// ---------- 章节（单版本生成 → 自动定稿，详情可点选历史版本） ----------
+// ---------- 章节（生成=草稿 → 手动定稿，版本详情可预览/激活） ----------
 
 export interface ChapterVersion {
   id: string;
   version_no: number;
   source: string;
+  /** 该版本自己的标题（草稿各自独立，定稿时同步回章节）。 */
+  title: string | null;
   content: string;
   note: string | null;
-  is_active: boolean;
+  outline_id: string | null;
+  /** 版本树父节点 id：null=根（新增章节/重新生成正文）；非 null=评价优化产物（多级树）。 */
+  parent_version_id: string | null;
+  is_active: boolean; // true=已定稿（当前激活版本）
   created_at: string;
 }
 
@@ -237,6 +242,8 @@ export interface Outline {
   content: Record<string, unknown>;
   status: "draft" | "approved";
   created_at: string;
+  /** 仅批准响应携带：本次批准时注入设定库的新角色名 */
+  injected_characters?: string[];
 }
 
 export async function listOutlines(novelId: string, status?: string): Promise<Outline[]> {
@@ -263,11 +270,49 @@ export async function outlineHasChapter(
   return res.json();
 }
 
-export async function approveOutline(novelId: string, outlineId: string): Promise<Outline> {
+export interface ApproveOutlineResult {
+  /** true=已在后台启动批准注入（前端轮询批准状态直到成功/失败）；false=已生效/无需批准 */
+  running: boolean;
+  task_id: string | null;
+  outline_id: string;
+  chapter_no: number;
+  version_no: number;
+}
+
+export async function approveOutline(novelId: string, outlineId: string): Promise<ApproveOutlineResult> {
   const res = await fetch(`${BASE}/novels/${novelId}/outlines/${outlineId}/approve`, { method: "POST" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `批准大纲失败：${res.status}`);
+  }
+  return res.json();
+}
+
+export interface OutlineApprovalTask {
+  id: string;
+  outline_id: string | null;
+  chapter_no: number | null;
+  version_no: number | null;
+  status: "running" | "done" | "error";
+  msg: string | null;
+  error: string | null;
+  /** 本次批准注入设定库的新角色名（任务完成后携带） */
+  injected_characters: string[];
+  started_at: string | null;
+  updated_at: string | null;
+}
+
+export interface OutlineApprovalStatusResult {
+  running: boolean;
+  task: OutlineApprovalTask | null;
+}
+
+/** 查询该小说最近一次「大纲批准」任务：刷新/切页后恢复「批准中…」按钮状态并轮询到完成。 */
+export async function getOutlineApprovalStatus(novelId: string): Promise<OutlineApprovalStatusResult> {
+  const res = await fetch(`${BASE}/novels/${novelId}/outlines/approval`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `查询批准状态失败：${res.status}`);
   }
   return res.json();
 }

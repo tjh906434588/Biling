@@ -1,6 +1,6 @@
 """六角色输入/输出 Schema（对应技术设计 §5 各角色输出协议）。"""
 import uuid
-from typing import Optional
+from typing import Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -181,6 +181,17 @@ class ThreadUpdate(BaseModel):
     new_state: str
 
 
+class CharacterRef(BaseModel):
+    """大纲登场角色：name 必填；position/note 可选。
+
+    兼容两种输出形态：已有角色可只给名字（字符串），新登场角色须带定位说明
+    （{name, position, note}），供大纲批准时沉淀为设定库角色卡。
+    """
+    name: str
+    position: Optional[str] = None  # 定位：如「公司新同事」/「客户」
+    note: Optional[str] = None  # 作用说明
+
+
 class ChapterOutlineData(BaseModel):
     no: int
     title: str
@@ -188,7 +199,7 @@ class ChapterOutlineData(BaseModel):
     chapter_function: str = Field(..., pattern="^(progression|buildup|turning|climax|revelation|resolution|interlude)$")
     pov: str
     beats: list[Beat] = []
-    characters: list[str] = []
+    characters: list[Union[str, CharacterRef]] = []  # 已有角色给名字；新登场角色带定位（批准时沉淀为设定）
     locations: list[str] = []
     conflicts: list[Conflict] = []
     plant_foreshadowing: list[PlantItem] = []

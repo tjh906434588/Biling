@@ -75,9 +75,17 @@ class NovelistAgent(Agent[NovelChapter]):
         except Exception:  # 抽取失败不影响写作主流程
             pass
 
-        # 前文记忆：最近 story_state 摘要
+        # 前文记忆：最近 story_state 摘要 + 各章角色状态快照（方案1：让小说家直接读到角色当前状态，最新章在前）
         states = get_recent_story_states(self.db, novel_id)
         states_text = "\n".join(f"#第{s.chapter_no}章：{s.summary}" for s in states) or "（无前文记忆）"
+        char_states_lines: list[str] = []
+        for s in states:  # get_recent_story_states 按章号降序 → 最新章在前（时间线最新优先）
+            for cs in s.character_states or []:
+                cname = (cs or {}).get("character")
+                cstate = (cs or {}).get("state")
+                if cname and cstate:
+                    char_states_lines.append(f"第{s.chapter_no}章 · {cname}：{cstate}")
+        char_states_text = "\n".join(char_states_lines) or "（最近几章无角色状态记录）"
 
         # 实体关系图谱：写作一致性对照（不得与已确立关系矛盾，新关系可在正文中自然建立）
         relations_text = get_graph_relations_text(self.db, novel_id)
@@ -161,6 +169,7 @@ class NovelistAgent(Agent[NovelChapter]):
             f"【相关设定】\n{settings_text}\n\n"
             f"【实体关系图谱（写作时不得与已确立关系矛盾，新关系可在正文中自然建立，下一章提取师会记录）】\n{relations_text}\n\n"
             f"【前文记忆】\n{states_text}\n\n"
+            f"【角色当前状态（最近几章快照，最新章在前；本章涉及其中的角色时，须延续其最新状态，不得沿用已被推翻的旧状态）】\n{char_states_text}\n\n"
             f"【最近章节全文】\n{prev_text}\n\n"
             f"【L2 风格画像】\n{style_text}\n\n"
             f"【本章目标】{params.get('goal', '')}"

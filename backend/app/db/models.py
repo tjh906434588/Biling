@@ -56,12 +56,16 @@ class Setting(Base):
     novel_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("novels.id"), index=True)
     type: Mapped[str] = mapped_column(String(32), index=True)  # character|location|faction|world_rule|item|concept
     name: Mapped[str] = mapped_column(String(255))
-    # 数据来源（隐藏字段，不展示界面）：blueprint（蓝图导入，按版本存储）| batch（设定页批量新增）| manual（单个新增/其他）
+    # 数据来源（隐藏字段，不展示界面）：blueprint（蓝图导入，按版本存储）| batch（设定页批量新增）| manual（单个新增/其他）| outline（大纲批准时注入，随批准版本切换显示/隐藏）
     source: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     # 所属蓝图版本：source="blueprint" 的设定记录导入它的蓝图；激活哪个蓝图就显示哪个蓝图的设定，其余版本隐藏保留（可切回）
     blueprint_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("blueprints.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # 所属大纲版本（多值）：source="outline" 的设定记录注入它的各章大纲版本（第几章第几个版本，可跨章多个）；
+    # 只要任一来源版本仍是「该章当前批准版」，该设定即可见；全部来源不再批准时才隐藏
+    # （不删除，切回任意来源版本即恢复，无需重新提取）
+    outline_ids: Mapped[Optional[list]] = mapped_column(JSON)  # list[str] outline.id，隐形字段不展示
     description: Mapped[Optional[str]] = mapped_column(Text)
     structured: Mapped[Optional[dict]] = mapped_column(JSON)  # 按 type 的字段（appearance/personality/goals/relations...）
     is_constitution: Mapped[bool] = mapped_column(Boolean, default=False)  # 小说宪法：不可变硬约束
@@ -151,6 +155,12 @@ class PlotLedger(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     since_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # M2 增强：本条状态生效起始章
     invalidated_at_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 失效章（as-of 查询用）
+    # 数据来源（隐形字段，不展示界面）：outline（大纲批准时注入，按来源版本切换显示/隐藏）| extractor（提取师）| manual（手动登记）
+    source: Mapped[str] = mapped_column(String(16), default="outline", server_default="outline")
+    # 来源大纲版本（source="outline" 时记录登记它的大纲版本 id；隐形字段不展示，随版本切换隐藏未批准）
+    outline_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("outlines.id"), nullable=True, index=True
+    )
 
 
 class Chapter(Base):
@@ -177,8 +187,15 @@ class ChapterVersion(Base):
     chapter_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("chapters.id"), index=True)
     version_no: Mapped[int] = mapped_column(Integer)
     source: Mapped[str] = mapped_column(String(24))  # novelist_A|novelist_B|user_edit|merged
+    title: Mapped[Optional[str]] = mapped_column(String(255))  # 该版本自己的标题（草稿可各自不同，定稿时同步回章）
     content: Mapped[str] = mapped_column(Text)
     note: Mapped[Optional[str]] = mapped_column(Text)  # 生成自评（用到设定/待回收伏笔）
+    outline_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("outlines.id"), nullable=True, index=True
+    )  # 该版本正文所用的大纲版本（同章不同版本内容可能不同，关联精确到版本）
+    parent_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, nullable=True, index=True
+    )  # 版本树父节点：新增章节/重新生成正文=根（null）；评价优化（reviser）= 被优化版本 → 多级树
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

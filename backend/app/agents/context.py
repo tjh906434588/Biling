@@ -6,11 +6,49 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import Blueprint, Chapter, EntityRelation, Novel, PlotLedger, Setting, StoryState, StyleProfile
+from app.db.models import (
+    Blueprint,
+    Chapter,
+    ChapterVersion,
+    EntityRelation,
+    Novel,
+    PlotLedger,
+    Setting,
+    StoryState,
+    StyleProfile,
+)
 
 
 def get_novel(db: Session, novel_id: uuid.UUID) -> Optional[Novel]:
     return db.get(Novel, novel_id)
+
+
+def get_approved_outline_ids(db: Session, novel_id: uuid.UUID) -> set[str]:
+    """各章当前批准版大纲 id（字符串集合）；大纲注入的设定/账本据此判断可见性。"""
+    from app.db.models import Outline
+
+    return {
+        str(x)
+        for x in db.execute(
+            select(Outline.id).where(Outline.novel_id == novel_id, Outline.status == "approved")
+        ).scalars()
+    }
+
+
+def get_visible_open_ledger(db: Session, novel_id: uuid.UUID) -> list[PlotLedger]:
+    """open 账本行：与设定同逻辑，大纲来源（source="outline"）只返回「来源版本仍批准」的行，
+    切版本后隐藏（不删除，切回恢复）；其余来源（提取师/手动）恒可见。"""
+    rows = list(
+        db.execute(
+            select(PlotLedger).where(PlotLedger.novel_id == novel_id, PlotLedger.status == "open")
+        ).scalars()
+    )
+    approved = get_approved_outline_ids(db, novel_id)
+    return [
+        r
+        for r in rows
+        if r.source != "outline" or (r.outline_id is not None and str(r.outline_id) in approved)
+    ]
 
 
 def get_graph_relations_text(db: Session, novel_id: uuid.UUID, limit: int = 60) -> str:
@@ -52,8 +90,12 @@ def get_settings_snapshot(db: Session, novel_id: uuid.UUID, limit: int | None = 
 
     蓝图导入的设定（source="blueprint"）按版本存储：只注入「当前生效蓝图」版本，
     其余版本隐藏（可切回恢复）；手动/批量设定（source=batch/manual）始终注入。
+
+    大纲注入的设定（source="outline"）记录来源大纲版本（outline_ids，可跨章多值）：
+    只要任一来源版本仍是「该章当前批准版」即可见；全部来源不再批准时隐藏
+    （不删除，切回任意来源版本即恢复，无需重新提取）。
     """
-    from app.db.models import Blueprint
+    from app.db.models import Blueprint, Outline
 
     limit = limit or get_settings().settings_snapshot_limit
     # 当前生效蓝图的 id（无则 None → 蓝图设定整体不注入）
@@ -68,10 +110,22 @@ def get_settings_snapshot(db: Session, novel_id: uuid.UUID, limit: int | None = 
             select(Setting).where(Setting.novel_id == novel_id, Setting.deleted_at.is_(None))
         ).scalars()
     )
+    # 各章当前批准版大纲 id（无则空集 → outline 注入设定整体隐藏）；与 outline_ids 均按字符串比较
+    approved_outline_ids = {
+        str(x)
+        for x in db.execute(
+            select(Outline.id).where(Outline.novel_id == novel_id, Outline.status == "approved")
+        ).scalars()
+    }
     rows = [
         s
         for s in all_rows
         if s.source != "blueprint" or (s.blueprint_id is not None and s.blueprint_id == active_bp_id)
+    ]
+    rows = [
+        s
+        for s in rows
+        if s.source != "outline" or (s.outline_ids and any(o in approved_outline_ids for o in s.outline_ids))
     ]
 
     def has_constitution(s: Setting) -> bool:
@@ -161,15 +215,39 @@ def filter_settings_for_chapter(
     return out
 
 
-def get_recent_story_states(db: Session, novel_id: uuid.UUID, limit: int = 3) -> list[StoryState]:
+def get_story_states_matching_active(db: Session, novel_id: uuid.UUID) -> list[StoryState]:
+    """该小说全部「快照正文版本 == 该章当前激活版本」的记忆快照（按章号升序）。
+
+    版本校验（fail-closed）：切回旧定稿版但未重新提取时，该章快照对不上当前激活版本，
+    整条跳过——宁可缺一段记忆，也绝不让过期版本快照冒充当前正文注入给 AI（防时间泄漏）。
+    重新提取该章后快照刷新为激活版本，自动恢复注入。
+    """
     return list(
         db.execute(
             select(StoryState)
-            .where(StoryState.novel_id == novel_id)
-            .order_by(StoryState.chapter_no.desc())
-            .limit(limit)
+            .join(
+                Chapter,
+                (Chapter.novel_id == StoryState.novel_id)
+                & (Chapter.chapter_no == StoryState.chapter_no),
+            )
+            .join(
+                ChapterVersion,
+                (ChapterVersion.chapter_id == Chapter.id)
+                & ChapterVersion.is_active.is_(True),
+            )
+            .where(
+                StoryState.novel_id == novel_id,
+                StoryState.chapter_version_id == ChapterVersion.id,
+            )
+            .order_by(StoryState.chapter_no.asc())
         ).scalars()
     )
+
+
+def get_recent_story_states(db: Session, novel_id: uuid.UUID, limit: int = 3) -> list[StoryState]:
+    """最近 limit 章已提取且版本对得上当前激活正文的记忆快照（按章号降序）。"""
+    states = get_story_states_matching_active(db, novel_id)
+    return states[-limit:][::-1]
 
 
 def get_recent_chapters(db: Session, novel_id: uuid.UUID, limit: int = 2) -> list[Chapter]:

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Chapter, Novel, PlotLedger
+from app.db.models import Chapter, Novel, Outline, PlotLedger
 from app.db.session import get_db
 from app.schemas.ledger import LedgerRead, LedgerUpdate
 
@@ -50,7 +50,11 @@ def list_ledger(
     overdue_only: Optional[bool] = False,
     db: Session = Depends(get_db),
 ):
-    """账本列表：?status=open&item_type=setup&overdue_only=true"""
+    """账本列表：?status=open&item_type=setup&overdue_only=true
+
+    版本过滤（与设定同逻辑）：大纲来源（source="outline"）的账本只显示「来源版本仍批准」的行，
+    切版本后隐藏（不删除，切回恢复）；其余来源（提取师/手动）始终显示。
+    """
     _get_novel(db, novel_id)
     stmt = select(PlotLedger).where(PlotLedger.novel_id == novel_id)
     if status:
@@ -58,6 +62,18 @@ def list_ledger(
     if item_type:
         stmt = stmt.where(PlotLedger.item_type == item_type)
     rows = db.execute(stmt.order_by(PlotLedger.status, PlotLedger.urgency.desc().nulls_last())).scalars().all()
+    # 各章当前批准版大纲 id；source="outline" 的行仅保留来源版本仍在批准集的
+    approved_outline_ids = {
+        str(x)
+        for x in db.execute(
+            select(Outline.id).where(Outline.novel_id == novel_id, Outline.status == "approved")
+        ).scalars()
+    }
+    rows = [
+        r
+        for r in rows
+        if r.source != "outline" or (r.outline_id is not None and str(r.outline_id) in approved_outline_ids)
+    ]
     progress = _current_progress(db, novel_id)
     result = [_to_read(r, progress) for r in rows]
     if overdue_only:

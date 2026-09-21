@@ -1049,6 +1049,11 @@ export default function SettingsPanel({ novelId }: Props) {
                       蓝图导入
                     </span>
                   )}
+                  {s.source === "outline" && (
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
+                      大纲注入
+                    </span>
+                  )}
                   <span className="text-sm font-medium">{s.name}</span>
                   {orderStages(meta.stages).map((st) => (
                     <span

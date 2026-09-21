@@ -13,8 +13,8 @@ from app.agents.context import (
     get_novel,
     get_recent_story_states,
     get_settings_snapshot,
+    get_visible_open_ledger,
 )
-from app.db.models import PlotLedger
 from app.schemas.agents import ReviewOutput
 from app.services.setting_checker import check_chapter, format_for_prompt
 
@@ -100,10 +100,8 @@ class CriticAgent(Agent[ReviewOutput]):
         states = get_recent_story_states(self.db, novel_id)
         states_text = "\n".join(f"#第{s.chapter_no}章：{s.summary}" for s in states) or "（无）"
 
-        # 伏笔账本 open 项（M2：foreshadowing_accountability 对照依据）
-        ledger_rows = self.db.query(PlotLedger).filter(
-            PlotLedger.novel_id == novel_id, PlotLedger.status == "open"
-        ).all()
+        # 伏笔账本 open 项（M2：foreshadowing_accountability 对照依据；只注入来源版本仍批准的）
+        ledger_rows = get_visible_open_ledger(self.db, novel_id)
         ledger_text = "\n".join(
             f"- [#{str(r.id)[:8]}][{r.item_type}] {r.description}（第{r.chapter_introduced or '?'}章埋，"
             f"紧迫度{r.urgency or '-'}，目标揭示章{r.target_reveal_chapter or '-'}）"

@@ -162,10 +162,14 @@ def select_version(
     chapter.content = target.content
     chapter.word_count = len(target.content)
     chapter.status = "complete"
+    # 版本级元数据同步回章：标题/所用大纲版本以被定稿版本为准
+    # （草稿各自独立存于版本行，定稿那一刻才落到章，避免多草稿并存时错位）
+    if target.title is not None:
+        chapter.title = target.title
+    if target.outline_id is not None:
+        chapter.outline_id = target.outline_id
     db.commit()
-    # 成稿即登记：把该章大纲里的伏笔动作写入账本（草稿阶段不碰账本）
-    from app.services.pipeline import sync_ledger_from_outline
-    sync_ledger_from_outline(db, novel_id, chapter_no)
+    # 账本不在版本激活时登记：伏笔动作由「大纲批准」时进入账本（draft 不生效，与设定同语义）
 
     versions = db.execute(
         select(ChapterVersion)
