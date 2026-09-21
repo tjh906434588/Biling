@@ -562,6 +562,9 @@ export default function WritingPanel({ novelId }: Props) {
   const [showVersionModal, setShowVersionModal] = useState(false);
   /** 重新生成模式：非 null 时新增章节弹窗以"重新生成当前章正文"语义工作（章节号锁定当前章）。 */
   const [regenerateNo, setRegenerateNo] = useState<number | null>(null);
+  /** 当前进行中的生成是「新增章节」还是「重新生成正文」：弹窗被手动关闭后 regenerateNo 会重置为 null，
+   *  不能据此判断本次生成模式，用 ref 记录（决定生成中「新增章节 / 重新生成正文」两个入口的禁用方向）。 */
+  const genIsRegenerateRef = useRef(false);
 
   /** 信息控制弹窗：本地 draft，点「完成」才提交到 form，点「取消」丢弃。
    *  这样「清空」只清本地草稿，不点确定则原内容仍然保留（再打开还在）。 */
@@ -807,6 +810,10 @@ export default function WritingPanel({ novelId }: Props) {
         setGenerating(false);
         setGenRun((g) => (g ? { ...g, running: false } : g));
         setShowGenRun(false);
+        // 与 handleGenerate finally 保持一致：任务完成（成功/失败）后关闭新增章节/重新生成弹窗
+        setShowAddModal(false);
+        setRegenerateNo(null);
+        genIsRegenerateRef.current = false;
       }
     })();
     return () => {
@@ -816,6 +823,8 @@ export default function WritingPanel({ novelId }: Props) {
   }, [novelId]);
 
   const activeChapter = chapters.find((c) => c.chapter_no === activeNo) ?? null;
+  /** AI 占用中：评价 / 提取进行时锁定面板——目录与版本切换禁点、其他 AI 操作入口全部禁用，本次完成才解除。 */
+  const aiBusy = reviewing || extracting;
   /** 只保留属于当前选中版本的评价（原 is_current 过滤 → 绑定选中版本的 chapter_version_id）；
    *  接口已按时间倒序，取第一条即最近一次。 */
   const currentReviews = (reviews ?? []).filter((r) => r.chapter_version_id === selectedVersion?.id);
@@ -926,6 +935,8 @@ export default function WritingPanel({ novelId }: Props) {
     setExtractResult(null);
     setSettingGaps(null);
     genStartRef.current = Date.now();
+    // 记录本次生成模式：新增章节 or 重新生成正文（弹窗关闭后 regenerateNo 会重置，按钮禁用方向靠它判断）
+    genIsRegenerateRef.current = regenerateNo != null;
     // 弹窗保持打开、不自动关闭；生成过程通过「查看 AI 过程」按钮实时查看
     setGenRun({ thinking: "", output: "", running: true });
 
@@ -1339,12 +1350,21 @@ export default function WritingPanel({ novelId }: Props) {
                 handleSelectVersion(v.id);
                 setShowVersionModal(false);
               }}
-              title={v.is_active ? "已定稿版本（点击预览）" : isSel ? "当前预览的草稿版本（点上方「定稿」可定稿）" : "点击预览此版本（草稿，定稿需点上方「定稿」）"}
+              disabled={aiBusy}
+              title={
+                aiBusy
+                  ? "AI 处理中，暂不能切换版本预览"
+                  : v.is_active
+                    ? "已定稿版本（点击预览）"
+                    : isSel
+                      ? "当前预览的草稿版本（点上方「定稿」可定稿）"
+                      : "点击预览此版本（草稿，定稿需点上方「定稿」）"
+              }
               className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
                 isSel
                   ? "bg-zinc-200/70 ring-1 ring-inset ring-zinc-400 dark:bg-zinc-700/70 dark:ring-zinc-500"
                   : "hover:bg-zinc-100 dark:hover:bg-zinc-700/40"
-              }`}
+              } ${aiBusy ? "cursor-not-allowed opacity-60" : ""}`}
             >
               {/* 节点圆点：绿=已定稿，灰=草稿 */}
               <span
@@ -1397,19 +1417,35 @@ export default function WritingPanel({ novelId }: Props) {
               <button
                 type="button"
                 onClick={() => {
-                  // 最新一章尚未定稿 → 拦截：必须先定稿才能新增章节（空小说除外）
-                  const latest = [...chapters].sort((a, b) => b.chapter_no - a.chapter_no)[0];
-                  if (latest && latest.status !== "complete") {
-                    showToast(
-                      `最新一章（第 ${latest.chapter_no} 章）还是草稿，请先定稿后再新增章节。`,
-                      "warning",
-                    );
-                    return;
+                  // 生成中再次点击 = 重开弹窗查看生成进度：跳过「最新章须已定稿」门禁
+                  if (!generating) {
+                    // 最新一章尚未定稿 → 拦截：必须先定稿才能新增章节（空小说除外）
+                    const latest = [...chapters].sort((a, b) => b.chapter_no - a.chapter_no)[0];
+                    if (latest && latest.status !== "complete") {
+                      showToast(
+                        `最新一章（第 ${latest.chapter_no} 章）还是草稿，请先定稿后再新增章节。`,
+                        "warning",
+                      );
+                      return;
+                    }
                   }
                   openAddModal();
                 }}
-                disabled={generating}
-                title={generating ? "正文生成中，暂不能新增章节" : undefined}
+                // 新增章节生成中不禁用：可再次点击重开弹窗查看「查看生成过程」进度（弹窗内「生成正文」仍禁用防重复）；
+                // 仅「重新生成正文」生成中禁用新增（本次是重生成，进度只能从重生成入口重开查看）；
+                // 评价 / 提取进行中禁用（本次操作锁定面板，等完成才解除）
+                disabled={(generating && genIsRegenerateRef.current) || aiBusy}
+                title={
+                  aiBusy
+                    ? reviewing
+                      ? "评价进行中，暂不能新增章节"
+                      : "提取记忆层中，暂不能新增章节"
+                    : generating && genIsRegenerateRef.current
+                      ? "重新生成正文中，暂不能新增章节"
+                      : generating
+                        ? "正文生成中，点击可再次打开弹窗查看进度"
+                        : undefined
+                }
                 className="btn btn-primary px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
               >
                 新增章节
@@ -1474,7 +1510,9 @@ export default function WritingPanel({ novelId }: Props) {
                                     activeNo === c.chapter_no
                                       ? "border-zinc-500 bg-zinc-100 dark:bg-zinc-800"
                                       : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
-                                  }`}
+                                  } ${aiBusy ? "cursor-not-allowed opacity-60" : ""}`}
+                                  disabled={aiBusy}
+                                  title={aiBusy ? "AI 处理中，暂不能切换章节" : undefined}
                                   onClick={() => {
                                     // 章节目录不允许取消选中：点击任意章节（含已选中）都保持/设为选中
                                     setActiveNo(c.chapter_no);
@@ -1532,15 +1570,17 @@ export default function WritingPanel({ novelId }: Props) {
                   : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-700 dark:text-zinc-300 disabled:hover:border-zinc-300 dark:disabled:hover:border-zinc-700"
               } disabled:cursor-not-allowed disabled:opacity-100`}
               onClick={handleReview}
-              disabled={activeNo == null || reviewing || !selectedVersion}
+              disabled={activeNo == null || reviewing || extracting || !selectedVersion}
               title={
                 activeNo == null
                   ? "请先在章节目录选择一章"
-                  : !selectedVersion
-                    ? "先选定版本再评价"
-                    : currentReview
-                      ? "对照蓝图/伏笔账本评价本章"
-                      : "当前选中的正文还没有评价，建议先评价本章"
+                  : extracting
+                    ? "提取记忆层中，暂不能评价本章"
+                    : !selectedVersion
+                      ? "先选定版本再评价"
+                      : currentReview
+                        ? "对照蓝图/伏笔账本评价本章"
+                        : "当前选中的正文还没有评价，建议先评价本章"
               }
             >
               {reviewing ? "评价中…" : "评价本章"}
@@ -1553,17 +1593,19 @@ export default function WritingPanel({ novelId }: Props) {
                   : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-700 dark:text-zinc-300 disabled:hover:border-zinc-300 dark:disabled:hover:border-zinc-700"
               } disabled:cursor-not-allowed disabled:opacity-100`}
               onClick={handleExtract}
-              disabled={activeNo == null || extracting || !selectedVersion || !selectedIsFinal}
+              disabled={activeNo == null || extracting || reviewing || !selectedVersion || !selectedIsFinal}
               title={
                 activeNo == null
                   ? "请先在章节目录选择一章"
-                  : !selectedVersion
-                    ? "先选定版本再提取"
-                    : !selectedIsFinal
-                      ? "只有已定稿的正文才能提取入记忆层，请先点上方「定稿」"
-                      : extractPending
-                        ? "当前版本尚未提取记忆层，重新提取后才会进入记忆（或已切到新版本）"
-                        : "把本章摘要/角色状态/伏笔写进记忆层"
+                  : reviewing
+                    ? "评价进行中，暂不能提取记忆层"
+                    : !selectedVersion
+                      ? "先选定版本再提取"
+                      : !selectedIsFinal
+                        ? "只有已定稿的正文才能提取入记忆层，请先点上方「定稿」"
+                        : extractPending
+                          ? "当前版本尚未提取记忆层，重新提取后才会进入记忆（或已切到新版本）"
+                          : "把本章摘要/角色状态/伏笔写进记忆层"
               }
             >
               {extracting ? "提取中…" : "提取 → 记忆层"}
@@ -1635,12 +1677,16 @@ export default function WritingPanel({ novelId }: Props) {
                   <button
                     type="button"
                     onClick={() => void handleFinalizeSelected()}
-                    disabled={activeNo == null || generating || !selectedVersion}
+                    disabled={activeNo == null || generating || aiBusy || !selectedVersion}
                     className="btn btn-primary px-3 py-1.5 text-xs font-medium"
                     title={
                       activeNo == null || !selectedVersion
                         ? "请先选择一章"
-                        : "将当前选中的草稿版本定稿为本章正文"
+                        : aiBusy
+                          ? reviewing
+                            ? "评价进行中，暂不能定稿"
+                            : "提取记忆层中，暂不能定稿"
+                          : "将当前选中的草稿版本定稿为本章正文"
                     }
                   >
                     定稿
@@ -1649,19 +1695,41 @@ export default function WritingPanel({ novelId }: Props) {
                 <button
                   type="button"
                   onClick={openRegenerateModal}
-                  // 生成中不禁用：要能再次打开弹窗查看「查看生成过程」进度（弹窗内「生成正文」仍禁用防重复）
-                  disabled={activeNo == null}
+                  // 重新生成正文生成中不禁用：要能再次打开弹窗查看「查看生成过程」进度；
+                  // 但「新增章节」生成中需禁用——本次是新增而非重新生成，进度只能从「新增章节」入口重开查看；
+                  // 评价 / 提取进行中禁用（本次操作锁定面板，等完成才解除）
+                  disabled={activeNo == null || (generating && !genIsRegenerateRef.current) || aiBusy}
                   className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                  title="复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）"
+                  title={
+                    activeNo == null
+                      ? "请先选择一章"
+                      : aiBusy
+                        ? reviewing
+                          ? "评价进行中，暂不能重新生成正文"
+                          : "提取记忆层中，暂不能重新生成正文"
+                        : generating && !genIsRegenerateRef.current
+                          ? "新增正文生成中，暂不能重新生成正文"
+                          : "复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）"
+                  }
                 >
                   重新生成正文
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowReviewModal(true)}
-                  disabled={activeNo == null}
+                  // 评价中不禁用：本次评价锁定了章节与版本，仍可重开弹窗查看「查看生成过程」进度；
+                  // 提取中禁用（本次是提取，进度在「提取 → 记忆层」按钮状态与提示上）
+                  disabled={activeNo == null || extracting}
                   className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                  title={activeNo == null ? "请先选择一章" : "打开评价与优化"}
+                  title={
+                    activeNo == null
+                      ? "请先选择一章"
+                      : extracting
+                        ? "提取记忆层中，暂不能评价与优化"
+                        : reviewing
+                          ? "评价进行中，点击可再次打开弹窗查看进度"
+                          : "打开评价与优化"
+                  }
                 >
                   评价与优化
                 </button>
@@ -2043,24 +2111,7 @@ export default function WritingPanel({ novelId }: Props) {
       >
         {detail && detail.versions.length > 0 ? (
           <div className="space-y-3">
-            {/* 当前选中摘要 */}
-            <div className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400">
-              <span className="shrink-0">当前选中：</span>
-              {selectedVersion ? (
-                <span className="flex min-w-0 items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-100">
-                  <span className={`shrink-0 rounded px-1.5 py-px text-[11px] font-medium ring-1 ring-inset ${sourceChipClass(selectedVersion.source)}`}>
-                    {sourceLabel(selectedVersion.source)}
-                  </span>
-                  <span className="shrink-0 tabular-nums">v{selectedVersion.version_no}</span>
-                  <span className={`shrink-0 ${selectedIsFinal ? "text-green-600 dark:text-green-400" : "text-zinc-400 dark:text-zinc-500"}`}>
-                    {selectedIsFinal ? "已定稿" : "草稿"}
-                  </span>
-                </span>
-              ) : (
-                <span className="text-zinc-400">无</span>
-              )}
-            </div>
-            {/* 版本树：根=新增/重新生成，子=评价优化 */}
+            {/* 版本树：根=新增/重新生成，子=评价优化；节点上已有「当前」徽标与选中高亮 */}
             <ul className="space-y-1">{renderVersionNodes(null)}</ul>
           </div>
         ) : (
