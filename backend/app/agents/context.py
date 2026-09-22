@@ -51,27 +51,59 @@ def get_visible_open_ledger(db: Session, novel_id: uuid.UUID) -> list[PlotLedger
     ]
 
 
-def get_graph_relations_text(db: Session, novel_id: uuid.UUID, limit: int = 60) -> str:
-    """实体关系图谱摘要（写作/审稿的一致性对照依据，不含方向性修饰）。"""
-    rows = (
+def filter_graph_relations_for_version(
+    db: Session, novel_id: uuid.UUID, rows: list[EntityRelation]
+) -> list[EntityRelation]:
+    """图谱关系版本化过滤（注入与图谱展示页共用，fail-closed）：
+    - dynamic 关系：提取时正文版本（chapter_version_id）必须 == 该章当前激活版本才保留；
+      无版本记录的旧数据同样过滤（需重新提取对齐后恢复）。
+    - 被取代（archived）的旧关系：取代者提取版本（superseded_by_version）仍在当前激活集合时
+      才视为失效过滤；切回旧版本（取代者版本不在激活集合）时旧关系「复活」保留，
+      消除取代链跨版本空档（旧关系与取代者同时被过滤导致整章关系消失）。
+    """
+    active_version_ids = set(
         db.execute(
-            select(EntityRelation)
-            .where(
-                EntityRelation.novel_id == novel_id,
-                EntityRelation.archived.is_(False),  # 手动标记失效（被取代）的关系不注入
-            )
-            .order_by(EntityRelation.created_at)
-        )
-        .scalars()
-        .all()
+            select(ChapterVersion.id)
+            .join(Chapter, Chapter.id == ChapterVersion.chapter_id)
+            .where(Chapter.novel_id == novel_id, ChapterVersion.is_active.is_(True))
+        ).scalars()
     )
+    out: list[EntityRelation] = []
+    for r in rows:
+        if r.type != "dynamic":
+            out.append(r)
+            continue
+        if r.chapter_version_id is None or r.chapter_version_id not in active_version_ids:
+            continue  # 提取版本对不上当前激活版本 → 跳过（防版本切换残留）
+        if r.archived:
+            # 取代者版本已不在当前激活集合（用户切回旧版本）→ 旧关系复活；否则保持失效
+            if r.superseded_by_version is not None and r.superseded_by_version not in active_version_ids:
+                out.append(r)
+            continue
+        out.append(r)
+    return out
+
+
+def get_graph_relations_text(db: Session, novel_id: uuid.UUID, limit: int = 60) -> str:
+    """实体关系图谱摘要（写作/审稿的一致性对照依据，不含方向性修饰）。
+
+    版本校验（fail-closed，与 story_state 一致）：dynamic 关系只注入「提取时正文版本 ==
+    该章当前激活版本」的行；切回旧版本但未重新提取时，该章旧版人物关系整章跳过，
+    防止版本切换后把已切换走的版本人物带入正文。无版本记录（chapter_version_id 为空）
+    的旧数据同样跳过注入，需重新提取对齐后恢复。被取代的旧关系在取代者版本仍激活时
+    视为失效不注入；切回旧版本时旧关系恢复（见 filter_graph_relations_for_version）。
+    """
+    rows = list(db.execute(select(EntityRelation).where(EntityRelation.novel_id == novel_id)).scalars())
+    if not rows:
+        return "（图谱暂无关系）"
+    rows = filter_graph_relations_for_version(db, novel_id, rows)
     if not rows:
         return "（图谱暂无关系）"
     # AI 需要当前关系快照：按 (source, relation, target) 三元组去重，每组取最新确立的一条
     # （created_at 升序遍历，后者覆盖前者）。同一对实体可以存在多个**共存**关系
-    # （如「A 同事 B」「A 朋友 B」同时成立）——全部注入；而被**取代**的旧关系
-    # （如「师徒」→「叛出师门」）由提取师约束不输出，保证注入不含过时关系。
-    # 历史演进仍保留在图谱页展示。
+    # （如「A 同事 B」「A 朋友 B」同时成立）——全部注入；被**取代**的旧关系
+    # （如「师徒」→「叛出师门」）在取代者版本仍激活时被过滤，保证注入不含过时关系；
+    # 切回旧版本时取代者不激活、旧关系复活，正好反映旧版本当时的故事状态。
     latest: dict[tuple[str, str, str], EntityRelation] = {}
     for r in rows:
         latest[(r.source, r.relation, r.target)] = r

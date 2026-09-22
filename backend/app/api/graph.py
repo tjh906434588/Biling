@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import EntityRelation, Novel, Setting
+from app.agents.context import filter_graph_relations_for_version
+from app.db.models import Blueprint, EntityRelation, Novel, Outline, Setting
 from app.db.session import get_db
 from app.schemas.graph import GraphEdge, GraphNode, GraphView, RelationRead
 
@@ -31,11 +32,28 @@ _KIND_GROUP = {
 def get_graph(novel_id: uuid.UUID, db: Session = Depends(get_db)):
     """图谱视图：节点（settings + 关系两端）+ 边。
 
-    边不过滤重复：过滤 archived（被取代的旧关系）后，每一行都是一条线，
-    相同 (source, relation, target) 跨章重复时全部返回（前端合并标签展示章节列表）。
+    版本区分（与设定页/注入侧同口径）：
+    - 节点：蓝图来源设定只显示当前生效蓝图版本；大纲注入设定只显示来源版本仍批准的；
+      手动/批量设定始终显示（不可见版本不删，切回自动恢复）。
+    - 边：dynamic 关系按「提取时正文版本 == 该章当前激活版本」过滤（与注入一致，fail-closed）；
+      被取代的旧关系在取代者版本仍激活时保持失效，切回旧版本（取代者版本不激活）时恢复显示。
     """
     if db.get(Novel, novel_id) is None:
         raise HTTPException(404, "项目不存在")
+
+    # 版本可见性口径与 list_settings 一致：当前生效蓝图 + 各章当前批准版大纲
+    active_bp_id = db.execute(
+        select(Blueprint.id)
+        .where(Blueprint.novel_id == novel_id, Blueprint.status == "active")
+        .order_by(Blueprint.version.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    approved_outline_ids = {
+        str(x)
+        for x in db.execute(
+            select(Outline.id).where(Outline.novel_id == novel_id, Outline.status == "approved")
+        ).scalars()
+    }
 
     nodes: dict[str, GraphNode] = {}
     for s in db.execute(
@@ -45,6 +63,13 @@ def get_graph(novel_id: uuid.UUID, db: Session = Depends(get_db)):
             Setting.merged_into_id.is_(None),
         )
     ).scalars():
+        # 版本过滤：不可见版本的设定不进入图谱节点（切回版本自动恢复显示）
+        if s.source == "blueprint" and (s.blueprint_id is None or s.blueprint_id != active_bp_id):
+            continue
+        if s.source == "outline" and not (
+            s.outline_ids and any(o in approved_outline_ids for o in s.outline_ids)
+        ):
+            continue
         kind = s.type if s.type in _KIND_GROUP else "other"
         nodes[s.name] = GraphNode(
             id=s.name,
@@ -54,10 +79,11 @@ def get_graph(novel_id: uuid.UUID, db: Session = Depends(get_db)):
             role_rank=(s.structured or {}).get("role_rank"),
         )
 
-    rels = db.execute(
-        select(EntityRelation)
-        .where(EntityRelation.novel_id == novel_id, EntityRelation.archived.is_(False))
-    ).scalars().all()
+    rels = filter_graph_relations_for_version(
+        db,
+        novel_id,
+        list(db.execute(select(EntityRelation).where(EntityRelation.novel_id == novel_id)).scalars()),
+    )
     # 不去重：每一行都是一条线（前端按三元组分组合并标签）
     edges: list[GraphEdge] = []
     for r in sorted(rels, key=lambda r: (r.chapter_no or 0, r.created_at)):

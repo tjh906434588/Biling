@@ -782,6 +782,7 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
                 relation=rel.relation,
                 type="dynamic",
                 chapter_no=chapter_no,
+                chapter_version_id=chapter_version_id,  # 记录提取时激活的正文版本，注入按版本过滤
                 confidence=rel.confidence,
             )
         )
@@ -813,7 +814,14 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
             EntityRelation.relation == sup.relation,
             EntityRelation.archived.is_(False),
         ).update(
-            {"archived": True, "superseded_by_chapter": chapter_no, "superseded_by_relation": superseder_rel}
+            {
+                "archived": True,
+                "superseded_by_chapter": chapter_no,
+                "superseded_by_relation": superseder_rel,
+                # 取代者提取时所在的正文版本：切回旧版本（该版本不激活）时，
+                # 注入/展示层据此「复活」被取代的旧关系，消除取代链跨版本空档。
+                "superseded_by_version": chapter_version_id,
+            }
         )
         archived_superseded += hit
     if archived_superseded:
@@ -1030,8 +1038,11 @@ def sync_ledger_from_outline(
 ) -> None:
     """章节批准时登记账本：从该章大纲提取伏笔动作（plant/resolve/thread）重算账本贡献。
 
-    覆盖语义：先清掉本章此前登记的「大纲来源」账本行与"本章已回收"标记，再按最新大纲重写，
-    保证账本只反映当前生效版本的定论。该章无大纲时不登记。
+    覆盖语义：不再物理删除旧版本行，新版本 plant/thread 行（带当前 outline_id）直接登记；
+    旧版本行保留，读取侧只显示「来源版本仍批准」的行，旧版降 draft 后自动隐藏、
+    重新批准旧版即恢复——与设定/账本「切回即恢复」一致（避免批准新版后旧版本账本数据被物理删除、无法恢复）。
+    resolve（回收）若命中旧版来源的行，将其迁移到当前版本再标 closed，保证回收结论在当前版本下可见。
+    该章无大纲时不登记。
 
     大纲来源的账本行带 source="outline" + outline_id（来源版本，隐形字段不展示）：
     列表/上下文只显示「来源版本仍批准」的行，切版本后隐藏（不删除，切回恢复）。
@@ -1072,20 +1083,9 @@ def sync_ledger_from_outline(
     thread = content.get("thread_updates") or []
     resolve = content.get("resolve_foreshadowing") or []
 
-    # 清旧：本章此前登记的大纲账本行 + 上一版"本章已回收"标记，随后按新大纲重算
-    db.query(PlotLedger).filter(
-        PlotLedger.novel_id == novel_id,
-        PlotLedger.chapter_introduced == chapter_no,
-        PlotLedger.item_type.in_(["setup", "thread"]),
-        PlotLedger.source == "outline",
-    ).delete()
-    db.query(PlotLedger).filter(
-        PlotLedger.novel_id == novel_id,
-        PlotLedger.chapter_resolved == chapter_no,
-        PlotLedger.status == "closed",
-        PlotLedger.source == "outline",
-    ).update({"status": "open", "chapter_resolved": None})
-
+    # 版本化登记：不删旧版本行、不重置上一版「本章已回收」标记（旧版行保留其 outline_id，
+    # 读取侧按「来源版本仍批准」过滤——旧版降 draft 自动隐藏，重新批准旧版即恢复）。
+    # 这样切回旧大纲版本时，其账本行仍存在可恢复，不会因批准新版被物理删除。
     for p in plant:
         db.add(PlotLedger(
             novel_id=novel_id,
@@ -1117,6 +1117,10 @@ def sync_ledger_from_outline(
             continue  # 非法 id 直接跳过，不回收
         row = db.get(PlotLedger, rid)
         if row is not None and row.novel_id == novel_id and row.status == "open":
+            # 目标行若属于已降 draft 的旧版大纲（当前不可见），新版「接续回收」这条伏笔：
+            # 把行迁移到当前版本再标 closed，保证回收结论在当前版本下可见；manual 行保留原来源。
+            if row.source == "outline" and row.outline_id is not None and row.outline_id != outline.id:
+                row.outline_id = outline.id
             row.status = "closed"
             row.chapter_resolved = chapter_no
     db.commit()

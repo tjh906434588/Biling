@@ -235,7 +235,10 @@ async def activate_blueprint(novel_id: uuid.UUID, blueprint_id: uuid.UUID, db: S
             t = task_db.get(AgentTask, task.id)
             if t is not None:
                 t.status = "done"
-                t.msg = f"蓝图 v{b.version} 已设为生效中"
+                t.msg = (
+                    f"蓝图 v{b.version} 已设为生效中；蓝图导入的设定与文风已跟随切换"
+                    "（原生效蓝图的内容已隐藏，可随时切回该版本恢复）。"
+                )
                 if warning:
                     t.params = {**(t.params or {}), "warning": warning}
                 task_db.commit()

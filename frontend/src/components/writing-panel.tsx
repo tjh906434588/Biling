@@ -829,6 +829,13 @@ export default function WritingPanel({ novelId }: Props) {
    *  接口已按时间倒序，取第一条即最近一次。 */
   const currentReviews = (reviews ?? []).filter((r) => r.chapter_version_id === selectedVersion?.id);
   const currentReview = currentReviews[0] ?? null;
+  /** 当前预览正文是否为「旧大纲版本」生成的：该章已有批准大纲（approvedOutline）时，
+   *  正文版本记录的 outline_id 必须等于它才算"基于激活大纲"，否则只能看、不能评价/修订/提取。
+   *  无批准大纲（自由稿/该章尚未批准）时不限制。 */
+  const isStaleForActiveOutline =
+    !!selectedVersion &&
+    approvedOutline != null &&
+    String(selectedVersion.outline_id ?? "") !== approvedOutline.id;
   /** 当前选中版本还没有评价 → 「评价本章」按钮高亮提醒。
    *  reviews 为 null 表示评价还没加载完，此时一律不高亮，避免切换章节时的高亮闪烁。 */
   const reviewPending =
@@ -1074,6 +1081,14 @@ export default function WritingPanel({ novelId }: Props) {
       showToast("该章尚未选定版本，无法提取。请先完成生成与选定。", "warning");
       return;
     }
+    // 旧大纲版本生成的正文只读：不能提取入记忆层（防止把旧版本的人物状态写进记忆、污染当前大纲语境）
+    if (isStaleForActiveOutline) {
+      showToast(
+        "当前正文基于旧版大纲生成，只能查看，不能提取入记忆层。请先基于当前激活大纲重新生成一份正文，再定稿并提取。",
+        "warning",
+      );
+      return;
+    }
     // 提取记忆层只对已定稿版本开放：草稿正文还没定稿，先定稿再提取
     if (!selectedIsFinal) {
       showToast("只有已定稿的正文才能提取入记忆层。请先点上方「定稿」再提取。", "warning");
@@ -1129,6 +1144,14 @@ export default function WritingPanel({ novelId }: Props) {
     }
     if (!selectedVersion) {
       showToast("该章尚未选定版本，无法评价。请先完成生成与选定。", "warning");
+      return;
+    }
+    // 旧大纲版本生成的正文只读：不能评价（防止拿旧正文的评价结果反向影响当前大纲语境的写作决策）
+    if (isStaleForActiveOutline) {
+      showToast(
+        "当前正文基于旧版大纲生成，只能查看，不能评价。请先基于当前激活大纲重新生成一份正文，再对新的正文评价。",
+        "warning",
+      );
       return;
     }
     setReviewing(true);
@@ -1266,6 +1289,14 @@ export default function WritingPanel({ novelId }: Props) {
       showToast("该章尚未选定版本，无法优化。请先完成生成与选定。", "warning");
       return;
     }
+    // 旧大纲版本生成的正文只读：不能修订（与评价同口径，防止把旧正文基于旧大纲再改出一版）
+    if (isStaleForActiveOutline) {
+      showToast(
+        "当前正文基于旧版大纲生成，只能查看，不能优化。请先基于当前激活大纲重新生成一份正文，再评价优化。",
+        "warning",
+      );
+      return;
+    }
     if (review.chapter_version_id !== selectedVersion.id) {
       showToast(
         `这条评价针对 v${review.version_no ?? "?"}，不是当前选中的正文。请先选中对应版本，或对当前正文重新评价。`,
@@ -1277,6 +1308,7 @@ export default function WritingPanel({ novelId }: Props) {
     setSettingGaps(null);
     reviseStartRef.current = Date.now();
     setReviseRun({ thinking: "", output: "", running: true });
+    let stored = false; // 优化是否成功落库生成新版本（决定完成后是否关闭评价与优化弹窗）
     try {
       ensureReady();
       await runAgent(
@@ -1310,6 +1342,7 @@ export default function WritingPanel({ novelId }: Props) {
             const items = (ev.data as { items?: SettingGap[] }).items ?? [];
             setSettingGaps(items.length ? items : null);
           } else if (ev.event === "stored") {
+            stored = true;
             showToast(
               `已按评价问题优化第 ${activeChapter.chapter_no} 章，新版本为草稿，请手动定稿。`,
               "success",
@@ -1326,6 +1359,10 @@ export default function WritingPanel({ novelId }: Props) {
       setReviseRun((r) => (r ? { ...r, running: false } : r));
       setShowReviseRun(false);
       if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
+      if (stored) {
+        // 优化已生成新版本：关闭评价与优化弹窗，避免其自动切到新版本并提示对新版本再评价
+        setShowReviewModal(false);
+      }
       setActiveNo(activeChapter.chapter_no);
       await loadChapters();
       await loadDetail(activeChapter.chapter_no);
@@ -1574,13 +1611,15 @@ export default function WritingPanel({ novelId }: Props) {
               title={
                 activeNo == null
                   ? "请先在章节目录选择一章"
-                  : extracting
-                    ? "提取记忆层中，暂不能评价本章"
-                    : !selectedVersion
-                      ? "先选定版本再评价"
-                      : currentReview
-                        ? "对照蓝图/伏笔账本评价本章"
-                        : "当前选中的正文还没有评价，建议先评价本章"
+                  : isStaleForActiveOutline
+                    ? "当前正文基于旧版大纲生成，只能查看；请基于当前激活大纲重新生成正文后再评价"
+                    : extracting
+                      ? "提取记忆层中，暂不能评价本章"
+                      : !selectedVersion
+                        ? "先选定版本再评价"
+                        : currentReview
+                          ? "对照蓝图/伏笔账本评价本章"
+                          : "当前选中的正文还没有评价，建议先评价本章"
               }
             >
               {reviewing ? "评价中…" : "评价本章"}
@@ -1597,15 +1636,17 @@ export default function WritingPanel({ novelId }: Props) {
               title={
                 activeNo == null
                   ? "请先在章节目录选择一章"
-                  : reviewing
-                    ? "评价进行中，暂不能提取记忆层"
-                    : !selectedVersion
-                      ? "先选定版本再提取"
-                      : !selectedIsFinal
-                        ? "只有已定稿的正文才能提取入记忆层，请先点上方「定稿」"
-                        : extractPending
-                          ? "当前版本尚未提取记忆层，重新提取后才会进入记忆（或已切到新版本）"
-                          : "把本章摘要/角色状态/伏笔写进记忆层"
+                  : isStaleForActiveOutline
+                    ? "当前正文基于旧版大纲生成，只能查看；请基于当前激活大纲重新生成正文并定稿后再提取"
+                    : reviewing
+                      ? "评价进行中，暂不能提取记忆层"
+                      : !selectedVersion
+                        ? "先选定版本再提取"
+                        : !selectedIsFinal
+                          ? "只有已定稿的正文才能提取入记忆层，请先点上方「定稿」"
+                          : extractPending
+                            ? "当前版本尚未提取记忆层，重新提取后才会进入记忆（或已切到新版本）"
+                            : "把本章摘要/角色状态/伏笔写进记忆层"
               }
             >
               {extracting ? "提取中…" : "提取 → 记忆层"}

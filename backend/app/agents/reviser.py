@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.agents.base import Agent, ContextPack
 from app.agents.context import (
+    derive_stage,
+    filter_settings_for_chapter,
     format_blueprint_for_prompt,
     format_settings_for_prompt,
     get_active_blueprint,
@@ -66,8 +68,12 @@ class ReviserAgent(Agent[NovelChapter]):
         except (TypeError, ValueError):
             chapter_no = 0
         blueprint = get_active_blueprint(self.db, novel_id)
-        all_settings = get_settings_snapshot(self.db, novel_id)
-        settings_text = format_settings_for_prompt(all_settings)
+        # 与 critic/novelist 同口径：设定按章节阶段过滤，避免修订时把未到出场阶段/非本章设定提前带进正文
+        stage = derive_stage(chapter_no, blueprint) if chapter_no is not None else None
+        active_settings = filter_settings_for_chapter(
+            get_settings_snapshot(self.db, novel_id), chapter_no or 0, stage
+        )
+        settings_text = format_settings_for_prompt(active_settings)
 
         # 【必现清单】同 novelist：修订时最容易在重写段落里把成组字段删掉，
         # 这里把「要么整体不写，要写就写全」的组单独抽出来显式提醒。

@@ -235,10 +235,16 @@ class EntityRelation(Base):
     relation: Mapped[str] = mapped_column(String(64))  # 关系标签（如 盟友/敌对/所属/出现在）
     type: Mapped[str] = mapped_column(String(16), default="dynamic")  # dynamic=剧情层（提取师自动抽取）；static 已废弃无来源
     chapter_no: Mapped[Optional[int]] = mapped_column(Integer)  # dynamic 关系的发生章
+    chapter_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("chapter_versions.id"), nullable=True
+    )  # dynamic 关系对应的正文版本（注入时须等于该章当前激活版本，防止版本切换后残留旧版人物关系）
     confidence: Mapped[str] = mapped_column(String(8), default="high")
     archived: Mapped[bool] = mapped_column(Boolean, default=False)  # 手动标记失效（被新关系取代），展示灰显保留历史、注入跳过
     superseded_by_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 被哪一章取代（取代者所在章，精确定位取代链用）
     superseded_by_relation: Mapped[Optional[str]] = mapped_column(Text)  # 取代者的关系名（同 source/target，与 superseded_by_chapter 一起唯一定位取代者行）
+    superseded_by_version: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("chapter_versions.id"), nullable=True
+    )  # 取代者提取时所在的正文版本（切回旧版本时据此「复活」被取代的旧关系，消除取代链跨版本空档）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

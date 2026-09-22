@@ -640,7 +640,7 @@ export default function BlueprintPanel({ novelId }: Props) {
       <ConfirmDialog
         open={activateTarget !== null}
         title={activateTarget ? `将 v${activateTarget.version} 设为生效中？` : "设为生效中？"}
-        message={`确认后将把 v${activateTarget ? activateTarget.version : ""} 设为生效中：该版本（若为导入生成）会同步抽取设定与文风并注入设定库、全局文风，注入完成按钮的「激活中」才会结束（期间刷新页面或切换页面不会中断，按钮会保持「激活中…」直到成功或失败）；当前生效蓝图导入的内容将被隐藏（不会删除，可随时切回）、改用新蓝图导入的内容。\n\n若后续的正文、大纲已基于旧蓝图生成，切换后可能导致设定不一致、影响写作连贯性。已生成的大纲和文章不会被修改。\n\n确定切换吗？`}
+        message={`确认后将把 v${activateTarget ? activateTarget.version : ""} 设为生效中：若该版本为导入生成（有原文），会同步抽取设定与文风并注入设定库、全局文风，注入完成按钮的「激活中」才会结束；若为手工创建（无导入原文），激活后**不会**自动注入设定/文风，仅切换生效状态。当前生效蓝图导入的内容将被隐藏（不会删除，可随时切回）、改用新蓝图的内容。\n\n若后续的正文、大纲已基于旧蓝图生成，切换后可能导致设定不一致、影响写作连贯性。已生成的大纲和文章不会被修改。\n\n确定切换吗？`}
         confirmText="确定切换"
         tone="primary"
         onConfirm={confirmActivate}
