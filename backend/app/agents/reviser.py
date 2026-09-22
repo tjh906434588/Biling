@@ -30,12 +30,19 @@ SYSTEM_PROMPT = f"""你是「修订师」，一位手稳的老编辑。你的任
 - 输出必须是严格的 JSON：{{"title": "本章原标题（必须与修订前一字不差，禁止改名）", "content": "修订后的完整章节正文", "note": "本次修订说明：针对哪些问题改了什么"}}
 
 修订铁律：
-1. 情节走向、章节目标、伏笔安排、与前后文的衔接一律不变，只做局部手术。
-2. 逐条对照评价的 issues（severity 高/中优先）与 revision_hints 修订；rubric 中低分维度（<70）重点修补。
-3. 修订后正文必须仍是完整一章（篇幅与原章相当），不能只给改动片段。
-4. 语言自然、有故事感、口语化，避免文艺腔和 AI 腔；保留本书文风。
-5. 亮点（strengths）说明的写得好之处不要改坏。
-6. 章节标题一律不改：修订是优化不是重写，title 必须等于修订前的原标题，
+0. 【作者否决·绝对优先】若 prompt 末尾出现【最高指令·作者否决】，其中列出的问题作者已明确否决：
+   - **禁止按其 suggested_fix 或任何方式修改对应内容，相关原文保持一字不动**；
+   - 只处理未被否决的其他问题；
+   - 修订 note 中必须逐条交代"第 N 条已按作者意见保留原文"，不得遗漏。
+1. 【冲突红线】逐条对照评价的 issues / revision_hints 时，先对照【最近章节全文】【实体关系图谱】【相关设定】核查该建议是否与上文已确立的事实/关系/设定/未回收伏笔矛盾：
+   - 建议本身会破坏上文 → **一律不采纳**，不改动对应内容，并在 note 中写明"未采纳：<该建议>，原因：与上文冲突（<依据>）"。
+   - 不要为了迎合评价而改坏上文已确立的设定、人物关系、伏笔与情节走向。
+2. 情节走向、章节目标、伏笔安排、与前后文的衔接一律不变，只做局部手术。
+3. 逐条对照评价的 issues（severity 高/中优先）与 revision_hints 修订；rubric 中低分维度（<70）重点修补。
+4. 修订后正文必须仍是完整一章（篇幅与原章相当），不能只给改动片段。
+5. 语言自然、有故事感、口语化，避免文艺腔和 AI 腔；保留本书文风。
+6. 亮点（strengths）说明的写得好之处不要改坏。
+7. 章节标题一律不改：修订是优化不是重写，title 必须等于修订前的原标题，
    不能改成小说名或其他名字（系统会自动沿用原标题，你输出的 title 仅作自检）。
 
 【打破 AI 检测特征（修问题的同时必须兼顾，与下面 L1 量化自检一并执行）】
@@ -94,7 +101,12 @@ class ReviserAgent(Agent[NovelChapter]):
         relations_text = get_graph_relations_text(self.db, novel_id)
 
         chapters = get_recent_chapters(self.db, novel_id)
-        prev_text = "\n\n".join(f"[第{c.chapter_no}章 {c.title or ''}]\n{c.content}" for c in reversed(chapters)) or "（无前文）"
+        # 最近章节全文（保持衔接与文风连续）；排除本章自己，避免当前正文重复出现
+        prev_text = "\n\n".join(
+            f"[第{c.chapter_no}章 {c.title or ''}]\n{c.content}"
+            for c in reversed(chapters)
+            if c.chapter_no != chapter_no
+        ) or "（无前文）"
 
         style_text = "（暂无风格画像）"
         if style:
@@ -166,6 +178,30 @@ class ReviserAgent(Agent[NovelChapter]):
                 parts.append("亮点（不要改坏）：\n" + "\n".join(f"- {s}" for s in review["strengths"]))
             review_text = "\n\n".join(parts) or "（无评价明细）"
 
+        # 作者批注/异议（作者意图，优先级高于评价师；随本次优化一次性传入，不落库）
+        author_notes = []
+        author_note = review.get("author_note") if isinstance(review, dict) else None
+        if author_note:
+            author_notes.append(f"- 作者整体批注：{author_note}")
+        disagreements = review.get("disagreements") if isinstance(review, dict) else None
+        if isinstance(disagreements, dict) and disagreements:
+            for idx, reason in disagreements.items():
+                if not reason:
+                    continue
+                try:
+                    display = int(idx) + 1
+                except (TypeError, ValueError):
+                    display = "?"
+                author_notes.append(f"- 第 {display} 条问题：{reason}")
+        author_text = ""
+        if author_notes:
+            author_text = (
+                "【最高指令·作者否决（优先级最高，先于一切；必须逐条执行）】\n"
+                + "\n".join(author_notes)
+                + "\n以上问题作者已否决：禁止按其 suggested_fix 或任何方式修改对应内容，"
+                "相关原文保持一字不动；只处理其他问题，并在 note 中逐条交代被否决项已保留原文。"
+            )
+
         user_content = (
             f"项目：《{novel.title if novel else novel_id}》\n\n"
             f"【蓝图（active，修订时不得破坏既有走向）】\n{format_blueprint_for_prompt(blueprint)}\n\n"
@@ -184,6 +220,7 @@ class ReviserAgent(Agent[NovelChapter]):
                 if checklist_text
                 else ""
             )
+            + (f"{author_text}\n\n" if author_text else "")
             + "请输出修订后的完整章节正文 JSON（title/content/note）。"
         )
         return ContextPack(

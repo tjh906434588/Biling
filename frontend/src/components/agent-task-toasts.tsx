@@ -67,6 +67,14 @@ export default function AgentTaskToasts({ novelId, tab }: { novelId: string; tab
       const cur = st.running;
       prevRunningRef.current = cur;
 
+      // 首轮轮询（组件刚挂载/刚切小说）即结束标记，防止把「页内新发起」的任务误判成恢复任务：
+      // - 首轮就有任务在跑 = 后台恢复任务（发起页 UI 已不在），完成时需全局通知兜底；
+      // - 首轮无任务、之后用户在页内新发起的任务，由发起页自身弹居中提示，这里不再重复弹右上角通知。
+      if (firstPoll.current) {
+        firstPoll.current = false;
+        if (cur) switchedAway.current.add(cur.id);
+      }
+
       // ── 完成：上一轮有任务、这一轮没了 → 任务结束 ──
       if (prev && !cur) {
         const info = st.recent && st.recent.id === prev.id ? st.recent : prev;
@@ -101,12 +109,6 @@ export default function AgentTaskToasts({ novelId, tab }: { novelId: string; tab
       // ── 进行中：记录首次被看到的页；离开过发起页则计入 switchedAway（完成时据此判断是否全局通知）──
       if (!tabAtFirstSeen.current.has(cur.id)) tabAtFirstSeen.current.set(cur.id, tab);
       if (tab !== tabAtFirstSeen.current.get(cur.id)) switchedAway.current.add(cur.id);
-
-      if (firstPoll.current) {
-        // 页面刚加载（刷新/进入）就有任务在跑 = 后台恢复任务，发起页自己的 UI 已不在，完成时需全局通知
-        firstPoll.current = false;
-        switchedAway.current.add(cur.id);
-      }
     };
 
     void poll();

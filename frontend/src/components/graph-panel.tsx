@@ -39,24 +39,26 @@ interface SimNode extends GraphNode {
   vy: number;
 }
 
-/* 力导向布局：Fruchterman-Reingold（排斥 + 弹簧 + 全局温度降温），
-   稳定铺开节点、避免全部挤向中心；小规模图谱同步迭代即可，不引依赖 */
+/* 力导向布局：Fruchterman-Reingold（排斥 + 弹簧 + 中心引力 + 全局温度降温）。
+   理想边长 k 与画布尺寸解耦（约 4.5 倍节点直径，随节点数微增防拥挤），
+   因此面板与全屏两种尺寸下世界坐标布局一致；慢冷却让仿真真正收敛到平衡，
+   不会像早期版本那样冻结在半径 0.36×高的初始大圆环上导致节点相隔过远。 */
 function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], w: number, h: number): SimNode[] {
   const sim: SimNode[] = nodes.map((n) => ({ ...n, x: 0, y: 0, vx: 0, vy: 0 }));
   const n = sim.length;
   if (n === 0) return sim;
   const cx = w / 2;
   const cy = h / 2;
-  const R = Math.min(w, h) * 0.36;
+  const R = Math.min(w, h) * 0.18; // 初始圆环半径：小起步，靠力场收敛到平衡
   sim.forEach((nd, i) => {
     const a = (i / n) * Math.PI * 2 - Math.PI / 2;
     nd.x = cx + Math.cos(a) * R;
     nd.y = cy + Math.sin(a) * R;
   });
   const byId = new Map(sim.map((nd) => [nd.id, nd]));
-  const k = Math.sqrt((w * h) / Math.max(1, n)) * 0.55;
-  const maxIter = 300;
-  let temp = Math.min(w, h) * 0.1;
+  const k = Math.max(60, Math.min(100, 72 + n * 0.3)); // 理想边长：与画布无关，避免大画布把图撑散
+  const maxIter = 500;
+  let temp = Math.min(w, h) * 0.09;
   const tempMin = 0.5;
   for (let it = 0; it < maxIter; it++) {
     const disp = new Map<string, { x: number; y: number }>();
@@ -99,6 +101,12 @@ function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], w: number, h: numbe
       dt.x -= fx;
       dt.y -= fy;
     }
+    /* 中心引力：把孤立/不连通节点拽回中心附近，防止被斥力推到画布边缘 */
+    for (const nd of sim) {
+      const d = disp.get(nd.id)!;
+      d.x += (cx - nd.x) * 0.06;
+      d.y += (cy - nd.y) * 0.06;
+    }
     /* 按温度限制单步位移，温度逐步降低使布局收敛稳定 */
     for (const nd of sim) {
       const d = disp.get(nd.id)!;
@@ -107,7 +115,7 @@ function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], w: number, h: numbe
       nd.x += (d.x / m) * step;
       nd.y += (d.y / m) * step;
     }
-    temp = Math.max(tempMin, temp * 0.95);
+    temp = Math.max(tempMin, temp * 0.97);
   }
   return sim;
 }
@@ -151,7 +159,7 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
     }
     const bw = Math.max(1, maxX - minX);
     const bh = Math.max(1, maxY - minY);
-    const k = Math.min(1.1, Math.min(size.w / bw, size.h / bh));
+    const k = Math.min(1.5, Math.min(size.w / bw, size.h / bh));
     setPos(posMap);
     setView({
       x: (size.w - bw * k) / 2 - minX * k,

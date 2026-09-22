@@ -22,8 +22,55 @@ interface AgentStreamModalProps {
 }
 
 /**
+ * 打字机逐字播放：把已经收到的文本按节奏「逐字打印」出来（而非整段整段蹦出）。
+ * - 流式追加期间按积压量自动调速：积压越多打得越快，尽量跟手
+ * - 生成结束 / 弹窗重新打开时立即补全全文，不做缓慢收尾
+ * - 新一轮生成（文本清空）自动重置打字位置
+ */
+function useTypewriter(text: string, open: boolean, running: boolean): string {
+  const [typed, setTyped] = useState(0);
+  const typedRef = useRef(0);
+
+  // 新一轮生成开始（文本被清空）时重置打字位置
+  useEffect(() => {
+    if (running && text.length === 0) {
+      typedRef.current = 0;
+      setTyped(0);
+    }
+  }, [running, text]);
+
+  // 打字机推进：仅弹窗打开时播放；流结束后立即补全剩余文字
+  useEffect(() => {
+    if (!open) return;
+    const len = text.length;
+    if (len <= 0) return;
+    if (!running) {
+      if (typedRef.current !== len) {
+        typedRef.current = len;
+        setTyped(len);
+      }
+      return;
+    }
+    const id = setInterval(() => {
+      const backlog = len - typedRef.current;
+      if (backlog <= 0) return;
+      // 常规逐字约 2 字/帧（16ms ≈ 125 字/秒）；积压大时加速追赶，避免越拉越远
+      let step = 2;
+      if (backlog > 300) step = 12;
+      else if (backlog > 100) step = 6;
+      typedRef.current = Math.min(len, typedRef.current + step);
+      setTyped(typedRef.current);
+    }, 16);
+    return () => clearInterval(id);
+  }, [open, text, running]);
+
+  return text.slice(0, typed);
+}
+
+/**
  * 生成过程弹窗：DeepSeek 网页版同款交互——深度思考折叠条 + 正文流式滚动，
  * 生成中自动展开思考、完成自动收起，底部实时统计已输出字数/用时。
+ * 正文与思考均为打字机逐字播放效果。
  * 蓝图师 / 大纲师等流式生成共用。
  */
 export default function AgentStreamModal({
@@ -40,12 +87,15 @@ export default function AgentStreamModal({
 }: AgentStreamModalProps) {
   const [thinkingOpen, setThinkingOpen] = useState(true);
   const streamRef = useRef<HTMLPreElement | null>(null);
+  // 打字机逐字展示（区别于已收到的 draftText/thinkingText 总量）
+  const typedDraft = useTypewriter(draftText, open, running);
+  const typedThinking = useTypewriter(thinkingText, open, running);
 
-  // 流式输出自动滚到底部（含思考过程）
+  // 流式输出自动滚到底部（含思考过程），按打字进度滚动
   useEffect(() => {
     const el = streamRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [draftText, thinkingText, running]);
+  }, [typedDraft, typedThinking, running]);
 
   // 思考过程折叠块：生成中自动展开，生成完成后自动收起
   useEffect(() => {
@@ -97,18 +147,18 @@ export default function AgentStreamModal({
               </button>
               {thinkingOpen && (
                 <pre className="max-h-40 shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-zinc-200 bg-zinc-50/60 px-3.5 py-2.5 font-mono text-xs leading-5 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
-                  {thinkingText}
+                  {typedThinking}
                 </pre>
               )}
             </>
           ) : null}
 
-          {/* 正文：流式滚动输出 */}
+          {/* 正文：打字机逐字播放 + 流式滚动输出 */}
           <pre
             ref={streamRef}
             className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap bg-zinc-50 px-4 py-3 font-mono text-xs leading-6 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
           >
-            {draftText ||
+            {typedDraft ||
               (running ? (
                 <span className="text-zinc-400 dark:text-zinc-500">{emptyRunningText}</span>
               ) : (

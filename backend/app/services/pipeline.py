@@ -272,7 +272,14 @@ async def _stream_single(
         if dry_run:
             yield _event("stored", {"action": "dry_run", "data": parsed.model_dump(mode="json")})
         else:
-            stored = _persist(db, agent_name, novel_id, params, parsed)
+            try:
+                stored = _persist(db, agent_name, novel_id, params, parsed)
+            except Exception as e:
+                # 落库失败必须显式告知前端，并抛出标 error：
+                # 否则 SSE 直接断开，前端误以为成功（曾出现修订在落库阶段崩溃却弹"优化完成"）
+                logger.exception("agent=%s 落库失败（正文已生成但未保存）", agent_name)
+                yield _event("stream_error", {"message": f"正文已生成但保存失败，请重试：{e}"})
+                raise
             # 蓝图落库后不再自动抽取设定/文风：设定抽取（setting_extractor）与文风提炼（style_extractor）
             # 改为「设为生效中」时触发（见 blueprints.activate_blueprint），新增/生成蓝图一律不注入。
             yield _event("stored", stored)
@@ -933,7 +940,14 @@ def _persist_novelist(
     # - 新增/重新生成：用 AI 生成的标题，但标题不能等于小说名（同源兜底），否则回退到原标题
     title = params.get("title") or getattr(parsed, "title", None) or chapter.title
     if ver_source == "reviser":
-        parent = db.get(ChapterVersion, parent_version_id) if parent_version_id is not None else None
+        # parent_version_id 来自前端 JSON 参数，是字符串；Uuid 列绑定时不能直接传字符串
+        # （SQLAlchemy 会报 "'str' object has no attribute 'hex'" 导致修订落库崩溃），先转 UUID。
+        parent = None
+        if parent_version_id is not None:
+            try:
+                parent = db.get(ChapterVersion, uuid.UUID(str(parent_version_id)))
+            except (ValueError, TypeError):
+                parent = None
         title = (parent.title if parent else None) or chapter.title
     else:
         novel_row = db.get(Novel, novel_id)

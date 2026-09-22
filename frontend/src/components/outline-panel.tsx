@@ -188,6 +188,15 @@ export default function OutlinePanel({ novelId }: Props) {
   // 组件实例被 App Router 跨小说复用：记录「当前正在显示的小说」，AI 流回调/收尾据此判断是否已切小说
   const liveNovelRef = useRef(novelId);
   if (liveNovelRef.current !== novelId) liveNovelRef.current = novelId;
+  /** 挂载标记：切页签会卸载本面板，但 runAgent 的流回调仍在后台继续。
+   *  卸载后不再弹全局 Message（居中的成功/告警提示），避免「切到其他页面完成」时
+   *  和全局右上角 Notification 重复弹两条；跨页的完成提醒由 agent-task-toasts 兜底。 */
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const [outlines, setOutlines] = useState<Outline[]>([]);
   /** 当前选中章的版本历史（同一章可多版本，轻量历史版本用）。 */
   const [versions, setVersions] = useState<Outline[]>([]);
@@ -347,16 +356,20 @@ export default function OutlinePanel({ novelId }: Props) {
           if (r.running) continue; // 仍在后台批准注入：按钮保持「批准中…」
           stopApprovalPoll.current = () => {}; // 收尾后清掉停止句柄
           const t = r.task;
+          // 本面板已卸载（切页签）：不再弹居中 Message，跨页完成由全局右上角通知兜底
+          const onPanel = liveNovelRef.current === novelId && mountedRef.current;
           if (t && t.status === "error") {
             setApprovingId(null);
-            message.error(`大纲批准失败：${t.error ?? "请稍后重试"}`);
+            if (onPanel) message.error(`大纲批准失败：${t.error ?? "请稍后重试"}`);
           } else if (t && t.outline_id) {
             setApprovingId(null);
             const n = t.injected_characters?.length ?? 0;
-            message.success(
-              `第 ${t.chapter_no} 章大纲 v${t.version_no} 已批准此版本（小说家生成时将优先引用）。` +
-                (n ? `并登记了 ${n} 个新角色到设定库。` : ""),
-            );
+            if (onPanel) {
+              message.success(
+                `第 ${t.chapter_no} 章大纲 v${t.version_no} 已批准此版本（小说家生成时将优先引用）。` +
+                  (n ? `并登记了 ${n} 个新角色到设定库。` : ""),
+              );
+            }
           } else {
             // 无任务记录（异常情况）：直接退出批准中
             setApprovingId(null);
@@ -512,8 +525,8 @@ export default function OutlinePanel({ novelId }: Props) {
     try {
       ensureReady();
       await runAgent("outliner", novelId, params, (ev) => {
-        // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
-        if (liveNovelRef.current !== novelId) return;
+        // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
+        if (liveNovelRef.current !== novelId || !mountedRef.current) return;
         const d = ev.data as { delta?: string; status?: string; chapter_no?: number; id?: string };
         if (ev.event === "thinking_delta" && d.delta) {
           setThinkingText((prev) => prev + d.delta);
@@ -530,12 +543,12 @@ export default function OutlinePanel({ novelId }: Props) {
         }
       });
     } catch (e) {
-      if (liveNovelRef.current === novelId) message.error(friendlyRunError(e));
+      if (liveNovelRef.current === novelId && mountedRef.current) message.error(friendlyRunError(e));
     } finally {
       setGenerating(false);
       setDraftText("");
       setThinkingText("");
-      if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
+      if (liveNovelRef.current !== novelId || !mountedRef.current) return; // 已切小说/已切页签：不再用本小说的结果刷新/选中
       const outs = await load();
       const storedNo = storedChapterRef.current;
       const storedId = storedIdRef.current;

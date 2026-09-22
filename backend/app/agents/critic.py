@@ -11,6 +11,7 @@ from app.agents.context import (
     get_active_blueprint,
     get_graph_relations_text,
     get_novel,
+    get_recent_chapters,
     get_recent_story_states,
     get_settings_snapshot,
     get_visible_open_ledger,
@@ -34,6 +35,9 @@ SYSTEM_PROMPT = """你是「评价师」，一位严苛的小说编辑。对照�
 铁律：
 - 必须对照证据打分：evidence 字段强制非空，泛泛而谈"写得好"视为无效输出。
 - 评审要严苛，降温度，视角重新看待文本。
+- 【冲突红线】评价与每条建议必须对照【最近章节全文】【实体关系图谱】【设定库】【伏笔账本 open 项】核查：
+  建议若会与上文已确立的事实/关系/设定矛盾、或会动到未回收的伏笔 → **不得提出该建议**；
+  正文与上文确有矛盾时，写成 issues 指出"本章与上文冲突（依据）"，而不是建议修改上文。
 - 【设定核对清单】是**程序预先算出来的字面核对结果**，不是猜测。
   对其中每一条，你必须二选一并明确交代：
   (a) 确属漏写 → 写入 issues，severity 至少 medium，type 填 "setting_check"，
@@ -100,6 +104,14 @@ class CriticAgent(Agent[ReviewOutput]):
         states = get_recent_story_states(self.db, novel_id)
         states_text = "\n".join(f"#第{s.chapter_no}章：{s.summary}" for s in states) or "（无）"
 
+        # 最近章节全文：评价一致性时对照上文，防止建议/判罚与已写章节冲突（排除本章自己）
+        chapters = get_recent_chapters(self.db, novel_id)
+        prev_text = "\n\n".join(
+            f"[第{c.chapter_no}章 {c.title or ''}]\n{c.content}"
+            for c in reversed(chapters)
+            if c.chapter_no != params.get("chapter_no")
+        ) or "（无前文）"
+
         # 伏笔账本 open 项（M2：foreshadowing_accountability 对照依据；只注入来源版本仍批准的）
         ledger_rows = get_visible_open_ledger(self.db, novel_id)
         ledger_text = "\n".join(
@@ -133,6 +145,7 @@ class CriticAgent(Agent[ReviewOutput]):
             f"{format_blueprint_for_prompt(blueprint)}\n\n"
             f"本章大纲（含 chapter_function）：{params.get('outline', '（无）')}\n"
             f"最近故事状态：\n{states_text}\n\n"
+            f"最近章节全文（评价一致性时对照上文，建议不得与上文已确立事实/关系/设定矛盾）：\n{prev_text}\n\n"
             f"伏笔账本 open 项（评价 foreshadowing_accountability 与一致性时对照）：\n{ledger_text}\n\n"
             f"实体关系图谱（评价 consistency 时对照，正文不得与已确立关系矛盾）：\n{relations_text}\n\n"
             f"设定库（共 {len(active_settings)} 条，评价设定是否被落实/写歪的对照依据）：\n{settings_text}\n\n"

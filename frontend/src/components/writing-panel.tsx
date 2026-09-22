@@ -508,6 +508,15 @@ export default function WritingPanel({ novelId }: Props) {
   // 组件实例被 App Router 跨小说复用：记录「当前正在显示的小说」，AI 流回调/收尾据此判断是否已切小说
   const liveNovelRef = useRef(novelId);
   if (liveNovelRef.current !== novelId) liveNovelRef.current = novelId;
+  /** 挂载标记：切页签会卸载本面板，但 runAgent 的流回调仍在后台继续。
+   *  卸载后不再弹全局 Message（居中的成功/告警提示），避免「切到其他页面完成」时
+   *  和全局右上角 Notification 重复弹两条；跨页的完成提醒由 agent-task-toasts 兜底。 */
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   // 初始数据（章节目录 / 已批准大纲 / 卷结构）加载中：遮罩过渡
   const [loading, setLoading] = useState(true);
   const [chapters, setChapters] = useState<ChapterListItem[]>([]);
@@ -653,6 +662,12 @@ export default function WritingPanel({ novelId }: Props) {
     (detail?.versions.find((v) => v.is_active) ?? detail?.versions[detail.versions.length - 1] ?? null);
   /** 选中版本是否为已定稿（激活）版本：决定「定稿」/「提取」按钮是否可用。 */
   const selectedIsFinal = selectedVersion?.is_active ?? false;
+  /** 目录项显示标题：当前激活章未定稿时跟随选中版本标题（版本切换本地预览联动目录），其余用章级标题。
+   *  已定稿章节 c.title 已由定稿动作同步为激活版本标题，无需特判。 */
+  const listItemTitle = (c: ChapterListItem) =>
+    c.chapter_no === activeNo && c.status !== "complete" && selectedVersion?.title
+      ? selectedVersion.title
+      : c.title;
 
   /** 打开「新增章节」弹窗：按当前目录算好目标章号、回填该章已批大纲（若有）。 */
   const openAddModal = useCallback(() => {
@@ -980,7 +995,6 @@ export default function WritingPanel({ novelId }: Props) {
 
   async function handleGenerate(override?: Partial<typeof form>) {
     setGenerating(true);
-    setExtractResult(null);
     setSettingGaps(null);
     genStartRef.current = Date.now();
     // 记录本次生成模式：新增章节 or 重新生成正文（弹窗关闭后 regenerateNo 会重置，按钮禁用方向靠它判断）
@@ -1023,8 +1037,8 @@ export default function WritingPanel({ novelId }: Props) {
     try {
       ensureReady();
       await runAgent("novelist", novelId, params, (ev) => {
-        // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
-        if (liveNovelRef.current !== novelId) return;
+        // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
+        if (liveNovelRef.current !== novelId || !mountedRef.current) return;
         const d = ev.data as {
           delta?: string;
           status?: string;
@@ -1056,7 +1070,7 @@ export default function WritingPanel({ novelId }: Props) {
         }
       });
     } catch (e) {
-      if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
+      if (liveNovelRef.current === novelId && mountedRef.current) showToast((e as Error).message, "error");
     } finally {
       setGenerating(false);
       setGenRun((r) => (r ? { ...r, running: false } : r));
@@ -1146,8 +1160,8 @@ export default function WritingPanel({ novelId }: Props) {
         novelId,
         { chapter_no: activeChapter.chapter_no, chapter_text: selectedVersion.content },
         (ev) => {
-          // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
-          if (liveNovelRef.current !== novelId) return;
+          // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
+          if (liveNovelRef.current !== novelId || !mountedRef.current) return;
           if (ev.event === "stored") {
             storedSeen = true;
             setExtractedChapterNo(chapterNo);
@@ -1166,7 +1180,7 @@ export default function WritingPanel({ novelId }: Props) {
         },
       );
     } catch (e) {
-      if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
+      if (liveNovelRef.current === novelId && mountedRef.current) showToast((e as Error).message, "error");
     } finally {
       setExtracting(false);
       // 提取是后台任务：SSE 连接若提前断开，stored 回执可能丢失，但后端照常落库。
@@ -1175,7 +1189,7 @@ export default function WritingPanel({ novelId }: Props) {
       try {
         const fresh = await listChapters(novelId);
         setChapters(fresh);
-        if (liveNovelRef.current === novelId && !storedSeen) {
+        if (liveNovelRef.current === novelId && mountedRef.current && !storedSeen) {
           const refreshed = fresh.find((c) => c.chapter_no === chapterNo);
           if (refreshed?.extracted_version_id != null && refreshed.extracted_version_id === versionId) {
             // 实际已落库（只是回执丢失）：补齐状态，熄灭按钮高亮
@@ -1187,7 +1201,7 @@ export default function WritingPanel({ novelId }: Props) {
           }
         }
       } catch {
-        if (liveNovelRef.current === novelId && !storedSeen) {
+        if (liveNovelRef.current === novelId && mountedRef.current && !storedSeen) {
           showToast("提取未完成，请稍后重试。", "warning");
         }
       }
@@ -1215,7 +1229,7 @@ export default function WritingPanel({ novelId }: Props) {
     setReviews(null);
     reviewStartRef.current = Date.now();
     setReviewRun({ thinking: "", output: "", running: true });
-    let stored = false; // 评价是否成功落库：决定流结束后是否弹完成提示
+    let failed = false; // 流内失败标记（stream_error / schema 最终校验失败）：失败时不再弹完成提示
     try {
       ensureReady();
       await runAgent(
@@ -1229,31 +1243,45 @@ export default function WritingPanel({ novelId }: Props) {
           outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
         },
         (ev) => {
-          // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
-          if (liveNovelRef.current !== novelId) return;
+          // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
+          if (liveNovelRef.current !== novelId || !mountedRef.current) return;
           const d = ev.data as { delta?: string; status?: string; message?: string };
           if (ev.event === "thinking_delta" && d.delta) {
             setReviewRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
           } else if (ev.event === "stream_delta" && d.delta) {
             setReviewRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
           } else if (ev.event === "schema_validate" && d.status !== "ok") {
+            failed = true;
             showToast("评价 schema 校验失败，可重试。", "error");
           } else if (ev.event === "stored") {
-            stored = true;
+            // 收到落库回执即先行刷新一次评价列表（早于流结束展示）；流结束后还会无条件校准一次。
             void listReviews(novelId, activeChapter.chapter_no)
               .then(setReviews)
               .catch(() => undefined);
           } else if (ev.event === "stream_error") {
+            failed = true;
             showToast((ev.data as { message?: string }).message ?? "AI 评价出错，请稍后重试。", "error");
           }
         },
+        undefined,
+        false,
+        15 * 60 * 1000, // 连接超时兜底：超过 15 分钟中断显示（后端任务照常跑完落库，刷新可见），避免永久"思考中"
       );
-      // 评价完成：统一在流结束后弹完成提示（不依赖 stored 事件是否恰好落在断流边界而丢失）
-      if (liveNovelRef.current === novelId && stored) {
+      // 评价完成：统一在流结束后弹完成提示（与正文生成成功一致的居中 success）。
+      // 回执可能因 SSE 断流丢失但后端照常落库，故按「流正常结束且未失败」提示，不依赖 stored；
+      // 无论是否收到 stored，流结束后都无条件从服务端校准一次评价列表：
+      //   - 断流丢 stored → 校准兜底；
+      //   - 收到了 stored 但事件内的 listReviews 早于落库执行（竞态）→ 此处覆盖，保证与真实数据一致。
+      if (liveNovelRef.current === novelId && mountedRef.current && !failed) {
+        try {
+          setReviews(await listReviews(novelId, activeChapter.chapter_no));
+        } catch {
+          /* 刷新失败不阻塞完成提示 */
+        }
         showToast(`第 ${activeChapter.chapter_no} 章评价完成，报告已展示在「评价与优化」中。`, "success");
       }
     } catch (e) {
-      if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
+      if (liveNovelRef.current === novelId && mountedRef.current) showToast((e as Error).message, "error");
     } finally {
       setReviewing(false);
       setReviewRun((r) => (r ? { ...r, running: false } : r));
@@ -1276,8 +1304,8 @@ export default function WritingPanel({ novelId }: Props) {
       let failedChapter: number | null = null;
       const doneRewrite: number[] = [];
       for (const no of target) {
-        // 处理过程中切到其他小说：立即停止，不弹任何本小说的提示
-        if (liveNovelRef.current !== novelId) return;
+        // 处理过程中切到其他小说、或本面板已卸载（切页签）：立即停止，不弹任何本小说的提示
+        if (liveNovelRef.current !== novelId || !mountedRef.current) return;
         const o = approvedOutlines.find((x) => x.chapter_no === no) ?? null;
         const ch = chapters.find((c) => c.chapter_no === no) ?? null;
         // ── 1. 重写正文（按当前大纲，不按评价）──
@@ -1295,8 +1323,8 @@ export default function WritingPanel({ novelId }: Props) {
               writing_mode: o ? "outline_guided" : "draft_free",
             },
             (ev) => {
-              // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
-              if (liveNovelRef.current !== novelId) return;
+              // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
+              if (liveNovelRef.current !== novelId || !mountedRef.current) return;
               const d = ev.data as { delta?: string; status?: string; message?: string };
               if (ev.event === "thinking_delta" && d.delta) {
                 setGenRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
@@ -1309,7 +1337,7 @@ export default function WritingPanel({ novelId }: Props) {
             },
           );
         } catch (e) {
-          if (liveNovelRef.current !== novelId) return;
+          if (liveNovelRef.current !== novelId || !mountedRef.current) return;
           failedChapter = no;
           showToast((e as Error).message, "error");
         } finally {
@@ -1318,11 +1346,14 @@ export default function WritingPanel({ novelId }: Props) {
         if (failedChapter != null) break;
         doneRewrite.push(no);
         // 联动重写只生成草稿：不自动「提取→记忆层」，作者查看正文满意后手动定稿再提取
-        showToast(`第 ${no} 章已重写完成（草稿），可查看并手动定稿`, "success");
+        // 已切页签（面板卸载）：本页不再弹居中提示，跨页完成由全局右上角通知兜底
+        if (liveNovelRef.current === novelId && mountedRef.current) {
+          showToast(`第 ${no} 章已重写完成（草稿），可查看并手动定稿`, "success");
+        }
       }
 
       await loadChapters();
-      if (liveNovelRef.current !== novelId) return; // 已切小说：不再弹本小说的汇总提示
+      if (liveNovelRef.current !== novelId || !mountedRef.current) return; // 已切小说/已切页签：不再弹本小说的汇总提示
       if (failedChapter != null) {
         // 失败即停止：列出「正文未重写」的章节，交作者手动补齐（含失败后还没轮到处理的章节）
         const remainingRewrite = target.filter((n) => !doneRewrite.includes(n));
@@ -1337,12 +1368,15 @@ export default function WritingPanel({ novelId }: Props) {
         showToast(`已为第 ${target.join("、")} 章生成草稿，可逐个查看并手动定稿`, "success");
       }
     } catch (e) {
-      showToast((e as Error).message, "error");
+      if (liveNovelRef.current === novelId && mountedRef.current) showToast((e as Error).message, "error");
     }
   }
 
   /** 按评价报告逐条优化本章正文（修订师），修订版直接定稿为新版本。 */
-  async function handleRevise(review: QualityReview) {
+  async function handleRevise(
+    review: QualityReview,
+    authorInput?: { note?: string; disagreements?: Record<number, string> },
+  ) {
     if (!activeChapter) {
       showToast("请先在章节目录选择一章", "warning");
       return;
@@ -1370,7 +1404,7 @@ export default function WritingPanel({ novelId }: Props) {
     setSettingGaps(null);
     reviseStartRef.current = Date.now();
     setReviseRun({ thinking: "", output: "", running: true });
-    let stored = false; // 优化是否成功落库生成新版本（决定完成后是否关闭评价与优化弹窗）
+    let failed = false; // 流内失败标记（stream_error / schema 最终校验失败）：失败时不再弹完成提示、不关闭弹窗
     try {
       ensureReady();
       await runAgent(
@@ -1390,12 +1424,17 @@ export default function WritingPanel({ novelId }: Props) {
             issues: review.issues,
             strengths: review.strengths,
             revision_hints: review.revision_hints,
+            // 作者批注/异议（作者意图，优先级高于评价师）：随本次优化一次性传入，不落库
+            ...(authorInput?.note?.trim() ? { author_note: authorInput.note.trim() } : {}),
+            ...(authorInput?.disagreements && Object.keys(authorInput.disagreements).length > 0
+              ? { disagreements: authorInput.disagreements }
+              : {}),
           },
         },
         (ev) => {
-          // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
-          if (liveNovelRef.current !== novelId) return;
-          const d = ev.data as { delta?: string; message?: string };
+          // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
+          if (liveNovelRef.current !== novelId || !mountedRef.current) return;
+          const d = ev.data as { delta?: string; status?: string; message?: string };
           if (ev.event === "thinking_delta" && d.delta) {
             setReviseRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
           } else if (ev.event === "stream_delta" && d.delta) {
@@ -1403,28 +1442,34 @@ export default function WritingPanel({ novelId }: Props) {
           } else if (ev.event === "setting_warning") {
             const items = (ev.data as { items?: SettingGap[] }).items ?? [];
             setSettingGaps(items.length ? items : null);
-          } else if (ev.event === "stored") {
-            stored = true; // 优化已落库生成新版本（finally 据此关闭弹窗并刷新）
+          } else if (ev.event === "schema_validate" && d.status !== "ok") {
+            failed = true;
+            showToast("优化 schema 校验失败，可重试。", "error");
           } else if (ev.event === "stream_error") {
+            failed = true;
             showToast((ev.data as { message?: string }).message ?? "AI 优化出错，请稍后重试。", "error");
           }
         },
+        undefined,
+        false,
+        15 * 60 * 1000, // 连接超时兜底：超过 15 分钟中断显示（后端任务照常跑完落库，刷新可见），避免永久"思考中"
       );
-      // 优化完成：统一在流结束后弹完成提示（不依赖 stored 事件是否恰好落在断流边界而丢失）
-      if (liveNovelRef.current === novelId && stored) {
+      // 优化完成：统一在流结束后弹完成提示（与正文生成成功一致的居中 success）。
+      // 回执可能因 SSE 断流丢失但后端照常落库，故按「流正常结束且未失败」提示，不依赖 stored。
+      if (liveNovelRef.current === novelId && mountedRef.current && !failed) {
         showToast(
           `已按评价问题优化第 ${activeChapter.chapter_no} 章，新版本为草稿，请手动定稿。`,
           "success",
         );
       }
     } catch (e) {
-      if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
+      if (liveNovelRef.current === novelId && mountedRef.current) showToast((e as Error).message, "error");
     } finally {
       setRevising(false);
       setReviseRun((r) => (r ? { ...r, running: false } : r));
       setShowReviseRun(false);
       if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
-      if (stored) {
+      if (!failed) {
         // 优化已生成新版本：关闭评价与优化弹窗，避免其自动切到新版本并提示对新版本再评价
         setShowReviewModal(false);
       }
@@ -1624,24 +1669,8 @@ export default function WritingPanel({ novelId }: Props) {
                                   }}
                                 >
                                   <div className="flex items-center justify-between gap-2">
-                                    {/* 点击标题即复制「第X章 标题」（含章节号）；stopPropagation 避免触发外层章节切换 */}
-                                    <span
-                                      className="text-sm font-medium"
-                                      title="点击复制章节标题"
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        const t = c.title?.trim();
-                                        if (!t) {
-                                          showToast("该章暂无标题，无法复制。", "warning");
-                                          return;
-                                        }
-                                        void copyText(t)
-                                          .then(() => showToast("已复制章节标题", "success"))
-                                          .catch(() => showToast("复制失败，请手动选中标题复制。", "error"));
-                                      }}
-                                    >
-                                      第{c.chapter_no}章{c.title ? ` ${c.title}` : ""}
+                                    <span className="text-sm font-medium">
+                                      第{c.chapter_no}章{listItemTitle(c) ? ` ${listItemTitle(c)}` : ""}
                                     </span>
                                   </div>
                                   <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-zinc-500">
@@ -2303,7 +2332,7 @@ function ReviewCard({
   viewButton,
 }: {
   review: QualityReview;
-  onRevise: (r: QualityReview) => void;
+  onRevise: (r: QualityReview, authorInput?: { note?: string; disagreements?: Record<number, string> }) => void;
   revising: boolean;
   /** 当前预览选中的版本 id：评价与选中版本对得上才可「按评价优化」。 */
   activeVersionId: string | null;
@@ -2316,6 +2345,12 @@ function ReviewCard({
     s == null ? "" : s >= 80 ? "text-green-600" : s >= 60 ? "text-amber-600" : "text-red-600";
   /** 评价是否针对当前预览选中的版本（原 is_current 由后端按激活版本标记 → 改为按选中版本判断）。 */
   const matchesActive = activeVersionId != null && review.chapter_version_id === activeVersionId;
+  /** 作者对某条问题有异议的理由（key=问题序号）；异议随优化传给修订师，优先级高于评价师。 */
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  /** 作者整体批注（可选）：随优化传给修订师，优先级高于评价师。 */
+  const [note, setNote] = useState("");
+  /** 当前展开异议输入框的问题序号（null=全部收起）。 */
+  const [openDraft, setOpenDraft] = useState<number | null>(null);
   return (
     <div className="rounded-lg bg-sunken/40 p-4">
       <div className="mb-3 flex items-center gap-3">
@@ -2375,13 +2410,49 @@ function ReviewCard({
           <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">问题</h4>
           <ul className="flex flex-col gap-1.5">
             {review.issues.map((i, idx) => (
-              <li key={idx} className="rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs dark:border-red-900 dark:bg-red-950">
-                <span className="mr-1.5 rounded bg-red-100 px-1 py-0.5 text-[10px] text-red-700 dark:bg-red-900 dark:text-red-300">
-                  {i.severity ?? "?"}
-                </span>
-                {i.desc}
-                {i.suggested_fix && (
-                  <span className="mt-1 block text-red-700/80 dark:text-red-300/80">改法：{i.suggested_fix}</span>
+              <li
+                key={idx}
+                className={`rounded-lg border p-2.5 text-xs ${
+                  drafts[idx]?.trim()
+                    ? "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950"
+                    : "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="mr-1.5 rounded bg-red-100 px-1 py-0.5 text-[10px] text-red-700 dark:bg-red-900 dark:text-red-300">
+                      {i.severity ?? "?"}
+                    </span>
+                    {i.desc}
+                    {i.suggested_fix && (
+                      <span className="mt-1 block text-red-700/80 dark:text-red-300/80">改法：{i.suggested_fix}</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOpenDraft((v) => (v === idx ? null : idx))}
+                    title={
+                      drafts[idx]?.trim()
+                        ? "已标记有异议，优化师将按你的理由处理（点击修改）"
+                        : "这条建议有问题？标记后写理由，优化师将跳过或按你的意见改"
+                    }
+                    className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${
+                      drafts[idx]?.trim()
+                        ? "border-amber-400 bg-amber-100 text-amber-700 dark:border-amber-600 dark:bg-amber-900 dark:text-amber-300"
+                        : "border-zinc-300 text-zinc-500 hover:border-amber-400 hover:text-amber-600 dark:border-zinc-700 dark:text-zinc-400"
+                    }`}
+                  >
+                    {drafts[idx]?.trim() ? "有异议 ✓" : "有异议"}
+                  </button>
+                </div>
+                {openDraft === idx && (
+                  <textarea
+                    value={drafts[idx] ?? ""}
+                    onChange={(e) => setDrafts((d) => ({ ...d, [idx]: e.target.value }))}
+                    placeholder="说明哪里不对 / 与上文哪处冲突（可选；优化师将跳过此条或按你的意见改）"
+                    rows={2}
+                    className="mt-2 w-full resize-none rounded-md border border-zinc-300 bg-white p-1.5 text-xs outline-none focus:border-amber-400 dark:border-zinc-700 dark:bg-zinc-900"
+                  />
                 )}
               </li>
             ))}
@@ -2413,17 +2484,46 @@ function ReviewCard({
       </div>
 
       {matchesActive ? (
-        <div className="mt-3 flex items-center justify-between gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-          <p className="text-[11px] text-zinc-400">修订师会逐条对照以上问题优化当前选中的正文（v{review.version_no}），保留原情节走向，优化后存为新草稿版本。</p>
-          <div className="flex shrink-0 items-center gap-2">
-            {viewButton}
-            <button
-              onClick={() => onRevise(review)}
-              disabled={revising}
-              className="btn btn-primary shrink-0 px-3 py-1.5 text-xs font-medium"
-            >
-              {revising ? "AI 优化中…" : "按评价优化本章"}
-            </button>
+        <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+          <p className="mb-1.5 text-[11px] text-zinc-500">
+            作者批注（可选）
+            <span className="text-zinc-400">——你认为评价哪里不对、想按自己的方式改，写在这里，优先级高于评价师。</span>
+          </p>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="例如：第 2 条建议会与上文『铜币不祥』的设定冲突，请不采纳；主角的反应改成冷静处理…"
+            rows={2}
+            className="w-full resize-none rounded-md border border-zinc-300 bg-white p-2 text-xs outline-none focus:border-primary dark:border-zinc-700 dark:bg-zinc-900"
+          />
+          <div className="mt-2.5 flex items-center justify-between gap-3">
+            <p className="text-[11px] text-zinc-400">
+              修订师会逐条对照以上问题优化当前选中的正文（v{review.version_no}），保留原情节走向，优化后存为新草稿版本。
+              标记「有异议」的问题与作者批注会一并传给修订师，以你的意见为准。
+            </p>
+            <div className="flex shrink-0 items-center gap-2">
+              {viewButton}
+              <button
+                onClick={() => {
+                  const disagreements = Object.entries(drafts).reduce<Record<number, string>>((acc, [k, v]) => {
+                    if (v.trim()) acc[Number(k)] = v.trim();
+                    return acc;
+                  }, {});
+                  const hasNote = note.trim().length > 0;
+                  const hasDis = Object.keys(disagreements).length > 0;
+                  onRevise(
+                    review,
+                    hasNote || hasDis
+                      ? { note: hasNote ? note.trim() : undefined, disagreements: hasDis ? disagreements : undefined }
+                      : undefined,
+                  );
+                }}
+                disabled={revising}
+                className="btn btn-primary shrink-0 px-3 py-1.5 text-xs font-medium"
+              >
+                {revising ? "AI 优化中…" : "按评价优化本章"}
+              </button>
+            </div>
           </div>
         </div>
       ) : (

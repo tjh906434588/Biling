@@ -1014,55 +1014,76 @@ export async function runAgent(
   onEvent: (ev: StreamEventData) => void,
   signal?: AbortSignal,
   dryRun = false,
+  timeoutMs?: number,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/stream/agents/${agent}/run`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ novel_id: novelId, params, dry_run: dryRun }),
-    signal,
-  });
-  if (!res.ok || !res.body) {
-    throw new Error(`请求失败：${res.status}`);
+  // 超时兜底：代理/网络层偶发挂起时（曾见 SSE 长连接 500s+ 无响应），超过 timeoutMs 中断连接并抛错，
+  // 避免 UI 永久"思考中"。注意：这里只断开前端读取，后端任务脱离请求生命周期会照常跑完并落库（刷新可见）。
+  const controller = new AbortController();
+  const onOuterAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", onOuterAbort, { once: true });
   }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
-
-  const dispatch = () => {
-    // SSE 事件以空行分隔
-    const blocks = buffer.split(/\r?\n\r?\n/);
-    buffer = blocks.pop() ?? "";
-    for (const block of blocks) {
-      let event: StreamEvent = "stream_delta";
-      let data = "";
-      for (const line of block.split(/\r?\n/)) {
-        if (line.startsWith("event:")) event = line.slice(6).trim() as StreamEvent;
-        else if (line.startsWith("data:")) data += line.slice(5).trim();
-      }
-      if (!data) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        parsed = data;
-      }
-      onEvent({ event, data: parsed });
+  const timer =
+    timeoutMs != null
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : undefined;
+  try {
+    const res = await fetch(`${BASE}/stream/agents/${agent}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ novel_id: novelId, params, dry_run: dryRun }),
+      signal: controller.signal,
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`请求失败：${res.status}`);
     }
-  };
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    const dispatch = () => {
+      // SSE 事件以空行分隔
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        let event: StreamEvent = "stream_delta";
+        let data = "";
+        for (const line of block.split(/\r?\n/)) {
+          if (line.startsWith("event:")) event = line.slice(6).trim() as StreamEvent;
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          parsed = data;
+        }
+        onEvent({ event, data: parsed });
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      dispatch();
+    }
+    buffer += decoder.decode();
     dispatch();
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", onOuterAbort);
   }
-  buffer += decoder.decode();
-  dispatch();
 }
 
 /** 把运行期异常转成对用户友好的提示：网络层中断（长等待时连接被代理/网关掐断）给出可操作建议。 */
 export function friendlyRunError(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
+  if (e instanceof DOMException && e.name === "TimeoutError") {
+    return "等待 AI 响应超时，已自动中断显示。生成任务可能仍在后台继续，请稍后刷新页面查看结果；若反复超时，可重试。";
+  }
   if (/terminated|load failed|network error|fetch failed|aborted|chunked|ECONNRESET|socket|timed out/i.test(raw)) {
     return "网络连接中断，生成未完成。输入内容已保留，请直接重试；若反复失败，可把导入文档精简后重试。";
   }
