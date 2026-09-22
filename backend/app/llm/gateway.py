@@ -29,6 +29,12 @@ settings = get_settings()
 # 显式给一个宽松默认值，保证正文有足够预算产出；模型自行 stop，不会强制写满。
 DEFAULT_GENERATION_MAX_TOKENS = 8192
 
+# 单次 LLM 请求总超时（秒）：流式生成可能较长（长思考期 + 长正文），
+# 但必须有个上限——否则网络/服务端挂起时请求永不返回，后台任务永久 running，
+# 表现为"提取/生成没落库、按钮一直高亮"（曾因无超时卡死 20+ 分钟）。
+# 10 分钟覆盖正常生成（实测 novelist/reviser/critic 均在 1-6 分钟内完成）。
+LLM_REQUEST_TIMEOUT_SECONDS = 600
+
 # 各 provider 对应的 API Key 环境变量
 _PROVIDER_KEY_ENV: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
@@ -219,6 +225,7 @@ async def stream_completion(
         stream=True,
         api_base=api_base or route.api_base,
         api_key=api_key,
+        timeout=LLM_REQUEST_TIMEOUT_SECONDS,  # 防止请求挂起时后台任务永久 running
     )
     logger.info("[gateway] acompletion returned in %.1fs", time.time() - t0)
     yielded_any = False

@@ -44,6 +44,15 @@ export async function updateNovel(
   return res.json();
 }
 
+/** 删除小说及其全部关联数据（后端按依赖顺序显式清理各关联表）。 */
+export async function deleteNovel(novelId: string): Promise<void> {
+  const res = await fetch(`${BASE}/novels/${novelId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `删除小说失败：${res.status}`);
+  }
+}
+
 export async function createNovel(data: { title: string; premise?: string }): Promise<Novel> {
   const res = await fetch(`${BASE}/novels`, {
     method: "POST",

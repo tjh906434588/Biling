@@ -54,6 +54,65 @@ def update_novel(novel_id: uuid.UUID, payload: NovelUpdate, db: Session = Depend
     return novel
 
 
+@router.delete("/{novel_id}", status_code=204)
+def delete_novel(novel_id: uuid.UUID, db: Session = Depends(get_db)):
+    """删除小说及其全部关联数据。
+
+    SQLite 未开启外键级联，这里按依赖顺序显式清理所有关联表：
+    直接带 novel_id 的表（任务/评价/记忆层/图谱/概念卡/风格/设定/账本）→
+    章节版本（经章节）→ 章节 → 大纲 → 蓝图及文风 → 该小说写作指令（prompts scope）→ 小说本体。
+    """
+    from sqlalchemy import delete as sa_delete
+
+    from app.db.models import (
+        AgentTask,
+        Blueprint,
+        BlueprintStyle,
+        Chapter,
+        ChapterVersion,
+        ConceptCard,
+        EntityRelation,
+        Outline,
+        PlotLedger,
+        PromptTemplate,
+        QualityReview,
+        Setting,
+        StoryState,
+        StyleProfile,
+    )
+
+    novel = db.get(Novel, novel_id)
+    if novel is None:
+        raise HTTPException(404, "项目不存在")
+
+    chapter_ids = db.execute(
+        select(Chapter.id).where(Chapter.novel_id == novel_id)
+    ).scalars().all()
+
+    db.execute(sa_delete(AgentTask).where(AgentTask.novel_id == novel_id))
+    db.execute(sa_delete(QualityReview).where(QualityReview.novel_id == novel_id))
+    db.execute(sa_delete(StoryState).where(StoryState.novel_id == novel_id))
+    db.execute(sa_delete(EntityRelation).where(EntityRelation.novel_id == novel_id))
+    db.execute(sa_delete(ConceptCard).where(ConceptCard.novel_id == novel_id))
+    db.execute(sa_delete(StyleProfile).where(StyleProfile.novel_id == novel_id))
+    db.execute(sa_delete(Setting).where(Setting.novel_id == novel_id))
+    db.execute(sa_delete(PlotLedger).where(PlotLedger.novel_id == novel_id))
+    # 章节版本（无 novel_id，经章节关联）
+    if chapter_ids:
+        db.execute(sa_delete(ChapterVersion).where(ChapterVersion.chapter_id.in_(chapter_ids)))
+    db.execute(sa_delete(Chapter).where(Chapter.novel_id == novel_id))
+    # 大纲（引用蓝图，先于蓝图删除）
+    db.execute(sa_delete(Outline).where(Outline.novel_id == novel_id))
+    # 蓝图及其按版本存储的文风
+    db.execute(sa_delete(BlueprintStyle).where(BlueprintStyle.novel_id == novel_id))
+    db.execute(sa_delete(Blueprint).where(Blueprint.novel_id == novel_id))
+    # 该小说的写作指令（prompts scope=novel:{id}）
+    db.execute(sa_delete(PromptTemplate).where(PromptTemplate.scope == f"novel:{novel_id}"))
+
+    db.delete(novel)
+    db.commit()
+
+
 @router.get("/{novel_id}/settings", response_model=list[SettingRead])
 def list_settings(
     novel_id: uuid.UUID,

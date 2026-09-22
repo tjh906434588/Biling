@@ -27,6 +27,10 @@ router = APIRouter(prefix="/api/stream/agents", tags=["stream"])
 # 避免刷新后生成过程弹窗只剩占位文字（刷新前已流出的内容也能看到，并随轮询继续滚动）。
 PROGRESS: dict[str, dict[str, str]] = {}
 
+# 后台任务绝对超时（秒）：LLM 请求已单独限时（LLM_REQUEST_TIMEOUT_SECONDS=600），
+# 这里留足重试/校验/落库缓冲。防止任务永久 running（曾因 LLM 挂起卡死 20+ 分钟）。
+TASK_ABSOLUTE_TIMEOUT_SECONDS = 1200
+
 
 def _iso_utc(dt) -> str | None:
     """数据库 DateTime 由 SQLite CURRENT_TIMESTAMP 写入，为 UTC 且无时区标记；
@@ -189,25 +193,40 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
     queue: asyncio.Queue = asyncio.Queue(maxsize=64)
     _SENTINEL = object()
 
+    async def _run_background(task_db: Session, task: AgentTask) -> None:
+        """后台生成主体：流式跑完并落库，最后把 agent_tasks 标记 done。"""
+        async for sse in run_agent_stream(
+            task_db,
+            agent,
+            payload.novel_id,
+            payload.params,
+            temperature=payload.temperature,
+            max_tokens=payload.max_tokens,
+            dry_run=payload.dry_run,
+        ):
+            _update_progress(task.id, sse)  # 累积流式文字，供刷新后恢复显示
+            try:
+                queue.put_nowait(sse)
+            except asyncio.QueueFull:
+                pass  # 连接已断/消费慢：丢弃事件，生成照常跑完并落库
+        _finish_task(task_db, task.id, status="done", msg="生成完成")
+
     async def background_run() -> None:
         # 独立会话：任务脱离请求生命周期（get_db 的会话随请求结束关闭，不能用）
         task_db = SessionLocal()
+        # 整体超时兜底：LLM 请求已单独限时（LLM_REQUEST_TIMEOUT_SECONDS），这里再留
+        # 足够缓冲（含重试/校验/落库），防止极端情况（如 LLM 层异常未抛）下任务永久
+        # running——那会让「提取/生成没落库、按钮一直高亮」且前端永远显示"进行中"。
         try:
-            async for sse in run_agent_stream(
-                task_db,
-                agent,
-                payload.novel_id,
-                payload.params,
-                temperature=payload.temperature,
-                max_tokens=payload.max_tokens,
-                dry_run=payload.dry_run,
-            ):
-                _update_progress(task.id, sse)  # 累积流式文字，供刷新后恢复显示
-                try:
-                    queue.put_nowait(sse)
-                except asyncio.QueueFull:
-                    pass  # 连接已断/消费慢：丢弃事件，生成照常跑完并落库
-            _finish_task(task_db, task.id, status="done", msg="生成完成")
+            async with asyncio.timeout(TASK_ABSOLUTE_TIMEOUT_SECONDS):
+                await _run_background(task_db, task)
+        except TimeoutError:
+            logger.error("agent=%s task=%s 后台任务超时终止（%ss 未完成）", agent, task.id, TASK_ABSOLUTE_TIMEOUT_SECONDS)
+            _finish_task(task_db, task.id, status="error", error="生成超时，已自动终止，请重试。")
+            try:
+                queue.put_nowait(_SENTINEL)
+            except asyncio.QueueFull:
+                pass
         except Exception as e:
             logger.exception("agent=%s task=%s 后台生成失败", agent, task.id)
             _finish_task(task_db, task.id, status="error", error=str(e))

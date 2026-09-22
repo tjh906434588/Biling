@@ -433,6 +433,31 @@ function sourceLabel(source: string): string {
   return SOURCE_LABELS[source] ?? source;
 }
 
+/** 复制文本到剪贴板：优先异步 Clipboard API；权限被拒/不可用（如非 https、iframe 内）时回退 execCommand。 */
+function copyText(text: string): Promise<void> {
+  const fallback = () =>
+    new Promise<void>((resolve, reject) => {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        if (document.execCommand("copy")) resolve();
+        else reject(new Error("execCommand copy 失败"));
+      } catch (e) {
+        reject(e);
+      } finally {
+        document.body.removeChild(ta);
+      }
+    });
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => fallback());
+  }
+  return fallback();
+}
+
 /** 版本来源 chip 配色（版本树弹窗用）：初稿=蓝、再稿=紫、修订稿=琥珀、其他=灰。 */
 function sourceChipClass(source: string): string {
   if (source.startsWith("novelist"))
@@ -496,7 +521,6 @@ export default function WritingPanel({ novelId }: Props) {
   const [detail, setDetail] = useState<ChapterDetail | null>(null);
   const [form, setForm] = useState<GenForm>(EMPTY_FORM);
   const [generating, setGenerating] = useState(false);
-  const [copied, setCopied] = useState(false);
   /** 正上方悬浮条已迁移到全局 Message：showToast 为本地别名，统一走 message API。 */
   const showToast = (msg: string, level: "success" | "warning" | "error" = "success") => {
     if (level === "error") message.error(msg);
@@ -504,7 +528,6 @@ export default function WritingPanel({ novelId }: Props) {
     else message.success(msg);
   };
   const [extracting, setExtracting] = useState(false);
-  const [extractResult, setExtractResult] = useState<string | null>(null);
   /** 本次提取清掉的「链条中间环」所影响的下游章节（如删了第1章 师徒，第2/3章递进前提断裂）。
    *  提取回执带 downstream_affected 时置位，弹出右上角全局 Notification 提示作者「挨个重写并重提取」；
    *  暂不处理（✕）/开始处理后清空。切页后通知保持显示，回来时从模块级状态还原（不会因切页丢失）。 */
@@ -858,10 +881,6 @@ export default function WritingPanel({ novelId }: Props) {
     !!selectedVersion &&
     approvedOutline != null &&
     String(selectedVersion.outline_id ?? "") !== approvedOutline.id;
-  /** 当前选中版本还没有评价 → 「评价本章」按钮高亮提醒。
-   *  reviews 为 null 表示评价还没加载完，此时一律不高亮，避免切换章节时的高亮闪烁。 */
-  const reviewPending =
-    !!selectedVersion && reviews != null && !currentReview;
   /** 右侧正文区是否"有内容"：有正文版本或已选中某章时为 true → 撑满页面高度；
    *  无内容（未选章）时为 false → 自然高度，不让它强行占满整屏，也不反向把左侧模块带高。 */
   const hasContent = detail != null || activeNo != null;
@@ -1086,9 +1105,8 @@ export default function WritingPanel({ novelId }: Props) {
   async function handleCopyContent() {
     if (!selectedVersion?.content) return;
     try {
-      await navigator.clipboard.writeText(selectedVersion.content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      await copyText(selectedVersion.content);
+      showToast("已复制本章正文", "success");
     } catch {
       showToast("复制失败，请手动选中正文复制。", "error");
     }
@@ -1120,8 +1138,7 @@ export default function WritingPanel({ novelId }: Props) {
     const chapterNo = activeChapter.chapter_no;
     const versionId = selectedVersion.id;
     setExtracting(true);
-    setExtractResult(null);
-    let out = "";
+    let storedSeen = false; // 是否收到 stored 回执：决定完成后从服务端校准还是直接采信回执
     try {
       ensureReady();
       await runAgent(
@@ -1132,8 +1149,7 @@ export default function WritingPanel({ novelId }: Props) {
           // 切到其他小说后：本小说后台任务的后续回调不再弹提示、不再写入状态
           if (liveNovelRef.current !== novelId) return;
           if (ev.event === "stored") {
-            out = JSON.stringify(ev.data, null, 2);
-            setExtractResult(out);
+            storedSeen = true;
             setExtractedChapterNo(chapterNo);
             setExtractedVersionId(versionId);
             // 本次重提取是否清掉了「被取代过的链条中间环」：若是，列出受影响的下游章节，
@@ -1143,19 +1159,38 @@ export default function WritingPanel({ novelId }: Props) {
               ? d.downstream_affected.filter((a) => a.chapter_no > 0)
               : [];
             setAffectedChapters(affected.length > 0 ? affected : null);
-            showToast(`第 ${activeChapter.chapter_no} 章已提取入记忆层`, "success");
-            // 刷新目录，让列表里的提取版本记录（extracted_version_id）立即更新，刷新页面也不会误报高亮
-            void loadChapters();
+            showToast(`第 ${chapterNo} 章已提取入记忆层`, "success");
           } else if (ev.event === "stream_error") {
             showToast((ev.data as { message?: string }).message ?? "AI 提取出错，请稍后重试。", "error");
           }
         },
       );
-      if (!out) showToast("提取完成（未返回 stored 事件）", "warning");
     } catch (e) {
       if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
     } finally {
       setExtracting(false);
+      // 提取是后台任务：SSE 连接若提前断开，stored 回执可能丢失，但后端照常落库。
+      // 无论回执是否收到，都以服务端最新提取记录（extracted_version_id）校准按钮高亮，
+      // 避免「已提取但按钮仍高亮」的误报；回执已收到时这里只是顺带刷新目录。
+      try {
+        const fresh = await listChapters(novelId);
+        setChapters(fresh);
+        if (liveNovelRef.current === novelId && !storedSeen) {
+          const refreshed = fresh.find((c) => c.chapter_no === chapterNo);
+          if (refreshed?.extracted_version_id != null && refreshed.extracted_version_id === versionId) {
+            // 实际已落库（只是回执丢失）：补齐状态，熄灭按钮高亮
+            setExtractedChapterNo(chapterNo);
+            setExtractedVersionId(versionId);
+            showToast(`第 ${chapterNo} 章已提取入记忆层`, "success");
+          } else {
+            showToast("提取未完成，请稍后重试。", "warning");
+          }
+        }
+      } catch {
+        if (liveNovelRef.current === novelId && !storedSeen) {
+          showToast("提取未完成，请稍后重试。", "warning");
+        }
+      }
     }
   }
 
@@ -1180,6 +1215,7 @@ export default function WritingPanel({ novelId }: Props) {
     setReviews(null);
     reviewStartRef.current = Date.now();
     setReviewRun({ thinking: "", output: "", running: true });
+    let stored = false; // 评价是否成功落库：决定流结束后是否弹完成提示
     try {
       ensureReady();
       await runAgent(
@@ -1203,7 +1239,7 @@ export default function WritingPanel({ novelId }: Props) {
           } else if (ev.event === "schema_validate" && d.status !== "ok") {
             showToast("评价 schema 校验失败，可重试。", "error");
           } else if (ev.event === "stored") {
-            showToast(`第 ${activeChapter.chapter_no} 章评价已落库 quality_reviews（对照蓝图/伏笔账本）。`, "success");
+            stored = true;
             void listReviews(novelId, activeChapter.chapter_no)
               .then(setReviews)
               .catch(() => undefined);
@@ -1212,6 +1248,10 @@ export default function WritingPanel({ novelId }: Props) {
           }
         },
       );
+      // 评价完成：统一在流结束后弹完成提示（不依赖 stored 事件是否恰好落在断流边界而丢失）
+      if (liveNovelRef.current === novelId && stored) {
+        showToast(`第 ${activeChapter.chapter_no} 章评价完成，报告已展示在「评价与优化」中。`, "success");
+      }
     } catch (e) {
       if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
     } finally {
@@ -1364,16 +1404,19 @@ export default function WritingPanel({ novelId }: Props) {
             const items = (ev.data as { items?: SettingGap[] }).items ?? [];
             setSettingGaps(items.length ? items : null);
           } else if (ev.event === "stored") {
-            stored = true;
-            showToast(
-              `已按评价问题优化第 ${activeChapter.chapter_no} 章，新版本为草稿，请手动定稿。`,
-              "success",
-            );
+            stored = true; // 优化已落库生成新版本（finally 据此关闭弹窗并刷新）
           } else if (ev.event === "stream_error") {
             showToast((ev.data as { message?: string }).message ?? "AI 优化出错，请稍后重试。", "error");
           }
         },
       );
+      // 优化完成：统一在流结束后弹完成提示（不依赖 stored 事件是否恰好落在断流边界而丢失）
+      if (liveNovelRef.current === novelId && stored) {
+        showToast(
+          `已按评价问题优化第 ${activeChapter.chapter_no} 章，新版本为草稿，请手动定稿。`,
+          "success",
+        );
+      }
     } catch (e) {
       if (liveNovelRef.current === novelId) showToast((e as Error).message, "error");
     } finally {
@@ -1575,14 +1618,29 @@ export default function WritingPanel({ novelId }: Props) {
                                   onClick={() => {
                                     // 章节目录不允许取消选中：点击任意章节（含已选中）都保持/设为选中
                                     setActiveNo(c.chapter_no);
-                                    setExtractResult(null);
                                     setReviews(null);
                                     setSelectedVersionId(null);
                                     void loadDetail(c.chapter_no);
                                   }}
                                 >
                                   <div className="flex items-center justify-between gap-2">
-                                    <span className="text-sm font-medium">
+                                    {/* 点击标题即复制「第X章 标题」（含章节号）；stopPropagation 避免触发外层章节切换 */}
+                                    <span
+                                      className="text-sm font-medium"
+                                      title="点击复制章节标题"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        const t = c.title?.trim();
+                                        if (!t) {
+                                          showToast("该章暂无标题，无法复制。", "warning");
+                                          return;
+                                        }
+                                        void copyText(t)
+                                          .then(() => showToast("已复制章节标题", "success"))
+                                          .catch(() => showToast("复制失败，请手动选中标题复制。", "error"));
+                                      }}
+                                    >
                                       第{c.chapter_no}章{c.title ? ` ${c.title}` : ""}
                                     </span>
                                   </div>
@@ -1610,7 +1668,7 @@ export default function WritingPanel({ novelId }: Props) {
           )}
         </div>
 
-        {/* 本章操作：评价 / 入记忆 / 复制正文，收在一张卡里。必须选中章节才能点（针对某一章）。
+        {/* 本章操作：提取入记忆 / 复制正文，收在一张卡里。必须选中章节才能点（针对某一章）。
             shrink-0：高度固定，始终把目录面板挤到剩余的视口高度里去滚动。 */}
         <div className="panel shrink-0">
           <div className="panel-head">
@@ -1622,31 +1680,7 @@ export default function WritingPanel({ novelId }: Props) {
             )}
           </div>
           <div className="flex flex-col gap-2">
-            <button
-              className={`w-full cursor-pointer rounded-lg border px-3 py-2 text-sm transition-colors ${
-                reviewPending
-                  ? "border-amber-500 bg-gradient-to-r from-amber-200 to-amber-50 font-medium text-amber-800 hover:border-amber-600 hover:from-amber-300 hover:to-amber-100 dark:border-amber-500 dark:from-amber-800/80 dark:to-amber-950/60 dark:text-amber-300 dark:hover:border-amber-400 dark:hover:from-amber-800 dark:hover:to-amber-900/70 disabled:hover:border-amber-500 dark:disabled:hover:border-amber-500"
-                  : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-700 dark:text-zinc-300 disabled:hover:border-zinc-300 dark:disabled:hover:border-zinc-700"
-              } disabled:cursor-not-allowed disabled:opacity-100`}
-              onClick={handleReview}
-              disabled={activeNo == null || reviewing || extracting || !selectedVersion}
-              title={
-                activeNo == null
-                  ? "请先在章节目录选择一章"
-                  : isStaleForActiveOutline
-                    ? "当前正文基于旧版大纲生成，只能查看；请基于当前激活大纲重新生成正文后再评价"
-                    : extracting
-                      ? "提取记忆层中，暂不能评价本章"
-                      : !selectedVersion
-                        ? "先选定版本再评价"
-                        : currentReview
-                          ? "对照蓝图/伏笔账本评价本章"
-                          : "当前选中的正文还没有评价，建议先评价本章"
-              }
-            >
-              {reviewing ? "评价中…" : "评价本章"}
-            </button>
-            {/* 三个操作按钮等宽：问号收进按钮内右侧，不再占按钮外的横向空间 */}
+            {/* 评价入口统一在右侧「评价与优化」，本章操作只保留提取与复制 */}
             <button
               className={`relative w-full cursor-pointer rounded-lg border px-3 py-2 text-sm transition-colors ${
                 extractPending
@@ -1692,7 +1726,7 @@ export default function WritingPanel({ novelId }: Props) {
               disabled={activeNo == null || !selectedVersion}
               className="w-full cursor-pointer rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-600 hover:border-zinc-500 disabled:cursor-not-allowed disabled:hover:border-zinc-300 disabled:opacity-100 dark:border-zinc-700 dark:text-zinc-300 dark:disabled:hover:border-zinc-700"
             >
-              {copied ? "已复制 ✓" : "复制本章正文"}
+             复制本章正文
             </button>
             <div className="mt-1 border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
               <CostHint />
@@ -1708,8 +1742,24 @@ export default function WritingPanel({ novelId }: Props) {
           <div className="panel flex min-h-0 flex-1 flex-col">
             <div className="panel-head">
               <h3 className="panel-title">
-                第 {detail.chapter_no} 章
-                {(selectedVersion?.title ?? detail.title) ? ` ${selectedVersion?.title ?? detail.title}` : ""}
+                {/* 点击标题即复制「第 X 章 标题」（含章节号），无需单独按钮 */}
+                <span
+                  title="点击复制章节标题"
+                  className="cursor-pointer select-text"
+                  onClick={() => {
+                    const t = (selectedVersion?.title ?? detail.title)?.trim();
+                    if (!t) {
+                      showToast("该章暂无标题，无法复制。", "warning");
+                      return;
+                    }
+                    void copyText(t)
+                      .then(() => showToast("已复制章节标题", "success"))
+                      .catch(() => showToast("复制失败，请手动选中标题复制。", "error"));
+                  }}
+                >
+                  第 {detail.chapter_no} 章
+                  {(selectedVersion?.title ?? detail.title) ? ` ${selectedVersion?.title ?? detail.title}` : ""}
+                </span>
                 {/* 标题旁版本标识：版本名 · v{n}，点击弹出多级版本树弹窗（新增/重新生成=根，评价优化=子级） */}
                 <button
                   type="button"
@@ -1848,22 +1898,6 @@ export default function WritingPanel({ novelId }: Props) {
             <p className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
               在左侧章节目录选一章查看正文，或点「新增章节」写新的一章。
             </p>
-          </div>
-        )}
-
-        {/* 记忆层入账回执 */}
-        {extractResult && (
-          <div className="panel">
-            <div className="panel-head">
-              <h3 className="panel-title">
-                <span className="panel-step">3</span>
-                记忆层入账回执
-              </h3>
-              <span className="panel-hint">story_state 已写入，下一章小说家会读到</span>
-            </div>
-            <pre className="max-h-72 overflow-auto rounded-lg border border-green-200 bg-green-50 p-3 text-xs dark:border-green-900 dark:bg-green-950">
-              {extractResult}
-            </pre>
           </div>
         )}
 

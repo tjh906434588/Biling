@@ -926,11 +926,25 @@ def _persist_novelist(
     ver_source = source or "novelist"
     if params.get("regenerate"):
         ver_source = "regenerate"
+
+    # 章节标题规则：
+    # - 修订稿（reviser）：优化不是重写，标题必须沿用被优化版本/章节原标题，忽略 AI 输出的 title
+    #   （AI 偶尔会把小说名当章节标题输出，导致修订稿标题变成书名）
+    # - 新增/重新生成：用 AI 生成的标题，但标题不能等于小说名（同源兜底），否则回退到原标题
+    title = params.get("title") or getattr(parsed, "title", None) or chapter.title
+    if ver_source == "reviser":
+        parent = db.get(ChapterVersion, parent_version_id) if parent_version_id is not None else None
+        title = (parent.title if parent else None) or chapter.title
+    else:
+        novel_row = db.get(Novel, novel_id)
+        novel_title = novel_row.title if novel_row else None
+        if novel_title and title and title.strip() == novel_title.strip():
+            title = chapter.title
     db.add(ChapterVersion(
         chapter_id=chapter.id,
         version_no=last_ver + 1,
         source=ver_source,
-        title=params.get("title") or getattr(parsed, "title", None) or chapter.title,
+        title=title,
         content=parsed.content,
         note=parsed.note,
         outline_id=uuid.UUID(str(outline_id)) if outline_id is not None else None,
