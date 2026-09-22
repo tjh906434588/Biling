@@ -522,6 +522,8 @@ export default function WritingPanel({ novelId }: Props) {
   const [reviewing, setReviewing] = useState(false);
   const [revising, setRevising] = useState(false);
   const [reviews, setReviews] = useState<QualityReview[] | null>(null);
+  /** 评价弹窗：是否展开「另有 N 条旧版本评价」折叠区。 */
+  const [showFoldedReviews, setShowFoldedReviews] = useState(false);
   /** AI 运行过程（「查看 AI 过程」弹窗）：生成正文 / 评价 / 优化各一份，任务结束保留供回看。 */
   const [genRun, setGenRun] = useState<AiRunState | null>(null);
   const [showGenRun, setShowGenRun] = useState(false);
@@ -678,16 +680,23 @@ export default function WritingPanel({ novelId }: Props) {
     }));
   }
 
+  // 切章请求序号：每次发起 loadDetail/loadApprovedOutlines 递增，await 后比对，
+  // 若已被更新的切章请求取代则丢弃本次结果，杜绝"快速切章竞态"（慢的旧响应覆盖新选中章）。
+  const loadDetailReqRef = useRef(0);
+
   const loadApprovedOutlines = useCallback(
-    async (no?: number) => {
+    async (no?: number, req?: number) => {
       try {
         const list = await listOutlines(novelId, "approved");
+        // 仅当本次调用携带了请求序号、且已被更新的切章请求取代时，丢弃过期结果
+        if (req !== undefined && req !== loadDetailReqRef.current) return;
         const sorted = [...list].sort((a, b) => a.chapter_no - b.chapter_no);
         setApprovedOutlines(sorted);
         const hit =
           no != null ? (sorted.find((o) => o.chapter_no === no) ?? null) : (sorted[sorted.length - 1] ?? null);
         setApprovedOutline(hit);
       } catch {
+        if (req !== undefined && req !== loadDetailReqRef.current) return;
         setApprovedOutline(null);
       }
     },
@@ -705,12 +714,18 @@ export default function WritingPanel({ novelId }: Props) {
 
   const loadDetail = useCallback(
     async (no: number) => {
+      // 请求序号 +1：本次切章的所有后续写入都受它保护，被更新的切章取代时整段丢弃
+      const req = ++loadDetailReqRef.current;
+      setShowFoldedReviews(false); // 切章时收起上一章的折叠评价区
       try {
         const d = await getChapter(novelId, no);
+        // 竞态守卫：若期间又点了别的章，旧的慢响应直接丢弃，不覆盖新选中章
+        if (req !== loadDetailReqRef.current) return;
         setDetail(d);
         // 切章/刷新详情：重置版本预览选中，回到默认规则（有已定稿选已定稿、全草稿选最新）
         setSelectedVersionId(null);
       } catch (e) {
+        if (req !== loadDetailReqRef.current) return;
         const msg = (e as Error).message;
         // 章节正文尚未生成（如大纲已批准但正文还没生成/上次生成未落库）→ 静默，不报红色错误
         if (msg.includes("404")) {
@@ -720,10 +735,14 @@ export default function WritingPanel({ novelId }: Props) {
           message.error(msg);
         }
       }
-      void loadApprovedOutlines(no);
+      // 大纲约束按当前章号取适用大纲：跟随同一请求序号，慢的旧响应不会改写新章的过期判断
+      void loadApprovedOutlines(no, req);
       try {
-        setReviews(await listReviews(novelId, no));
+        const reviews = await listReviews(novelId, no);
+        if (req !== loadDetailReqRef.current) return;
+        setReviews(reviews);
       } catch {
+        if (req !== loadDetailReqRef.current) return;
         setReviews(null);
       }
     },
@@ -829,6 +848,9 @@ export default function WritingPanel({ novelId }: Props) {
    *  接口已按时间倒序，取第一条即最近一次。 */
   const currentReviews = (reviews ?? []).filter((r) => r.chapter_version_id === selectedVersion?.id);
   const currentReview = currentReviews[0] ?? null;
+  /** 其他正文版本上的评价（针对当前未选中版本）：折叠展示，仅作历史参考，不驱动「按评价优化」。 */
+  const foldedReviews = (reviews ?? []).filter((r) => r.chapter_version_id !== selectedVersion?.id);
+  const foldedCount = foldedReviews.length;
   /** 当前预览正文是否为「旧大纲版本」生成的：该章已有批准大纲（approvedOutline）时，
    *  正文版本记录的 outline_id 必须等于它才算"基于激活大纲"，否则只能看、不能评价/修订/提取。
    *  无批准大纲（自由稿/该章尚未批准）时不限制。 */
@@ -2086,57 +2108,90 @@ export default function WritingPanel({ novelId }: Props) {
         onClose={() => setShowReviewModal(false)}
       >
         {detail ? (
-          currentReview ? (
-            <ReviewCard
-              review={currentReview}
-              onRevise={handleRevise}
-              revising={revising}
-              activeVersionId={selectedVersion?.id ?? null}
-              viewButton={
-                revising ? (
+          <>
+            {currentReview ? (
+              <ReviewCard
+                review={currentReview}
+                onRevise={handleRevise}
+                revising={revising}
+                activeVersionId={selectedVersion?.id ?? null}
+                viewButton={
+                  revising ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowReviseRun(true)}
+                      className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
+                    >
+                      查看生成过程
+                    </button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <div className="rounded-lg border border-dashed border-zinc-300 p-5 text-center dark:border-zinc-700">
+                <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
+                  {selectedVersion ? (
+                    <>
+                      当前选中正文（v{selectedVersion.version_no}
+                      {selectedVersion ? ` ${sourceLabel(selectedVersion.source)}` : ""}）还没有评价。
+                      点下方「评价本章」，评价师会对照蓝图、伏笔账本与设定逐项打分。
+                    </>
+                  ) : (
+                    "该章还没有选定版本的正文，先在界面生成并选定一版，再回来评价。"
+                  )}
+                </p>
+                <div className="mt-2.5 flex items-center justify-center gap-2">
                   <button
-                    type="button"
-                    onClick={() => setShowReviseRun(true)}
-                    className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
+                    onClick={handleReview}
+                    disabled={reviewing || !selectedVersion}
+                    className="btn btn-primary px-3 py-1.5 text-xs font-medium"
                   >
-                    查看生成过程
+                    {reviewing ? "评价中…" : "评价本章"}
                   </button>
-                ) : undefined
-              }
-            />
-          ) : (
-            <div className="rounded-lg border border-dashed border-zinc-300 p-5 text-center dark:border-zinc-700">
-              <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
-                {selectedVersion ? (
-                  <>
-                    当前选中正文（v{selectedVersion.version_no}
-                    {selectedVersion ? ` ${sourceLabel(selectedVersion.source)}` : ""}）还没有评价。
-                    点下方「评价本章」，评价师会对照蓝图、伏笔账本与设定逐项打分。
-                  </>
-                ) : (
-                  "该章还没有选定版本的正文，先在界面生成并选定一版，再回来评价。"
-                )}
-              </p>
-              <div className="mt-2.5 flex items-center justify-center gap-2">
+                  {reviewing && (
+                    <button
+                      type="button"
+                      onClick={() => setShowReviewRun(true)}
+                      className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
+                    >
+                      查看生成过程
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {foldedCount > 0 && (
+              <div className="mt-4 border-t border-zinc-200 pt-3 dark:border-zinc-800">
                 <button
-                  onClick={handleReview}
-                  disabled={reviewing || !selectedVersion}
-                  className="btn btn-primary px-3 py-1.5 text-xs font-medium"
+                  type="button"
+                  onClick={() => setShowFoldedReviews((v) => !v)}
+                  className="flex w-full items-center gap-1.5 text-left text-[11px] text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
                 >
-                  {reviewing ? "评价中…" : "评价本章"}
+                  <span className={`shrink-0 text-[10px] transition-transform ${showFoldedReviews ? "rotate-90" : ""}`}>
+                    ▸
+                  </span>
+                  <span>
+                    另有 {foldedCount} 条旧版本评价（针对不同正文版本）已折叠
+                    {showFoldedReviews ? "，点击收起" : "，点击展开查看"}
+                  </span>
                 </button>
-                {reviewing && (
-                  <button
-                    type="button"
-                    onClick={() => setShowReviewRun(true)}
-                    className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                  >
-                    查看生成过程
-                  </button>
+                {showFoldedReviews && (
+                  <div className="mt-2 flex flex-col gap-2">
+                    {foldedReviews.map((r) => (
+                      <ReviewCard
+                        key={r.id}
+                        review={r}
+                        onRevise={handleRevise}
+                        revising={revising}
+                        activeVersionId={selectedVersion?.id ?? null}
+                      />
+                    ))}
+                  </div>
                 )}
               </div>
-            </div>
-          )
+            )}
+          </>
         ) : (
           <p className="text-center text-xs text-zinc-400">请先在左侧章节目录选择一章。</p>
         )}
