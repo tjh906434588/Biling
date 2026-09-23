@@ -32,6 +32,26 @@ const ROLE_MARK: Record<string, string> = {
   extra: "灰",
 };
 
+/* 同义关系归一化（仅展示层合并，不改动数据）：
+   同一对实体间语义相同的关系合并为一行展示，例如「入职」与「入职任职」。
+   - 分组键：去掉常见语义后缀（关系/任职/身份/状态）后的规范名；
+   - 同义判定：分组键相同，或一方是另一方的子串（覆盖后缀规则之外的变体）；
+   - 展示名：取类内最短的原始标签，避免把本就唯一的标签改写成缩写。 */
+const REL_SUFFIX_RE = /(关系|任职|身份|状态)$/;
+function relGroupKey(label: string): string {
+  const s = label.replace(REL_SUFFIX_RE, "").replace(/\s+/g, "");
+  return s || label;
+}
+function relCanonical(labels: string[]): string {
+  return labels.slice().sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
+}
+function relEquivalent(a: string, b: string): boolean {
+  if (a === b) return true;
+  const ka = relGroupKey(a);
+  const kb = relGroupKey(b);
+  return ka === kb || ka.includes(kb) || kb.includes(ka);
+}
+
 interface SimNode extends GraphNode {
   x: number;
   y: number;
@@ -300,14 +320,18 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
             /* 方向：单向给单箭头，双向给两端箭头 */
             const hasAB = rows.some((e) => e.source === sName && e.target === tName);
             const hasBA = rows.some((e) => e.source === tName && e.target === sName);
-            /* 多行标签：按关系分组，每行只显示关系名（不显示章节） */
-            const relMap = new Map<string, number[]>();
+            /* 多行标签：同义关系合并分组（如「入职」与「入职任职」），每行只显示关系名（不显示章节） */
+            const relLines: Array<{ label: string; rows: GraphEdge[] }> = [];
             for (const e of rows) {
-              const arr = relMap.get(e.label) ?? [];
-              if (e.chapter_no != null) arr.push(e.chapter_no);
-              relMap.set(e.label, arr);
+              let cls = relLines.find((l) => relEquivalent(l.label, e.label));
+              if (!cls) {
+                cls = { label: e.label, rows: [] };
+                relLines.push(cls);
+              }
+              cls.rows.push(e);
             }
-            const lines = [...relMap.keys()];
+            for (const cls of relLines) cls.label = relCanonical(cls.rows.map((r) => r.label));
+            const lines = relLines.map((l) => l.label);
             /* 标签位置：优先放线正中间；与节点或已放置标签碰撞时沿两侧法线逐级推远 */
             const textW = (s: string) => {
               let w = 0;
@@ -337,7 +361,9 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
             const lx = lxC;
             const ly = lyC - labelH / 2 + 7;
             placedLabels.push({ x: lxC, y: lyC, w: labelW, h: labelH });
-            const tooltip = rows.map((e) => `${e.source} —${e.label}→ ${e.target}（第${e.chapter_no ?? "?"}章确立）`).join("；");
+            const tooltip = relLines
+              .map((l) => l.rows.map((e) => `${e.source} —${l.label}→ ${e.target}（第${e.chapter_no ?? "?"}章确立）`).join("；"))
+              .join("；");
             return (
               <g key={key}>
                 <path
@@ -434,19 +460,21 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
         (() => {
           const hp = pos[hoverNode.id];
           if (!hp) return null;
-          const byTriple = new Map<string, { line: string; chapters: number[] }>();
+          const byTriple = new Map<string, { src: string; dst: string; labels: string[]; chapters: number[] }>();
           for (const e of edges) {
             if (e.source !== hoverNode.id && e.target !== hoverNode.id) continue;
-            const key = `${e.source}\u0000${e.label}\u0000${e.target}`;
-            const rec = byTriple.get(key) ?? { line: `${e.source} —${e.label}→ ${e.target}`, chapters: [] as number[] };
+            const key = `${e.source}\u0000${relGroupKey(e.label)}\u0000${e.target}`;
+            const rec = byTriple.get(key) ?? { src: e.source, dst: e.target, labels: [], chapters: [] as number[] };
+            rec.labels.push(e.label);
             if (e.chapter_no != null) rec.chapters.push(e.chapter_no);
             byTriple.set(key, rec);
           }
           const lines = [...byTriple.values()]
             .sort((a, b) => (a.chapters[0] ?? Infinity) - (b.chapters[0] ?? Infinity))
             .map((r) => {
+              const label = relCanonical(r.labels);
               const uniq = Array.from(new Set(r.chapters)).sort((x, y) => x - y);
-              return r.line + (uniq.length > 0 ? `（第${uniq.join("、")}章确立）` : "");
+              return `${r.src} —${label}→ ${r.dst}` + (uniq.length > 0 ? `（第${uniq.join("、")}章确立）` : "");
             });
           if (lines.length === 0) return null;
           const sx = view.x + hp.x * view.k;
@@ -484,13 +512,19 @@ export default function GraphPanel({ novelId }: { novelId: string }) {
   const [loading, setLoading] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
 
-  /* 图谱只展示角色与势力；两端均为这两类的边才显示，避免悬空线 */
+  /* 图谱只展示角色与势力；两端均为这两类的边才显示，避免悬空线。
+     没有任何可见关联边的孤立实体不显示（无连接，单独展示没有意义） */
   const visible = useMemo(() => {
     const showKinds = new Set(["character", "faction"]);
     const nodes = graph.nodes.filter((n) => showKinds.has(n.kind));
     const ids = new Set(nodes.map((n) => n.id));
     const edges = graph.edges.filter((e) => ids.has(e.source) && ids.has(e.target));
-    return { nodes, edges };
+    const connectedIds = new Set<string>();
+    for (const e of edges) {
+      connectedIds.add(e.source);
+      connectedIds.add(e.target);
+    }
+    return { nodes: nodes.filter((n) => connectedIds.has(n.id)), edges };
   }, [graph]);
 
   const load = useCallback(async () => {

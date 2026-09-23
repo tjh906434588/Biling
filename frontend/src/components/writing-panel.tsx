@@ -825,7 +825,11 @@ export default function WritingPanel({ novelId }: Props) {
     const onDone = (e: Event) => {
       const task = (e as CustomEvent<{ task?: StreamTaskInfo }>).detail?.task;
       void loadChapters();
-      if (task?.chapter_no != null) void loadDetail(task.chapter_no);
+      if (task?.chapter_no != null) {
+        // 任务完成自动切详情时，章节目录高亮/本章操作同步切到该章，避免「详情切了、目录没切」的错位
+        setActiveNo(task.chapter_no);
+        void loadDetail(task.chapter_no);
+      }
     };
     window.addEventListener("biling:agent-task-done", onDone);
     return () => window.removeEventListener("biling:agent-task-done", onDone);
@@ -878,6 +882,97 @@ export default function WritingPanel({ novelId }: Props) {
         setShowAddModal(false);
         setRegenerateNo(null);
         genIsRegenerateRef.current = false;
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [novelId]);
+
+  /** 优化中状态持久化：刷新/切页后重新进入页面时，若后端仍有该小说的修订师（reviser）任务进行中
+   *  （agent_tasks），恢复「优化中」锁定（按评价优化按钮禁用 + 「查看生成过程」可用）并轮询到
+   *  任务结束，避免切页后误以为优化已结束、重复发起优化。与 novelist 恢复同机制；
+   *  完成通知与数据刷新由全局 AgentTaskToasts（biling:agent-task-done）负责。 */
+  useEffect(() => {
+    let stopped = false;
+    void (async () => {
+      let r: AgentRunningTaskResult;
+      try {
+        r = await getAgentRunningTask("reviser", novelId);
+      } catch {
+        return; // 查询失败：不强行恢复
+      }
+      if (stopped || !r.running || !r.task) return;
+      const task = r.task;
+      // 恢复优化中状态：用后端累积的流式文字与任务真实开始时间（刷新前已流出的内容不丢）
+      reviseStartRef.current = task.started_at ? new Date(task.started_at).getTime() : Date.now();
+      setRevising(true);
+      setReviseRun({ thinking: task.progress?.thinking ?? "", output: task.progress?.draft ?? "", running: true });
+      // 轮询到任务结束（成功/失败均退出）
+      while (!stopped) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        let r2: AgentRunningTaskResult;
+        try {
+          r2 = await getAgentRunningTask("reviser", novelId);
+        } catch {
+          break; // 查询失败：停止轮询，不再强行维持「优化中」
+        }
+        if (r2.running && r2.task) {
+          const p = r2.task.progress;
+          if (p) setReviseRun({ thinking: p.thinking, output: p.draft, running: true });
+          continue;
+        }
+        break;
+      }
+      if (!stopped) {
+        setRevising(false);
+        setReviseRun((g) => (g ? { ...g, running: false } : g));
+        setShowReviseRun(false);
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [novelId]);
+
+  /** 评价中状态持久化：与优化中同理，恢复评价师（critic）进行中的「评价中」锁定并轮询到结束，
+   *  避免切页后误以为评价已结束、重复发起评价。 */
+  useEffect(() => {
+    let stopped = false;
+    void (async () => {
+      let r: AgentRunningTaskResult;
+      try {
+        r = await getAgentRunningTask("critic", novelId);
+      } catch {
+        return; // 查询失败：不强行恢复
+      }
+      if (stopped || !r.running || !r.task) return;
+      const task = r.task;
+      reviewStartRef.current = task.started_at ? new Date(task.started_at).getTime() : Date.now();
+      setReviewing(true);
+      setReviewRun({ thinking: task.progress?.thinking ?? "", output: task.progress?.draft ?? "", running: true });
+      // 轮询到任务结束（成功/失败均退出）
+      while (!stopped) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        let r2: AgentRunningTaskResult;
+        try {
+          r2 = await getAgentRunningTask("critic", novelId);
+        } catch {
+          break; // 查询失败：停止轮询，不再强行维持「评价中」
+        }
+        if (r2.running && r2.task) {
+          const p = r2.task.progress;
+          if (p) setReviewRun({ thinking: p.thinking, output: p.draft, running: true });
+          continue;
+        }
+        break;
+      }
+      if (!stopped) {
+        setReviewing(false);
+        setReviewRun((g) => (g ? { ...g, running: false } : g));
+        setShowReviewRun(false);
       }
     })();
     return () => {
@@ -1243,7 +1338,7 @@ export default function WritingPanel({ novelId }: Props) {
         "critic",
         novelId,
         {
-          chapter_no: activeChapter.chapter_no,
+          chapter_no: detail.chapter_no, // 以详情章节为准（与 selectedVersion/parent_version_id 同源）
           chapter_text: selectedVersion.content,
           chapter_version_id: selectedVersion.id, // 评价绑定当前选中的版本（后端据此落 quality_reviews.chapter_version_id）
           writing_mode: "draft_free",
@@ -1386,7 +1481,9 @@ export default function WritingPanel({ novelId }: Props) {
     review: QualityReview,
     authorInput?: { note?: string; disagreements?: Record<number, string> },
   ) {
-    if (!activeChapter) {
+    // 章节归属以当前详情（detail）为准：selectedVersion 与 detail 同源，避免目录高亮与详情错位时
+    // 把优化产物挂到目录高亮章（旧 bug：详情已是第4章、目录仍高亮第3章 → 修订版写进第3章版本树）。
+    if (!detail) {
       showToast("请先在章节目录选择一章", "warning");
       return;
     }
@@ -1420,7 +1517,8 @@ export default function WritingPanel({ novelId }: Props) {
         "reviser",
         novelId,
         {
-          chapter_no: activeChapter.chapter_no,
+          chapter_no: detail.chapter_no, // 以详情章节为准（与 selectedVersion/parent_version_id 同源），
+          // 避免目录高亮与详情错位时把优化产物写进错误章节的版本树
           chapter_text: selectedVersion.content,
           writing_mode: form.writing_mode,
           outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
@@ -1469,7 +1567,7 @@ export default function WritingPanel({ novelId }: Props) {
       // 回执可能因 SSE 断流丢失但后端照常落库，故按「流正常结束且未失败」提示，不依赖 stored。
       if (liveNovelRef.current === novelId && mountedRef.current && !failed) {
         showToast(
-          `已按评价问题优化第 ${activeChapter.chapter_no} 章，新版本为草稿，请手动定稿。`,
+          `已按评价问题优化第 ${detail.chapter_no} 章，新版本为草稿，请手动定稿。`,
           "success",
         );
       }
@@ -1482,14 +1580,14 @@ export default function WritingPanel({ novelId }: Props) {
       // 优化成功（未失败）即关闭评价与优化弹窗：新版本已生成，弹窗继续开着只会提示"对新版本再评价"
       if (!failed) setShowReviewModal(false);
       if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
-      setActiveNo(activeChapter.chapter_no);
+      setActiveNo(detail.chapter_no);
       await loadChapters();
       // 优化成功：加载详情后自动把正文预览切到刚生成的优化版本（新草稿），让作者直接查看优化结果，
       // 而不是停留在被优化版本、或落在"还没有评价"的新版本上被要求评价。
       let selectNewVersionId: string | null = null;
       if (!failed && review) {
         try {
-          const fresh = await getChapter(novelId, activeChapter.chapter_no);
+          const fresh = await getChapter(novelId, detail.chapter_no);
           const newVer = [...fresh.versions]
             .filter((v) => v.parent_version_id === review.chapter_version_id && v.id !== review.chapter_version_id)
             .sort((a, b) => (b.version_no ?? 0) - (a.version_no ?? 0))[0];
@@ -1498,7 +1596,7 @@ export default function WritingPanel({ novelId }: Props) {
           /* 拿不到新版本详情则回退默认选中 */
         }
       }
-      await loadDetail(activeChapter.chapter_no, selectNewVersionId);
+      await loadDetail(detail.chapter_no, selectNewVersionId);
     }
   }
 
@@ -1893,7 +1991,9 @@ export default function WritingPanel({ novelId }: Props) {
                         ? "提取记忆层中，暂不能评价与优化"
                         : reviewing
                           ? "评价进行中，点击可再次打开弹窗查看进度"
-                          : "打开评价与优化"
+                          : revising
+                            ? "优化进行中，点击可再次打开弹窗查看进度"
+                            : "打开评价与优化"
                   }
                 >
                   评价与优化
@@ -2456,8 +2556,8 @@ function ReviewCard({
                     onClick={() => setOpenDraft((v) => (v === idx ? null : idx))}
                     title={
                       drafts[idx]?.trim()
-                        ? "已标记有异议，优化师将按你的理由处理（点击修改）"
-                        : "这条建议有问题？标记后写理由，优化师将跳过或按你的意见改"
+                        ? "已标记有异议，该条将保留原文不修改（点击修改理由）"
+                        : "不认可这条建议？标记并写理由，修订师将保留原文、不按此条修改"
                     }
                     className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${
                       drafts[idx]?.trim()
@@ -2510,19 +2610,22 @@ function ReviewCard({
         <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           <p className="mb-1.5 text-[11px] text-zinc-500">
             作者批注（可选）
-            <span className="text-zinc-400">——你认为评价哪里不对、想按自己的方式改，写在这里，优先级高于评价师。</span>
+            <span className="text-zinc-400">
+              ——评价里没提到、但你自己发现的问题（设定/关系/时间线不一致等），或想按自己的方式改，写在这里，修订师会照此修改。
+              若想让某条评价建议保持原文，用问题右侧的「有异议」。
+            </span>
           </p>
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="例如：第 2 条建议会与上文『铜币不祥』的设定冲突，请不采纳；主角的反应改成冷静处理…"
+            placeholder="例如：本章王磊说『我租的房子在前面』，但前文交代过他是本地人、毕业住家里，请统一口径；主角的反应改成冷静处理…"
             rows={2}
             className="w-full resize-none rounded-md border border-zinc-300 bg-white p-2 text-xs outline-none focus:border-primary dark:border-zinc-700 dark:bg-zinc-900"
           />
           <div className="mt-2.5 flex items-center justify-between gap-3">
             <p className="text-[11px] text-zinc-400">
               修订师会逐条对照以上问题优化当前选中的正文（v{review.version_no}），保留原情节走向，优化后存为新草稿版本。
-              标记「有异议」的问题与作者批注会一并传给修订师，以你的意见为准。
+              「有异议」=保留原文不采纳该条；作者批注=按你的批注修改正文。都会传给修订师，以你的意见为准。
             </p>
             <div className="flex shrink-0 items-center gap-2">
               {viewButton}

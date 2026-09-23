@@ -30,10 +30,13 @@ SYSTEM_PROMPT = f"""你是「修订师」，一位手稳的老编辑。你的任
 - 输出必须是严格的 JSON：{{"title": "本章原标题（必须与修订前一字不差，禁止改名）", "content": "修订后的完整章节正文", "note": "本次修订说明：针对哪些问题改了什么"}}
 
 修订铁律：
-0. 【作者否决·绝对优先】若 prompt 末尾出现【最高指令·作者否决】，其中列出的问题作者已明确否决：
+0. 【作者否决·绝对优先】若 prompt 中出现【最高指令·作者否决】，其中列出的问题作者已明确否决：
    - **禁止按其 suggested_fix 或任何方式修改对应内容，相关原文保持一字不动**；
    - 只处理未被否决的其他问题；
    - 修订 note 中必须逐条交代"第 N 条已按作者意见保留原文"，不得遗漏。
+0'. 【作者批注·修改要求】若 prompt 中出现【作者批注·修改要求】，那是作者**本人发现的问题/修改要求**（可能不在评价师清单里）：
+   - 与【作者否决】相反，批注的默认语义是**要改**：批注属实（确与上文已确立的事实/设定/关系/时间线冲突）→ 按批注意图修改正文；
+   - 若判断批注不成立、或按批注改会破坏更重要的上文设定 → 不改，但必须在 note 中写明"未按作者批注修改：<原因>"，不得静默忽略。
 1. 【冲突红线】逐条对照评价的 issues / revision_hints 时，先对照【最近章节全文】【实体关系图谱】【相关设定】核查该建议是否与上文已确立的事实/关系/设定/未回收伏笔矛盾：
    - 建议本身会破坏上文 → **一律不采纳**，不改动对应内容，并在 note 中写明"未采纳：<该建议>，原因：与上文冲突（<依据>）"。
    - 不要为了迎合评价而改坏上文已确立的设定、人物关系、伏笔与情节走向。
@@ -178,26 +181,34 @@ class ReviserAgent(Agent[NovelChapter]):
                 parts.append("亮点（不要改坏）：\n" + "\n".join(f"- {s}" for s in review["strengths"]))
             review_text = "\n\n".join(parts) or "（无评价明细）"
 
-        # 作者批注/异议（作者意图，优先级高于评价师；随本次优化一次性传入，不落库）
-        author_notes = []
+        # 作者通道分两种语义（随本次优化一次性传入，不落库）：
+        # 1) 整体作者批注（author_note）= 作者本人发现的新问题/修改要求（可能不在评价清单里）→ 默认要改；
+        # 2) 逐条有异议（disagreements）= 作者否决某条评价建议 → 保留原文。
+        author_text = ""
         author_note = review.get("author_note") if isinstance(review, dict) else None
-        if author_note:
-            author_notes.append(f"- 作者整体批注：{author_note}")
+        if author_note and str(author_note).strip():
+            author_text += (
+                "【作者批注·修改要求（作者本人发现的问题/修改要求，优先级最高，先于评价师清单执行）】\n"
+                f"- {str(author_note).strip()}\n"
+                "作者批注即使不在评价师的问题清单里也必须处理：批注属实（确与上文已确立的事实/设定/"
+                "关系/时间线冲突等）→ 按批注意图修改正文；若判断批注不成立或无法修改，必须在 note 中"
+                "写明原因，不得静默忽略。\n\n"
+            )
+        veto_items = []
         disagreements = review.get("disagreements") if isinstance(review, dict) else None
         if isinstance(disagreements, dict) and disagreements:
             for idx, reason in disagreements.items():
-                if not reason:
+                if not reason or not str(reason).strip():
                     continue
                 try:
                     display = int(idx) + 1
                 except (TypeError, ValueError):
                     display = "?"
-                author_notes.append(f"- 第 {display} 条问题：{reason}")
-        author_text = ""
-        if author_notes:
-            author_text = (
+                veto_items.append(f"- 第 {display} 条问题：{str(reason).strip()}")
+        if veto_items:
+            author_text += (
                 "【最高指令·作者否决（优先级最高，先于一切；必须逐条执行）】\n"
-                + "\n".join(author_notes)
+                + "\n".join(veto_items)
                 + "\n以上问题作者已否决：禁止按其 suggested_fix 或任何方式修改对应内容，"
                 "相关原文保持一字不动；只处理其他问题，并在 note 中逐条交代被否决项已保留原文。"
             )
