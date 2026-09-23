@@ -510,9 +510,13 @@ export default function WritingPanel({ novelId }: Props) {
   if (liveNovelRef.current !== novelId) liveNovelRef.current = novelId;
   /** 挂载标记：切页签会卸载本面板，但 runAgent 的流回调仍在后台继续。
    *  卸载后不再弹全局 Message（居中的成功/告警提示），避免「切到其他页面完成」时
-   *  和全局右上角 Notification 重复弹两条；跨页的完成提醒由 agent-task-toasts 兜底。 */
-  const mountedRef = useRef(true);
+   *  和全局右上角 Notification 重复弹两条；跨页的完成提醒由 agent-task-toasts 兜底。
+   *  注意：必须「挂载时置 true、卸载时置 false」。若像以前那样初始 true 且只在卸载置 false，
+   *  React StrictMode 开发模式的「挂载→模拟卸载→重新挂载」会把 ref 永久钉在 false，
+   *  导致本面板所有 AI 流回调被守卫吞掉（弹窗只见占位文字、完成无提示、列表不刷新）。 */
+  const mountedRef = useRef(false);
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
@@ -751,7 +755,7 @@ export default function WritingPanel({ novelId }: Props) {
   }, [novelId]);
 
   const loadDetail = useCallback(
-    async (no: number) => {
+    async (no: number, selectVersionId?: string | null) => {
       // 请求序号 +1：本次切章的所有后续写入都受它保护，被更新的切章取代时整段丢弃
       const req = ++loadDetailReqRef.current;
       setShowFoldedReviews(false); // 切章时收起上一章的折叠评价区
@@ -760,8 +764,11 @@ export default function WritingPanel({ novelId }: Props) {
         // 竞态守卫：若期间又点了别的章，旧的慢响应直接丢弃，不覆盖新选中章
         if (req !== loadDetailReqRef.current) return;
         setDetail(d);
-        // 切章/刷新详情：重置版本预览选中，回到默认规则（有已定稿选已定稿、全草稿选最新）
-        setSelectedVersionId(null);
+        // 切章/刷新详情：默认重置版本预览选中，回到默认规则（有已定稿选已定稿、全草稿选最新）；
+        // 调用方显式指定要选中的版本（如优化完成后切到新生成版本）则优先选中之
+        setSelectedVersionId(
+          selectVersionId && d.versions.some((v) => v.id === selectVersionId) ? selectVersionId : null,
+        );
       } catch (e) {
         if (req !== loadDetailReqRef.current) return;
         const msg = (e as Error).message;
@@ -1244,7 +1251,9 @@ export default function WritingPanel({ novelId }: Props) {
         },
         (ev) => {
           // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
-          if (liveNovelRef.current !== novelId || !mountedRef.current) return;
+          if (liveNovelRef.current !== novelId || !mountedRef.current) {
+            return;
+          }
           const d = ev.data as { delta?: string; status?: string; message?: string };
           if (ev.event === "thinking_delta" && d.delta) {
             setReviewRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
@@ -1433,7 +1442,9 @@ export default function WritingPanel({ novelId }: Props) {
         },
         (ev) => {
           // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
-          if (liveNovelRef.current !== novelId || !mountedRef.current) return;
+          if (liveNovelRef.current !== novelId || !mountedRef.current) {
+            return;
+          }
           const d = ev.data as { delta?: string; status?: string; message?: string };
           if (ev.event === "thinking_delta" && d.delta) {
             setReviseRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
@@ -1468,14 +1479,26 @@ export default function WritingPanel({ novelId }: Props) {
       setRevising(false);
       setReviseRun((r) => (r ? { ...r, running: false } : r));
       setShowReviseRun(false);
+      // 优化成功（未失败）即关闭评价与优化弹窗：新版本已生成，弹窗继续开着只会提示"对新版本再评价"
+      if (!failed) setShowReviewModal(false);
       if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
-      if (!failed) {
-        // 优化已生成新版本：关闭评价与优化弹窗，避免其自动切到新版本并提示对新版本再评价
-        setShowReviewModal(false);
-      }
       setActiveNo(activeChapter.chapter_no);
       await loadChapters();
-      await loadDetail(activeChapter.chapter_no);
+      // 优化成功：加载详情后自动把正文预览切到刚生成的优化版本（新草稿），让作者直接查看优化结果，
+      // 而不是停留在被优化版本、或落在"还没有评价"的新版本上被要求评价。
+      let selectNewVersionId: string | null = null;
+      if (!failed && review) {
+        try {
+          const fresh = await getChapter(novelId, activeChapter.chapter_no);
+          const newVer = [...fresh.versions]
+            .filter((v) => v.parent_version_id === review.chapter_version_id && v.id !== review.chapter_version_id)
+            .sort((a, b) => (b.version_no ?? 0) - (a.version_no ?? 0))[0];
+          selectNewVersionId = newVer?.id ?? null;
+        } catch {
+          /* 拿不到新版本详情则回退默认选中 */
+        }
+      }
+      await loadDetail(activeChapter.chapter_no, selectNewVersionId);
     }
   }
 

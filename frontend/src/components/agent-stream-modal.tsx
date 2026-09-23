@@ -30,6 +30,12 @@ interface AgentStreamModalProps {
 function useTypewriter(text: string, open: boolean, running: boolean): string {
   const [typed, setTyped] = useState(0);
   const typedRef = useRef(0);
+  // 最新文本存 ref：SSE 流式增量高频触发 text 变化，若把 text 放进 interval 的依赖，
+  // 每次更新都会先清掉再重建 interval（事件间隔常 <16ms），interval 永远来不及触发，
+  // 打字机停在 0 字 → 全程只见占位文字。改为 interval 只随 [open, running] 启停，
+  // 每帧从 ref 读最新长度，稳定推进、按积压量调速。
+  const textRef = useRef(text);
+  textRef.current = text;
 
   // 新一轮生成开始（文本被清空）时重置打字位置
   useEffect(() => {
@@ -42,9 +48,9 @@ function useTypewriter(text: string, open: boolean, running: boolean): string {
   // 打字机推进：仅弹窗打开时播放；流结束后立即补全剩余文字
   useEffect(() => {
     if (!open) return;
-    const len = text.length;
-    if (len <= 0) return;
     if (!running) {
+      // 流结束：立即补全剩余文字（不做缓慢收尾）
+      const len = textRef.current.length;
       if (typedRef.current !== len) {
         typedRef.current = len;
         setTyped(len);
@@ -52,6 +58,8 @@ function useTypewriter(text: string, open: boolean, running: boolean): string {
       return;
     }
     const id = setInterval(() => {
+      const len = textRef.current.length;
+      if (len <= 0) return;
       const backlog = len - typedRef.current;
       if (backlog <= 0) return;
       // 常规逐字约 2 字/帧（16ms ≈ 125 字/秒）；积压大时加速追赶，避免越拉越远
@@ -62,7 +70,7 @@ function useTypewriter(text: string, open: boolean, running: boolean): string {
       setTyped(typedRef.current);
     }, 16);
     return () => clearInterval(id);
-  }, [open, text, running]);
+  }, [open, running]);
 
   return text.slice(0, typed);
 }

@@ -190,9 +190,13 @@ export default function OutlinePanel({ novelId }: Props) {
   if (liveNovelRef.current !== novelId) liveNovelRef.current = novelId;
   /** 挂载标记：切页签会卸载本面板，但 runAgent 的流回调仍在后台继续。
    *  卸载后不再弹全局 Message（居中的成功/告警提示），避免「切到其他页面完成」时
-   *  和全局右上角 Notification 重复弹两条；跨页的完成提醒由 agent-task-toasts 兜底。 */
-  const mountedRef = useRef(true);
+   *  和全局右上角 Notification 重复弹两条；跨页的完成提醒由 agent-task-toasts 兜底。
+   *  注意：必须「挂载时置 true、卸载时置 false」。若像以前那样初始 true 且只在卸载置 false，
+   *  React StrictMode 开发模式的「挂载→模拟卸载→重新挂载」会把 ref 永久钉在 false，
+   *  导致本面板所有 AI 流回调被守卫吞掉（生成弹窗只见占位文字、完成无提示、结果不刷新）。 */
+  const mountedRef = useRef(false);
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };

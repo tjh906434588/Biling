@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { getStreamStatus, type StreamStatusResult, type StreamTaskInfo } from "@/lib/api";
 import { notification } from "@/components/notification";
+import { message } from "@/components/message";
 
 /** AI 角色 → 中文标签（后台任务悬浮框用，与各面板的叫法保持一致）。 */
 const AGENT_LABELS: Record<string, string> = {
@@ -83,20 +84,26 @@ export default function AgentTaskToasts({ novelId, tab }: { novelId: string; tab
         // 蓝图（生成/激活）完成：用户当前在蓝图页时，由蓝图页自身的 Message（居中靠上）提示，这里不重复弹；
         // 在其他页面时由本 Notification（右上角）提示。其余 agent 仍只在离开发起页时提示。完成只提示一次。
         const isBlueprint = prev.agent === "blueprint_architect" || prev.agent === "blueprint_activation";
+        // 评价/优化（critic/reviser）：发起页是写作页。完成时若用户当前在写作页，由面板/这里统一弹居中
+        // Message（消息）；若用户当前在其他页面，才用右上角 Notification（通知）。与作者约定：
+        // 「当前页触发的成功操作弹消息，其他页面操作完成的才弹通知」。
+        const isWritingTask = prev.agent === "critic" || prev.agent === "reviser";
+        const onWritingPage = isWritingTask && tab === "writing";
         const shouldNotify = isBlueprint ? tab !== "blueprint" : crossPage;
         if (!doneNotified.current.has(prev.id) && shouldNotify) {
           doneNotified.current.add(prev.id);
           const label = taskLabel(info);
           if (info.status === "error") {
-            notification.error({
-              title: prev.agent === "blueprint_activation" ? "蓝图激活失败" : `${label} 生成失败`,
-              message: info.error ?? undefined,
-            });
+            const title = prev.agent === "blueprint_activation" ? "蓝图激活失败" : `${label} 生成失败`;
+            if (onWritingPage) message.error(info.error ?? title);
+            else notification.error({ title, message: info.error ?? undefined });
           } else if (prev.agent === "blueprint_activation") {
             notification.success({ title: info.msg ?? "蓝图已设为生效中" });
           } else {
             // 蓝图生成：用后端落库时写入的带版本号文案（如"蓝图 v1 已生成完毕"）；跨页由 Notification 通知
-            notification.success({ title: isBlueprint ? (info.msg ?? "蓝图已生成完毕") : `${label} 已生成完毕，可以去看了` });
+            const title = isBlueprint ? (info.msg ?? "蓝图已生成完毕") : `${label} 已生成完毕，可以去看了`;
+            if (onWritingPage) message.success(title);
+            else notification.success({ title });
           }
           // 通知当前面板：后台任务已落库，可刷新数据（如写作页章节目录）
           window.dispatchEvent(new CustomEvent("biling:agent-task-done", { detail: { task: info } }));
