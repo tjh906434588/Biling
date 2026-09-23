@@ -68,7 +68,16 @@ def _finish_task(task_db: Session, task_id: uuid.UUID, *, status: str, msg: str 
 
     done 时若任务已有 msg（如蓝图落库时写入的"蓝图 vX 已生成完毕…"），保留不覆盖；
     error 时始终写入错误信息。
+
+    先 rollback 清掉当前事务：落库失败（如 JSON 序列化 TypeError）会让 session 进入
+    PendingRollback 状态，此时不先回滚，下面的 get/commit 会再次抛 PendingRollbackError，
+    导致任务状态永远停在 running（曾见 extractor 落库失败后任务一直 running、
+    前端无完成提示、按钮高亮不灭、重试被 409 拒绝）。
     """
+    try:
+        task_db.rollback()
+    except Exception:
+        pass
     t = task_db.get(AgentTask, task_id)
     if t is None:
         return

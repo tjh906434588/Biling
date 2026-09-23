@@ -739,7 +739,10 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
         character_states=[e.model_dump() for e in parsed.character_states],
         world_state_changes=[e.model_dump() for e in parsed.world_state_changes],
         new_foreshadowing=[e.model_dump() for e in parsed.new_foreshadowing],
-        resolved_foreshadowing=[e.model_dump() for e in parsed.resolved_foreshadowing],
+        # ResolvedForeshadowing.ledger_id 是 UUID 对象，直接 model_dump() 会残留 UUID 对象，
+        # SQLAlchemy JSON 列用 json.dumps 序列化时抛 "Object of type UUID is not JSON serializable"
+        # → 提取落库必失败（已实测 TypeError）。显式转 str 再入库，与账本前端展示的字符串 id 一致。
+        resolved_foreshadowing=[{"ledger_id": str(e.ledger_id)} for e in parsed.resolved_foreshadowing],
         unresolved_hooks=[e.model_dump() for e in parsed.unresolved_hooks],
         next_chapter_implications=parsed.next_chapter_implications,
     )
