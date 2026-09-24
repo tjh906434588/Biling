@@ -22,7 +22,12 @@ router = APIRouter(prefix="/api/novels", tags=["novels"])
 
 @router.post("", response_model=NovelRead)
 def create_novel(payload: NovelCreate, db: Session = Depends(get_db)):
-    novel = Novel(title=payload.title, premise=payload.premise)
+    novel = Novel(
+        title=payload.title,
+        premise=payload.premise,
+        background_type=payload.background_type,
+        genres=payload.genres or [],
+    )
     db.add(novel)
     db.commit()
     db.refresh(novel)

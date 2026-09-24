@@ -233,7 +233,8 @@ async def _stream_single(
     except Exception as e:  # LLM 超时/限流等
         logger.exception("agent=%s 流式生成失败（LLM 层）", agent_name)
         yield _event("stream_error", {"message": str(e)})
-        return
+        # 必须抛给后台任务层标 error：仅 return 会让任务被标 done、前端误以为成功且无产物
+        raise
     text = result[0]
 
     # 空输出自动重试：模型偶发"只思考不输出正文"（content 为空），干净重跑（不携带错误提示）
@@ -248,16 +249,20 @@ async def _stream_single(
         except Exception as e:
             logger.exception("agent=%s 流式重试生成失败（LLM 层）", agent_name)
             yield _event("stream_error", {"message": str(e)})
-            return
+            # 必须抛给后台任务层标 error：仅 return 会让任务被标 done、前端误以为成功且无产物
+            raise
         text = result[0]
 
     yield _event("stream_end", {"text_length": len(text)})
 
     if not text.strip():
-        # 空输出重试耗尽：空文本不可能通过校验，跳过无意义的 schema 重试，直接按失败处理
+        # 空输出重试耗尽：空文本不可能通过校验，跳过无意义的 schema 重试，直接按失败处理。
+        # 必须抛异常让后台任务层把 agent_tasks 标 error（曾出现任务 done 但大纲/正文未落库，
+        # 前端无失败提示、再次生成被 409 拒绝，用户误以为成功）。
+        msg = "模型连续多次未输出内容，请稍后重试。"
         logger.error("agent=%s 连续 %d 次无正文输出，放弃", agent_name, MAX_EMPTY_RETRY + 1)
-        yield _event("stream_error", {"message": "模型连续多次未输出内容，请稍后重试。"})
-        return
+        yield _event("stream_error", {"message": msg})
+        raise SchemaValidationError(msg)
 
     parsed, ok, retried, last_error = await _validate_with_retry(agent, ctx, text, db)
     yield _event("schema_validate", {"status": "ok" if ok else "error", "retried": retried})
@@ -461,6 +466,8 @@ def _merge_settings_from_import(
             description=description,
             structured=st,
             is_constitution=(item_type == "world_rule"),
+            # 关键信息固化（C）：AI 判定 importance=high 的设定固化，注入不受设定库上限影响
+            is_pinned=(str(getattr(c, "importance", "") or "").lower() == "high"),
             source="blueprint",
             blueprint_id=blueprint_id,
         ))
@@ -610,6 +617,8 @@ def _persist(
         return _persist_blueprint(db, novel_id, parsed, params)
     if agent_name == "setting_extractor":
         return _persist_concept(db, novel_id, parsed)
+    if agent_name == "memory_keeper":
+        return _persist_memory_keeper(db, novel_id, params, parsed)
     return {"action": "deferred", "detail": f"agent={agent_name} 的入库逻辑未启用"}
 
 
@@ -1128,6 +1137,8 @@ def sync_ledger_from_outline(
             confidence="high",
             source="outline",
             outline_id=outline.id,
+            # 关键信息固化（C）：跨多章/主线关键的伏笔 importance=high → 固化，账本超 20 条也不被挤出
+            is_pinned=(str(p.get("importance", "")).lower() == "high"),
         ))
     for t in thread:
         db.add(PlotLedger(
@@ -1158,7 +1169,12 @@ def sync_ledger_from_outline(
 
 
 def _persist_critic(db: Session, novel_id: uuid.UUID, params: dict, parsed: BaseModel) -> dict:
-    """评价师落库：quality_reviews（§5.6）。chapter_version_id 缺省取该章 active 版本。"""
+    """评价师落库：quality_reviews（§5.6）。chapter_version_id 缺省取该章 active 版本。
+
+    落库后重算该正文版本的签约未过签标记（signing_blocked）：最新评价含 severity=high 的
+    红线类 issue（内容红线/抄袭，见 PLATFORM_SIGNING_REVIEW）→ 标记 True，定稿默认拒绝；
+    通过 → 自动解除。评价更新即重算，不依赖作者手动操作。
+    """
     from app.db.models import QualityReview
     from app.schemas.agents import ReviewOutput
 
@@ -1190,6 +1206,12 @@ def _persist_critic(db: Session, novel_id: uuid.UUID, params: dict, parsed: Base
         revision_hints=parsed.revision_hints,
     )
     db.add(review)
+    # 签约未过签标记：最新评价存在 severity=high 的红线 issue → 该版本未过签
+    signing_blocked = any((i.severity or "").lower() == "high" for i in parsed.issues)
+    if chapter_version_id is not None:
+        ver = db.get(ChapterVersion, chapter_version_id)
+        if ver is not None and ver.signing_blocked != signing_blocked:
+            ver.signing_blocked = signing_blocked
     db.commit()
     db.refresh(review)
     return {
@@ -1202,6 +1224,7 @@ def _persist_critic(db: Session, novel_id: uuid.UUID, params: dict, parsed: Base
         "issues": [i.model_dump() for i in parsed.issues],
         "strengths": parsed.strengths,
         "revision_hints": parsed.revision_hints,
+        "signing_blocked": signing_blocked,
     }
 
 
@@ -1328,6 +1351,42 @@ def _persist_concept(db: Session, novel_id: uuid.UUID, parsed: BaseModel) -> dic
         added += 1
     db.commit()
     return {"action": "persisted", "table": "concept_cards", "added": added}
+
+
+def _persist_memory_keeper(db: Session, novel_id: uuid.UUID, params: dict, parsed: BaseModel) -> dict:
+    """编年师落库：novel_memories（每 N 章生成一份，版本递增，旧版保留不覆盖）。
+
+    覆盖到章节 = params.up_to_chapter（取最新已写章节号）。同 up_to_chapter 重复生成时
+    直接覆盖（同章最新编年为准），版本号递增标记刷新次数。
+    """
+    from app.db.models import NovelMemory
+    from app.schemas.agents import ChronicleOutput
+
+    assert isinstance(parsed, ChronicleOutput)
+    up_to = params.get("up_to_chapter")
+    if up_to is None:
+        last = db.execute(
+            select(func.max(Chapter.chapter_no)).where(Chapter.novel_id == novel_id)
+        ).scalar()
+        up_to = last or 0
+    # 同覆盖章节已有一份：版本递增并覆盖内容；否则新建 version=1
+    row = db.execute(
+        select(NovelMemory).where(
+            NovelMemory.novel_id == novel_id, NovelMemory.up_to_chapter == up_to
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        row.version = row.version + 1
+        row.content = parsed.model_dump(mode="json")
+    else:
+        db.add(NovelMemory(
+            novel_id=novel_id,
+            version=1,
+            up_to_chapter=up_to,
+            content=parsed.model_dump(mode="json"),
+        ))
+    db.commit()
+    return {"action": "persisted", "table": "novel_memories", "up_to_chapter": up_to, "version": (row.version if row else 1)}
 
 
 def commit_agent_output(

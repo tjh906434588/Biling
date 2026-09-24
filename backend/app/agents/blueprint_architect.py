@@ -4,6 +4,12 @@ from sqlalchemy.orm import Session
 
 from app.agents.base import Agent, ContextPack
 from app.agents.context import get_novel, get_settings_snapshot, format_settings_for_prompt
+from app.agents.platform_rules import (
+    PLATFORM_SIGNING_HEADER,
+    PLATFORM_SIGNING_BLUEPRINT,
+    get_background_generation_scope,
+    format_genres_direction,
+)
 from app.schemas.agents import Blueprint
 
 SYSTEM_PROMPT = """你是「蓝图师」，把作者的设定与脑洞整理成一部小说的完整蓝图。
@@ -36,6 +42,9 @@ SYSTEM_PROMPT = """你是「蓝图师」，把作者的设定与脑洞整理成�
 - notes（通用保留区，最重要）：输入材料中**凡是无法干净归入 title/logline/theme/core_conflict/world_rules/character_arcs/volumes/foreshadowing_plan/subplots 任何一个字段的重要信息**——包括但不限于风格取向、文风基调、对标作品、创作参考、叙事节奏、题材标签、特殊约束、时间线规则等，无论它在材料里叫什么名字——**必须逐条原文（或尽量保留原意）收录进 notes，一条不落**；没有则留空数组。这是防丢失的兜底字段，宁可多收不可漏收。
 - 蓝图是后续所有角色的"宪法"。
 """
+
+# 系统级固定段：平台签约标准（全系统最高优先级，任何写作指令/风格画像/蓝图/设定库都不得覆盖、削弱或删除）
+SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + PLATFORM_SIGNING_HEADER + "\n\n" + PLATFORM_SIGNING_BLUEPRINT
 
 # 导入模式附加约束：用户上传了外部生成的大纲文档，同时提供设定库；不一致时以设定库为准并记录
 IMPORT_SYSTEM_NOTE = """
@@ -116,7 +125,10 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
             system_prompt = SYSTEM_PROMPT
         user_content = (
             f"项目：《{novel.title if novel else novel_id}》\n"
-            f"项目前提：{novel.premise if novel and novel.premise else '（未填）'}\n\n"
+            f"项目前提：{novel.premise if novel and novel.premise else '（未填）'}\n"
+            f"世界背景类型：{(novel.background_type if novel else None) or 'realistic'}\n\n"
+            f"{get_background_generation_scope(novel.background_type if novel else None)}\n\n"
+            f"{format_genres_direction((novel.genres if novel else None) or [])}\n\n"
             f"{material}\n\n"
             f"作者补充要求：{params.get('requirements', '（无）')}"
         )

@@ -25,6 +25,13 @@ class Novel(Base):
     style_directive: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 手动添加文风：作者手动维护，导入蓝图不会覆盖；与蓝图识别文风冲突时以蓝图识别为准
     style_directive_manual: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 世界背景类型（新建时作者选一次）：realistic=现实年代（有真实世界参照，签约核查需对照真实时代细节）
+    # | alternate=半架空（现实框架+虚构元素，虚构部分以设定账本为准）| pure_fantasy=纯架空（无现实参照，
+    # 一切以设定账本为唯一事实源，禁止用真实世界规则判定正文错误）
+    background_type: Mapped[str] = mapped_column(String(16), default="realistic", server_default="realistic")
+    # 题材多选（如 ["都市","重生"]）：软性写作方向指引（区别于 background_type 的硬性核查口径）。
+    # 复合题材天然支持多选；注入生成/评价 agent 作为"往哪方面下手"的指引
+    genres: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -69,6 +76,8 @@ class Setting(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     structured: Mapped[Optional[dict]] = mapped_column(JSON)  # 按 type 的字段（appearance/personality/goals/relations...）
     is_constitution: Mapped[bool] = mapped_column(Boolean, default=False)  # 小说宪法：不可变硬约束
+    # 关键信息固化（C）：AI 判定为关键时置 True；注入时不受设定库数量上限影响，永远进窗口（防止早期关键设定被新设定挤出）
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     embedding: Mapped[Optional[list]] = mapped_column(JSON)  # SQLite 开发期 NULL；PG 用 VECTOR(1024)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -152,6 +161,9 @@ class PlotLedger(Base):
     target_reveal_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 计划揭示章节
     status: Mapped[str] = mapped_column(String(16), default="open")  # open|closed|abandoned
     confidence: Mapped[str] = mapped_column(String(8), default="high")  # high|medium|low
+    # 关键信息固化（C）：大纲师判定 importance=high 的伏笔置 True；注入时不受账本 20 条上限影响，
+    # 永远进窗口（防止早期重要伏笔被挤出——账本超上限时最先被丢掉的就是最老的一批）
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     since_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # M2 增强：本条状态生效起始章
     invalidated_at_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 失效章（as-of 查询用）
@@ -197,6 +209,9 @@ class ChapterVersion(Base):
         Uuid, nullable=True, index=True
     )  # 版本树父节点：新增章节/重新生成正文=根（null）；评价优化（reviser）= 被优化版本 → 多级树
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 签约未过签标记：最新评价存在 severity=high 的签约红线类 issue（内容红线/抄袭）时为 True，
+    # 定稿（select_version）默认拒绝；评价更新后自动重算，通过后自动解除
+    signing_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -221,6 +236,28 @@ class StoryState(Base):
     since_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # M2 增强：快照生效起始章
     invalidated_at_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 失效章（as-of 查询用，不删除）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class NovelMemory(Base):
+    """作品编年总览（记忆层最上层，每 N 章由编年师生成一次，token 固定注入）。
+
+    解决长篇"早期记忆丢失"：最近章节全文/摘要窗口只覆盖近几章，早期情节靠设定库/
+    关系图谱/伏笔账本沉淀；编年把「主线进展、各卷目标、主角目标、已埋伏笔、重大设定、
+    未完线索」压缩成一份固定大小的总览，长期注入所有生成/评价 agent——窗口外的关键
+    信息不会因窗口滑动而失忆。
+    """
+
+    __tablename__ = "novel_memories"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    novel_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("novels.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)  # 每次重新生成递增
+    up_to_chapter: Mapped[int] = mapped_column(Integer)  # 编年覆盖到第几章
+    # 结构化编年：{main_line, volumes_progress, character_goals, active_foreshadowing,
+    #   established_world, open_threads, next_direction}
+    content: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class EntityRelation(Base):

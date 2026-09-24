@@ -10,6 +10,151 @@ import { message } from "@/components/message";
 
 const GUIDE_KEY = "biling.guide.hidden";
 
+// 世界背景类型：决定签约核查口径（realistic 对照真实时代 / alternate 现实框架+虚构 / pure_fantasy 只查设定账本自洽）
+const BACKGROUND_TYPES: { value: NonNullable<Novel["background_type"]>; label: string; hint: string }[] = [
+  { value: "realistic", label: "现实年代", hint: "有真实世界参照，核查对照时代细节（如 2000 年扩招、机构命名）" },
+  { value: "alternate", label: "半架空", hint: "现实框架 + 虚构元素，虚构部分以设定账本为准" },
+  { value: "pure_fantasy", label: "纯架空", hint: "无现实参照（玄幻/仙侠/奇幻），只核查设定账本内部自洽" },
+];
+
+/* 背景类型单选：新建小说时选一次，之后可进编辑改 */
+function BackgroundTypePicker({
+  value,
+  onChange,
+}: {
+  value: Novel["background_type"];
+  onChange: (v: NonNullable<Novel["background_type"]>) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      {BACKGROUND_TYPES.map((t) => (
+        <label
+          key={t.value}
+          className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 transition-colors ${
+            value === t.value
+              ? "border-zinc-500 bg-zinc-100 dark:border-zinc-400 dark:bg-zinc-800"
+              : "border-zinc-200 hover:border-zinc-300 dark:border-zinc-700 dark:hover:border-zinc-600"
+          }`}
+        >
+          <input
+            type="radio"
+            name="background_type"
+            className="mt-0.5 h-3.5 w-3.5 accent-zinc-800"
+            checked={value === t.value}
+            onChange={() => onChange(t.value)}
+          />
+          <span className="flex flex-col gap-0.5">
+            <span className="text-[13px] font-medium text-zinc-800 dark:text-zinc-100">{t.label}</span>
+            <span className="text-[11.5px] leading-4 text-zinc-500">{t.hint}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+// 常见题材预置（软性写作方向指引，可多选；区别于背景类型的硬性核查口径）
+const GENRE_PRESETS = [
+  "都市",
+  "玄幻",
+  "仙侠",
+  "奇幻",
+  "科幻",
+  "历史",
+  "同人",
+  "重生",
+  "穿越",
+  "系统",
+  "悬疑",
+  "灵异",
+  "军事",
+  "游戏",
+  "推理",
+  "武侠",
+  "言情",
+  "甜宠",
+  "校园",
+  "职场",
+];
+
+/* 题材多选：预置标签 + 自定义输入，复合题材天然支持多选 */
+function GenrePicker({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (v: string[]) => void;
+}) {
+  const [custom, setCustom] = useState("");
+  const toggle = (g: string) => {
+    onChange(value.includes(g) ? value.filter((x) => x !== g) : [...value, g]);
+  };
+  const addCustom = () => {
+    const g = custom.trim();
+    if (!g || value.includes(g)) return;
+    onChange([...value, g]);
+    setCustom("");
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-1.5">
+        {GENRE_PRESETS.map((g) => {
+          const active = value.includes(g);
+          return (
+            <button
+              key={g}
+              type="button"
+              onClick={() => toggle(g)}
+              className={`rounded-md border px-2 py-0.5 text-[11.5px] transition-colors ${
+                active
+                  ? "border-zinc-500 bg-zinc-800 text-white dark:border-zinc-400 dark:bg-zinc-200 dark:text-zinc-900"
+                  : "border-zinc-200 text-zinc-600 hover:border-zinc-400 dark:border-zinc-700 dark:text-zinc-300"
+              }`}
+            >
+              {g}
+            </button>
+          );
+        })}
+      </div>
+      {/* 已选的自定义题材（不在预置列表里的）也展示出来 */}
+      {value.some((g) => !GENRE_PRESETS.includes(g)) && (
+        <div className="flex flex-wrap gap-1.5">
+          {value
+            .filter((g) => !GENRE_PRESETS.includes(g))
+            .map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => toggle(g)}
+                className="rounded-md border border-zinc-500 bg-zinc-100 px-2 py-0.5 text-[11.5px] text-zinc-700 dark:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-200"
+              >
+                {g} ✕
+              </button>
+            ))}
+        </div>
+      )}
+      <div className="flex items-center gap-1.5">
+        <input
+          className="w-28 rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11.5px] text-zinc-800 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+          placeholder="自定义题材"
+          value={custom}
+          maxLength={12}
+          onChange={(e) => setCustom(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addCustom();
+            }
+          }}
+        />
+        <button type="button" onClick={addCustom} className="text-[11.5px] text-zinc-500 hover:text-zinc-700">
+          + 添加
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function formatDate(iso?: string): string {
   if (!iso) return "刚刚";
   const d = new Date(iso);
@@ -34,6 +179,8 @@ function CreateDialog({
 }) {
   const [title, setTitle] = useState("");
   const [premise, setPremise] = useState("");
+  const [backgroundType, setBackgroundType] = useState<Novel["background_type"]>("realistic");
+  const [genres, setGenres] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
 
   async function handleCreate() {
@@ -43,6 +190,8 @@ function CreateDialog({
       const n = await createNovel({
         title: title.trim(),
         premise: premise.trim() || undefined,
+        background_type: backgroundType,
+        genres: genres.length ? genres : undefined,
       });
       onCreated(n);
     } catch (e) {
@@ -100,6 +249,22 @@ function CreateDialog({
             />
           </label>
 
+          <div>
+            <span className="mb-1.5 block text-[12px] font-medium tracking-wide text-zinc-500">
+              世界背景类型
+              <span className="ml-2 font-normal text-zinc-400">决定签约核查口径</span>
+            </span>
+            <BackgroundTypePicker value={backgroundType} onChange={setBackgroundType} />
+          </div>
+
+          <div>
+            <span className="mb-1.5 block text-[12px] font-medium tracking-wide text-zinc-500">
+              题材
+              <span className="ml-2 font-normal text-zinc-400">可多选，决定 AI 写作方向</span>
+            </span>
+            <GenrePicker value={genres} onChange={setGenres} />
+          </div>
+
           <div className="mt-1 flex items-center justify-between gap-3">
             <span className="text-[11.5px] text-zinc-400">只在本机保存，正文不上传</span>
             <div className="flex gap-2">
@@ -131,10 +296,19 @@ function EditDialog({
   novel: Novel;
   busy: boolean;
   onClose: () => void;
-  onSaved: (data: { title: string; premise?: string }) => void;
+  onSaved: (data: {
+    title: string;
+    premise?: string;
+    background_type?: Novel["background_type"];
+    genres?: string[];
+  }) => void;
 }) {
   const [title, setTitle] = useState(novel.title);
   const [premise, setPremise] = useState(novel.premise ?? "");
+  const [backgroundType, setBackgroundType] = useState<Novel["background_type"]>(
+    novel.background_type ?? "realistic",
+  );
+  const [genres, setGenres] = useState<string[]>(novel.genres ?? []);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-zinc-950/45 p-4 backdrop-blur-[2px]">
@@ -145,14 +319,19 @@ function EditDialog({
         aria-label="编辑小说"
       >
         <h2 className="font-serif text-[17px] font-medium text-zinc-900">编辑小说</h2>
-        <p className="mt-1.5 text-[12.5px] text-zinc-500">改书名或一句话简介，保存后立即生效。</p>
+        <p className="mt-1.5 text-[12.5px] text-zinc-500">改书名、一句话简介、世界背景类型或题材，保存后立即生效。</p>
 
         <form
           className="mt-5 flex flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault();
             if (!title.trim() || busy) return;
-            onSaved({ title: title.trim(), premise: premise.trim() || undefined });
+            onSaved({
+              title: title.trim(),
+              premise: premise.trim() || undefined,
+              background_type: backgroundType,
+              genres,
+            });
           }}
         >
           <label className="block">
@@ -181,6 +360,22 @@ function EditDialog({
               onChange={(e) => setPremise(e.target.value)}
             />
           </label>
+
+          <div>
+            <span className="mb-1.5 block text-[12px] font-medium tracking-wide text-zinc-500">
+              世界背景类型
+              <span className="ml-2 font-normal text-zinc-400">决定签约核查口径</span>
+            </span>
+            <BackgroundTypePicker value={backgroundType} onChange={setBackgroundType} />
+          </div>
+
+          <div>
+            <span className="mb-1.5 block text-[12px] font-medium tracking-wide text-zinc-500">
+              题材
+              <span className="ml-2 font-normal text-zinc-400">可多选，决定 AI 写作方向</span>
+            </span>
+            <GenrePicker value={genres} onChange={setGenres} />
+          </div>
 
           <div className="mt-1 flex items-center justify-end gap-2">
             <button type="button" className="btn btn-ghost px-3.5 py-1.5 text-[13px]" onClick={onClose} disabled={busy}>
@@ -272,7 +467,10 @@ export default function Home() {
   }
 
   /** 保存编辑：盖全屏 Loading，成功后重新拉取列表再解锁（遮罩期间拦截一切点击，防重复提交）。 */
-  async function handleSaveEdit(n: Novel, data: { title: string; premise?: string }) {
+  async function handleSaveEdit(
+    n: Novel,
+    data: { title: string; premise?: string; background_type?: Novel["background_type"]; genres?: string[] },
+  ) {
     if (operating) return;
     setOperating({ kind: "edit", title: n.title });
     try {
@@ -439,7 +637,24 @@ export default function Home() {
                       <p className="mt-1 line-clamp-1 text-[12px] text-zinc-500">
                         {n.premise || "还没有写简介"}
                       </p>
-                      <p className="mt-1.5 font-mono text-[10.5px] text-zinc-400">
+                      {n.genres && n.genres.length > 0 ? (
+                        <p className="mt-1.5 flex flex-wrap items-center gap-1">
+                          {n.genres.slice(0, 3).map((g) => (
+                            <span key={g} className="rounded bg-seal/10 px-1.5 py-px text-[10px] font-medium text-seal">
+                              {g}
+                            </span>
+                          ))}
+                          {n.genres.length > 3 ? (
+                            <span className="font-mono text-[10px] text-zinc-400">+{n.genres.length - 3}</span>
+                          ) : null}
+                        </p>
+                      ) : null}
+                      <p className="mt-1.5 flex items-center gap-1.5 font-mono text-[10.5px] text-zinc-400">
+                        {BACKGROUND_TYPES.find((t) => t.value === n.background_type)?.label ? (
+                          <span className="rounded bg-zinc-100 px-1.5 py-px text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                            {BACKGROUND_TYPES.find((t) => t.value === n.background_type)?.label}
+                          </span>
+                        ) : null}
                         {formatDate(n.updated_at ?? n.created_at)}
                       </p>
                     </Link>
@@ -522,13 +737,22 @@ export default function Home() {
 function EmptyCreate({ onCreated }: { onCreated: (n: Novel) => void }) {
   const [title, setTitle] = useState("");
   const [premise, setPremise] = useState("");
+  const [backgroundType, setBackgroundType] = useState<Novel["background_type"]>("realistic");
+  const [genres, setGenres] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
 
   async function handleCreate() {
     if (!title.trim() || creating) return;
     setCreating(true);
     try {
-      onCreated(await createNovel({ title: title.trim(), premise: premise.trim() || undefined }));
+      onCreated(
+        await createNovel({
+          title: title.trim(),
+          premise: premise.trim() || undefined,
+          background_type: backgroundType,
+          genres: genres.length ? genres : undefined,
+        }),
+      );
     } catch (e) {
       message.error((e as Error).message);
       setCreating(false);
@@ -558,6 +782,20 @@ function EmptyCreate({ onCreated }: { onCreated: (n: Novel) => void }) {
         value={premise}
         onChange={(e) => setPremise(e.target.value)}
       />
+      <div>
+        <span className="mb-1.5 block text-[12px] font-medium tracking-wide text-zinc-500">
+          世界背景类型
+          <span className="ml-2 font-normal text-zinc-400">决定签约核查口径</span>
+        </span>
+        <BackgroundTypePicker value={backgroundType} onChange={setBackgroundType} />
+      </div>
+      <div>
+        <span className="mb-1.5 block text-[12px] font-medium tracking-wide text-zinc-500">
+          题材
+          <span className="ml-2 font-normal text-zinc-400">可多选，决定 AI 写作方向</span>
+        </span>
+        <GenrePicker value={genres} onChange={setGenres} />
+      </div>
       <button type="submit" className="btn btn-primary w-full" disabled={creating || !title.trim()}>
         {creating ? "正在建…" : "创建并进入工作台"}
       </button>

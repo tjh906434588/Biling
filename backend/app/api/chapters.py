@@ -154,6 +154,25 @@ def select_version(
     if target is None or target.chapter_id != chapter.id:
         raise HTTPException(404, "版本不存在")
 
+    # 签约未过签拦截：最新评价存在 severity=high 的红线 issue（内容红线/抄袭）→ 默认拒绝定稿；
+    # force=true 为作者权威逃生口，强制通过。
+    if target.signing_blocked and not payload.force:
+        # 取该版本最新一条评价中的红线 issue，拼成提示
+        last_review = db.execute(
+            select(QualityReview)
+            .where(QualityReview.chapter_version_id == target.id)
+            .order_by(QualityReview.created_at.desc())
+        ).scalars().first()
+        red_lines: list[str] = []
+        for i in (last_review.issues if last_review else []) or []:
+            if (i.get("severity") or "").lower() == "high":
+                red_lines.append(f"[{i.get('type')}] {i.get('desc')}")
+        hint = "；".join(red_lines) if red_lines else "存在签约红线问题（内容红线/抄袭）"
+        raise HTTPException(
+            409,
+            f"该版本未过签（{hint}）。请先按评价师建议修改重生成，或确认风险后强制定稿（force=true）。",
+        )
+
     # 取消其它激活，激活目标版本
     db.query(ChapterVersion).filter(
         ChapterVersion.chapter_id == chapter.id

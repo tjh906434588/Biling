@@ -91,6 +91,8 @@ def confirm_concept(novel_id: uuid.UUID, card_id: uuid.UUID, db: Session = Depen
                 description=description,
                 structured=structured,
                 is_constitution=(item_type == "world_rule"),
+                # 关键信息固化（C）：AI 判定 importance=high 的设定固化，注入不受设定库上限影响
+                is_pinned=(str(extracted.get("importance", "")).lower() == "high"),
                 aliases=aliases,
                 source="manual",
             )

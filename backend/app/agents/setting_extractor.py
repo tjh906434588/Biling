@@ -37,6 +37,8 @@ SYSTEM_PROMPT = """你是「设定抽取师」，从导入的外部大纲/蓝图
 - appear_ranges：需要限定多段不连续范围时用：[{ "from": 1, "until": 10 }, { "from": 50, "until": 80 }]；
   与 appear_from / appear_until 二选一；
 - role_rank：仅 type 为 character 时必填：protagonist（主角）/ major（重要配角）/ minor（次要配角）/ extra（龙套）。
+- importance：该设定对全书的长期重要性：high（贯穿主线/世界观基石/后期必回收）、medium（常规）、low（一次性细节）。
+  只对「窗口外也必须长期记住」的设定标 high——会被固化，注入设定库时永远不被数量上限挤出。
 文档里写明「后期/前期/中期才出现」「第 X 章之后」「故事后半段」等，必须如实转成上面的字段；
 文档没提到时机的，不要脑补，留空 = 不限制（全程有效）。
 

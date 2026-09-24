@@ -60,10 +60,11 @@ class ExtractorAgent(Agent[StoryStateExtract]):
         # 按"紧迫度高优先 → 引入早优先"排序，最多 20 条，超出部分仅提示数量。
         # 只注入「来源版本仍批准」的账本（大纲来源），未批准版本的行对提取师不可见。
         ledger_rows = get_visible_open_ledger(self.db, novel_id)
-        ledger_rows.sort(key=lambda r: (-(r.urgency or 0), r.chapter_introduced or 0))
+        # 关键信息固化（C）：固化项永远排在前面（账本超 20 条也不被挤出）
+        ledger_rows.sort(key=lambda r: (not r.is_pinned, -(r.urgency or 0), r.chapter_introduced or 0))
         top = ledger_rows[:20]
         ledger_text = "\n".join(
-            f"- [{r.item_type}] {r.description}（id: {r.id}）"
+            f"- [{r.item_type}] {r.description}（id: {r.id}）{'【已固化】' if r.is_pinned else ''}"
             for r in top
         ) or "（无 open 项，resolved_foreshadowing 输出空数组 []）"
         if len(ledger_rows) > len(top):

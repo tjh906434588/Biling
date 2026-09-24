@@ -18,6 +18,24 @@ from app.llm.routes import resolve_route
 
 T = TypeVar("T", bound=BaseModel)
 
+# 组件优先级（越大越不可裁剪）：硬约束类 > 写作基础类 > 记忆/设定类 > 可牺牲类。
+# token 预算器按此从低到高剔除组件，直到上下文不超窗。
+PRIORITY_REQUIRED = 100  # 硬约束（项目/背景/题材/必现清单/作者否决等）：预算再紧也不裁
+PRIORITY_BASE = 90  # 蓝图/大纲/节奏指令：写作的基础参照
+PRIORITY_MEMORY = 70  # 前文记忆/角色状态：保持连贯性
+PRIORITY_SETTING = 60  # 设定库/关系图谱/伏笔账本：可裁剪但尽量给
+PRIORITY_CONTEXT = 40  # 最近章节全文：最占空间，预算紧张时最先裁
+PRIORITY_STYLE = 30  # 风格画像等辅助信息：最后给
+
+
+@dataclass
+class ComponentBlock:
+    """上下文的一个可裁剪组件块（token 预算器按 priority 决定保留/剔除）。"""
+
+    key: str  # 组件名（截断时记入 truncated_components，供前端/日志观察）
+    content: str  # 该块文本（不含块间分隔，拼接时统一用空行分隔）
+    priority: int = PRIORITY_MEMORY
+
 
 @dataclass
 class ContextPack:
@@ -28,6 +46,7 @@ class ContextPack:
     system_prompt: str
     messages: list[dict] = field(default_factory=list)  # OpenAI 格式 [{role, content}]
     meta: dict = field(default_factory=dict)  # 供 parse_output/入库使用的旁路信息
+    components: list[ComponentBlock] = field(default_factory=list)  # 可裁剪组件（token 预算器按此动态装配）
     truncated_components: list[str] = field(default_factory=list)  # 被 token 预算器截断的组件标注
     temperature: float = 0.7
     max_tokens: int | None = None
@@ -70,8 +89,26 @@ class Agent(ABC, Generic[T]):
     def run(self, ctx: ContextPack, *, on_reason=None):
         """流式调用 LLM。可按版本数并行（见 novelist）。
         on_reason：推理过程文字（reasoning_content）逐段回调，供"思考中"提示透传。"""
+        from app.agents.context import apply_token_budget, assemble_components
+
         route = resolve_route(self.db, self.task_type)
         messages = ctx.messages
+        # token 预算器：按模型 context_window 裁剪组件（硬约束不裁），裁剪后重新拼装
+        # user_content 替换 user 消息（预算充足时拼装结果与 build_context 一致）
+        if ctx.components:
+            apply_token_budget(ctx, route.context_window)
+            user_content = assemble_components(ctx.components)
+            for i, m in enumerate(messages):
+                if m.get("role") == "user":
+                    messages[i] = {**m, "content": user_content}
+                    break
+            if ctx.truncated_components:
+                logger.warning(
+                    "[budget] agent=%s 上下文超窗，剔除组件 %s（剩余 %s 个）",
+                    ctx.agent,
+                    ctx.truncated_components,
+                    len(ctx.components),
+                )
         # 每部小说独立的可配置写作指令：创作/评审角色在 system 消息末尾追加自定义块（未配置注入内置默认，已配置只注入非空字段）
         if ctx.agent in CONFIGURABLE_AGENTS:
             directive = build_writing_directive(self.db, ctx.novel_id, ctx.agent)

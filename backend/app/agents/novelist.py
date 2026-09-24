@@ -2,7 +2,17 @@
 import uuid
 from sqlalchemy.orm import Session
 
-from app.agents.base import Agent, ContextPack
+from app.agents.base import (
+    Agent,
+    ComponentBlock,
+    ContextPack,
+    PRIORITY_REQUIRED,
+    PRIORITY_BASE,
+    PRIORITY_MEMORY,
+    PRIORITY_SETTING,
+    PRIORITY_CONTEXT,
+    PRIORITY_STYLE,
+)
 from app.agents.context import (
     get_latest_style_profile,
     get_novel,
@@ -13,11 +23,19 @@ from app.agents.context import (
     get_active_blueprint,
     format_blueprint_for_prompt,
     get_graph_relations_text,
+    get_latest_memory,
+    format_memory_prompt,
     derive_stage,
     filter_settings_for_chapter,
     STAGE_LABELS,
 )
 from app.agents.l1 import L1_ANTI_AI_CONSTRAINTS
+from app.agents.platform_rules import (
+    PLATFORM_SIGNING_HEADER,
+    PLATFORM_SIGNING_NOVEL,
+    get_background_generation_scope,
+    format_genres_direction,
+)
 from app.schemas.agents import NovelChapter
 from app.services.detector import detect
 
@@ -26,6 +44,16 @@ SYSTEM_PROMPT = f"""你是「小说家」，一部小说的写作者。
 - 输出必须是严格的 JSON：{{"title": "本章标题", "content": "章节正文（不少于200字）", "note": "自评：本章用到的设定、待回收伏笔"}}
 - 标题要求：简洁有力、能概括本章核心；若作者已给定标题则原文沿用。
 - 正文就是正文本身，不要把 JSON 解释写进正文。
+
+写作铁律（追加）：
+- 【角色-场景合理性】每个登场角色必须与其身份/关系/立场相符，只能出现在合理的场合：
+  - 与某组织/地点没有关系边的角色（如非该公司员工），**不得凭空安排其出现在该组织场景**（公司办公室、员工活动等）；
+  - 若该角色与前文已确立的信息源/人物关系不符（如与老板无交集却反复进出公司），应删除该出场或改由合理角色承担；
+  - 已在设定库/前文确立的"非公司员工""与某人无往来"等边界设定必须严格遵守，不得擅自让角色越界登场。
+
+{PLATFORM_SIGNING_HEADER}
+
+{PLATFORM_SIGNING_NOVEL}
 
 {L1_ANTI_AI_CONSTRAINTS}
 """
@@ -159,29 +187,79 @@ class NovelistAgent(Agent[NovelChapter]):
                 f"正文不得提前泄露『必须隐瞒』的内容，伏笔只能暗示。"
             )
 
-        user_content = (
-            f"项目：《{novel.title if novel else novel_id}》\n"
-            f"项目前提：{novel.premise if novel and novel.premise else '（未填）'}\n\n"
-            f"【蓝图（active）】\n{format_blueprint_for_prompt(get_active_blueprint(self.db, novel_id))}\n\n"
-            f"【本章大纲】{params.get('outline', '（自由续写，无大纲）')}\n"
-            f"章节功能：{chapter_function}｜写作模式：{writing_mode}\n\n"
-            f"{l3}\n\n"
-            f"【相关设定】\n{settings_text}\n\n"
-            f"【实体关系图谱（写作时不得与已确立关系矛盾，新关系可在正文中自然建立，下一章提取师会记录）】\n{relations_text}\n\n"
-            f"【前文记忆】\n{states_text}\n\n"
-            f"【角色当前状态（最近几章快照，最新章在前；本章涉及其中的角色时，须延续其最新状态，不得沿用已被推翻的旧状态）】\n{char_states_text}\n\n"
-            f"【最近章节全文】\n{prev_text}\n\n"
-            f"【L2 风格画像】\n{style_text}\n\n"
-            f"【本章目标】{params.get('goal', '')}"
-            + (
-                # 放在最靠近“开始写”的位置：末尾注意力最高，硬约束不应被埋在长上下文中间
-                f"\n\n【必现清单（硬约束，优先级高于一切文笔要求）】\n{checklist_text}\n"
-                "以上每一组都是『要么整体不写，要写就必须写全』。动笔前先确认本章会涉及哪几组，"
-                "写完再逐组自查一遍，缺一项就补进去。"
-                if checklist_text
-                else ""
+        # 组件化上下文（token 预算器按优先级裁剪：硬约束不裁，超窗先裁最近全文/风格）
+        components = [
+            ComponentBlock(
+                "project",
+                (
+                    f"项目：《{novel.title if novel else novel_id}》\n"
+                    f"项目前提：{novel.premise if novel and novel.premise else '（未填）'}\n"
+                    f"世界背景类型：{(novel.background_type if novel else None) or 'realistic'}\n\n"
+                    f"{get_background_generation_scope(novel.background_type if novel else None)}\n\n"
+                    f"{format_genres_direction((novel.genres if novel else None) or [])}"
+                ),
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
+                "blueprint",
+                f"【蓝图（active）】\n{format_blueprint_for_prompt(get_active_blueprint(self.db, novel_id))}",
+                PRIORITY_BASE,
+            ),
+            ComponentBlock(
+                "outline",
+                f"【本章大纲】{params.get('outline', '（自由续写，无大纲）')}\n"
+                f"章节功能：{chapter_function}｜写作模式：{writing_mode}",
+                PRIORITY_BASE,
+            ),
+            ComponentBlock("l3", l3, PRIORITY_BASE),
+            ComponentBlock(
+                "settings",
+                f"【相关设定】\n{settings_text}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
+                "relations",
+                f"【实体关系图谱（写作时不得与已确立关系矛盾，新关系可在正文中自然建立，下一章提取师会记录）】\n{relations_text}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
+                "memory",
+                f"{format_memory_prompt(get_latest_memory(self.db, novel_id))}\n\n【前文记忆】\n{states_text}",
+                PRIORITY_MEMORY,
+            ),
+            ComponentBlock(
+                "char_states",
+                f"【角色当前状态（最近几章快照，最新章在前；本章涉及其中的角色时，须延续其最新状态，不得沿用已被推翻的旧状态）】\n{char_states_text}",
+                PRIORITY_MEMORY,
+            ),
+            ComponentBlock(
+                "prev_text",
+                f"【最近章节全文】\n{prev_text}",
+                PRIORITY_CONTEXT,
+            ),
+            ComponentBlock(
+                "style",
+                f"【L2 风格画像】\n{style_text}",
+                PRIORITY_STYLE,
+            ),
+            ComponentBlock(
+                "goal",
+                f"【本章目标】{params.get('goal', '')}",
+                PRIORITY_BASE,
+            ),
+        ]
+        if checklist_text:
+            # 放在最靠近"开始写"的位置：末尾注意力最高，硬约束不应被埋在长上下文中间
+            components.append(
+                ComponentBlock(
+                    "checklist",
+                    f"【必现清单（硬约束，优先级高于一切文笔要求）】\n{checklist_text}\n"
+                    "以上每一组都是『要么整体不写，要写就必须写全』。动笔前先确认本章会涉及哪几组，"
+                    "写完再逐组自查一遍，缺一项就补进去。",
+                    PRIORITY_REQUIRED,
+                )
             )
-        )
+        user_content = "\n\n".join(c.content for c in components)
         return ContextPack(
             novel_id=novel_id,
             agent="novelist",
@@ -190,6 +268,7 @@ class NovelistAgent(Agent[NovelChapter]):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
+            components=components,
             meta={"params": params},
             temperature=self.temperature,
         )

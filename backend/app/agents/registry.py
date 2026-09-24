@@ -6,6 +6,7 @@ from app.agents.blueprint_architect import BlueprintArchitectAgent
 from app.agents.critic import CriticAgent
 from app.agents.extractor import ExtractorAgent
 from app.agents.import_checker import ImportCheckerAgent
+from app.agents.memory_keeper import MemoryKeeperAgent
 from app.agents.novelist import NovelistAgent
 from app.agents.outline_checker import OutlineCheckerAgent
 from app.agents.outliner import OutlinerAgent
@@ -21,6 +22,7 @@ REGISTRY: dict[str, type[Agent]] = {
     "extractor": ExtractorAgent,
     "critic": CriticAgent,
     "reviser": ReviserAgent,
+    "memory_keeper": MemoryKeeperAgent,  # 作品编年总览（每 N 章生成，长期记忆注入）
     "import_checker": ImportCheckerAgent,
     "style_extractor": StyleExtractorAgent,
     "outline_checker": OutlineCheckerAgent,

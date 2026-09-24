@@ -2,7 +2,16 @@
 import uuid
 from sqlalchemy.orm import Session
 
-from app.agents.base import Agent, ContextPack
+from app.agents.base import (
+    Agent,
+    ComponentBlock,
+    ContextPack,
+    PRIORITY_REQUIRED,
+    PRIORITY_BASE,
+    PRIORITY_MEMORY,
+    PRIORITY_SETTING,
+    PRIORITY_CONTEXT,
+)
 from app.agents.context import (
     derive_stage,
     filter_settings_for_chapter,
@@ -10,11 +19,19 @@ from app.agents.context import (
     format_settings_for_prompt,
     get_active_blueprint,
     get_graph_relations_text,
+    get_latest_memory,
+    format_memory_prompt,
     get_novel,
     get_recent_story_states,
     get_settings_snapshot,
     get_story_states_matching_active,
     get_visible_open_ledger,
+)
+from app.agents.platform_rules import (
+    PLATFORM_SIGNING_HEADER,
+    PLATFORM_SIGNING_OUTLINE,
+    get_background_generation_scope,
+    format_genres_direction,
 )
 from app.schemas.agents import ChapterOutline
 
@@ -24,7 +41,7 @@ SYSTEM_PROMPT = """你是「大纲师」，基于小说蓝图逐章产出章节�
   "pov": 视角角色, "beats": [{"beat_no":1,"type":"scene","pov":"视角","content":"节拍内容","length_hint":"1200字","emotion":"情绪"}],
   "characters": [角色名 或 {"name":角色名,"position":定位,"note":作用}], "locations": [...],
   "conflicts": [{"type":"external|internal","with":"对象","stakes":"赌注"}],
-  "plant_foreshadowing": [{"desc":"埋下的伏笔","payoff_hint":"回收提示","latest_payoff_chapter":20}],
+  "plant_foreshadowing": [{"desc":"埋下的伏笔","payoff_hint":"回收提示","latest_payoff_chapter":20,"importance":"high|medium|low"}],
   "resolve_foreshadowing": [{"ledger_id":"伏笔账本ID","how":"如何回收"}],
   "thread_updates": [{"thread":"线索","new_state":"新状态"}]}}
 
@@ -33,8 +50,16 @@ SYSTEM_PROMPT = """你是「大纲师」，基于小说蓝图逐章产出章节�
 - 章号以指令为准：输出 JSON 中 chapter.no 必须等于指令要求的章号，不得因最近故事已写到其他章而更改目标章号（已写章节只作衔接参考）。
 - 作者指定的视角角色（pov）与本章目标（goal）必须实现，不得擅自更改。
 - resolve_foreshadowing 只能引用账本中 open 状态且未超期的项，ledger_id 必须使用下方伏笔账本列表里给出的真实 id，不得编造。
+- plant_foreshadowing 的 importance 字段：默认 medium；**跨多章才回收、回收期远（>5 章）、或对主线走向起决定作用的伏笔必须标 high**（标 high 的伏笔会被「固化」——账本超过 20 条时也不会被挤出，是长篇早期伏笔不失忆的关键保障）；一次性小钩子标 low。
 - characters 列出本章全部登场角色：已在设定库/前文出现过的角色只给名字即可；**本章新登场角色（如新同事、老板、客户等）必须写成对象并带定位说明**（position=身份定位，note=在剧情中的作用），供批准时沉淀为角色设定。
+- 【角色-场景合理性】每个登场角色必须与其身份/关系/立场相符，只能出现在合理的场合：
+  - 与某组织/地点没有关系边的角色（如非该公司员工），**不得凭空安排其出现在该组织场景**（公司办公室、员工活动等）；
+  - 若该角色与前文已确立的信息源/人物关系不符（如与老板无交集却反复进出公司），应删除该出场或改由合理角色承担；
+  - 已在设定库/前文确立的"非公司员工""与某人无往来"等边界设定必须严格遵守，不得擅自让角色越界登场。
 """
+
+# 系统级固定段：平台签约标准（全系统最高优先级，任何写作指令/风格画像/蓝图/设定库都不得覆盖、削弱或删除）
+SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + PLATFORM_SIGNING_HEADER + "\n\n" + PLATFORM_SIGNING_OUTLINE
 
 # 章节功能 → 中文标签（与前端表单保持一致，用于把作者选择注入 prompt）
 FUNC_LABELS = {
@@ -122,6 +147,8 @@ class OutlinerAgent(Agent[ChapterOutline]):
         ledger_rows = get_visible_open_ledger(self.db, novel_id)
         ledger_rows.sort(
             key=lambda r: (
+                # 关键信息固化（C）：固化项永远排在前面（账本超 20 条也不被挤出）
+                not r.is_pinned,
                 0 if (chapter_no and r.target_reveal_chapter and r.target_reveal_chapter < chapter_no) else 1,
                 -(r.urgency or 0),
                 r.chapter_introduced or 0,
@@ -129,7 +156,7 @@ class OutlinerAgent(Agent[ChapterOutline]):
         )
         top = ledger_rows[:20]
         ledger_text = "\n".join(
-            f"- [{r.item_type}] {r.description}（id: {r.id}，引入第{r.chapter_introduced or '?'}章，紧迫度{r.urgency or '-'}）"
+            f"- [{r.item_type}] {r.description}（id: {r.id}，引入第{r.chapter_introduced or '?'}章，紧迫度{r.urgency or '-'}）{'【已固化】' if r.is_pinned else ''}"
             for r in top
         ) or "（账本无 open 项）"
         if len(ledger_rows) > len(top):
@@ -162,17 +189,60 @@ class OutlinerAgent(Agent[ChapterOutline]):
             else "本章目标：由你根据剧情自行把握。"
         )
 
-        user_content = (
-            f"项目：《{novel.title if novel else novel_id}》\n"
-            f"蓝图（active 版）：\n{format_blueprint_for_prompt(blueprint)}\n\n"
-            f"相关设定（设定库，本章可直接调用的角色/地点/规则等）：\n{settings_text}\n\n"
-            f"故事状态：\n{states_text}\n\n"
-            f"伏笔账本 open 项：\n{ledger_text}\n\n"
-            f"实体关系图谱（已确立关系，设计本章冲突/角色互动时不得与之矛盾）：\n{relations_text}\n\n"
-            f"已写章节标题：{params.get('chapter_titles', [])}\n\n"
-            f"作者要求：\n{goal_line}\n{fn_line}\n{pov_line}\n\n"
-            f"请生成第 {params.get('chapter_no', '下一')} 章的大纲（这是对本章的生成/重写，输出 JSON 中 chapter.no 必须等于本指令章号，不得续写其他章）。"
-        )
+        # 组件化上下文（token 预算器按优先级裁剪：硬约束不裁，超窗先裁设定/关系/状态）
+        components = [
+            ComponentBlock(
+                "project",
+                (
+                    f"项目：《{novel.title if novel else novel_id}》\n"
+                    f"世界背景类型：{(novel.background_type if novel else None) or 'realistic'}\n\n"
+                    f"{get_background_generation_scope(novel.background_type if novel else None)}\n\n"
+                    f"{format_genres_direction((novel.genres if novel else None) or [])}"
+                ),
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
+                "blueprint",
+                f"蓝图（active 版）：\n{format_blueprint_for_prompt(blueprint)}",
+                PRIORITY_BASE,
+            ),
+            ComponentBlock(
+                "settings",
+                f"相关设定（设定库，本章可直接调用的角色/地点/规则等）：\n{settings_text}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
+                "memory",
+                f"{format_memory_prompt(get_latest_memory(self.db, novel_id))}\n\n故事状态：\n{states_text}",
+                PRIORITY_MEMORY,
+            ),
+            ComponentBlock(
+                "ledger",
+                f"伏笔账本 open 项：\n{ledger_text}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
+                "relations",
+                f"实体关系图谱（已确立关系，设计本章冲突/角色互动时不得与之矛盾）：\n{relations_text}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
+                "titles",
+                f"已写章节标题：{params.get('chapter_titles', [])}",
+                PRIORITY_CONTEXT,
+            ),
+            ComponentBlock(
+                "author_requirements",
+                f"作者要求：\n{goal_line}\n{fn_line}\n{pov_line}",
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
+                "instruction",
+                f"请生成第 {params.get('chapter_no', '下一')} 章的大纲（这是对本章的生成/重写，输出 JSON 中 chapter.no 必须等于本指令章号，不得续写其他章）。",
+                PRIORITY_REQUIRED,
+            ),
+        ]
+        user_content = "\n\n".join(c.content for c in components)
         return ContextPack(
             novel_id=novel_id,
             agent="outliner",
@@ -181,6 +251,7 @@ class OutlinerAgent(Agent[ChapterOutline]):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
+            components=components,
             meta={"params": params},
             temperature=self.temperature,
         )

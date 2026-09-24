@@ -6,7 +6,17 @@
 import uuid
 from sqlalchemy.orm import Session
 
-from app.agents.base import Agent, ContextPack
+from app.agents.base import (
+    Agent,
+    ComponentBlock,
+    ContextPack,
+    PRIORITY_REQUIRED,
+    PRIORITY_BASE,
+    PRIORITY_MEMORY,
+    PRIORITY_SETTING,
+    PRIORITY_CONTEXT,
+    PRIORITY_STYLE,
+)
 from app.agents.context import (
     derive_stage,
     filter_settings_for_chapter,
@@ -14,6 +24,8 @@ from app.agents.context import (
     format_settings_for_prompt,
     get_active_blueprint,
     get_graph_relations_text,
+    get_latest_memory,
+    format_memory_prompt,
     get_latest_style_profile,
     get_novel,
     get_recent_chapters,
@@ -37,6 +49,10 @@ SYSTEM_PROMPT = f"""你是「修订师」，一位手稳的老编辑。你的任
 0'. 【作者批注·修改要求】若 prompt 中出现【作者批注·修改要求】，那是作者**本人发现的问题/修改要求**（可能不在评价师清单里）：
    - 与【作者否决】相反，批注的默认语义是**要改**：批注属实（确与上文已确立的事实/设定/关系/时间线冲突）→ 按批注意图修改正文；
    - 若判断批注不成立、或按批注改会破坏更重要的上文设定 → 不改，但必须在 note 中写明"未按作者批注修改：<原因>"，不得静默忽略。
+   - 【结构性修改授权】若批注明确质疑某个角色出场/某个场景本身不合理（如"他为什么来""没交集""逻辑不通""太刻意""不合理"等），
+     说明作者要的是**这个场景成立与否**，而非来意修补。此时授权做结构性处理，不受铁律 2"只做局部手术"限制：
+     优先直接删除该场景；若该信息对本章情节必不可少，则改为由在场/合理角色传递，或换成更自然的信息传递方式（偶遇、电话、主动询问等）；
+     处理后在 note 中明确交代"已删除/已改写 <原场景>，原因：作者批注指出 <问题>"。绝不允许继续用"补一个更圆的理由"来保留原场景。
 1. 【冲突红线】逐条对照评价的 issues / revision_hints 时，先对照【最近章节全文】【实体关系图谱】【相关设定】核查该建议是否与上文已确立的事实/关系/设定/未回收伏笔矛盾：
    - 建议本身会破坏上文 → **一律不采纳**，不改动对应内容，并在 note 中写明"未采纳：<该建议>，原因：与上文冲突（<依据>）"。
    - 不要为了迎合评价而改坏上文已确立的设定、人物关系、伏笔与情节走向。
@@ -45,6 +61,11 @@ SYSTEM_PROMPT = f"""你是「修订师」，一位手稳的老编辑。你的任
 4. 修订后正文必须仍是完整一章（篇幅与原章相当），不能只给改动片段。
 5. 语言自然、有故事感、口语化，避免文艺腔和 AI 腔；保留本书文风。
 6. 亮点（strengths）说明的写得好之处不要改坏。
+6'. 【角色-场景合理性】每个登场角色必须与其身份/关系/立场相符，只能出现在合理的场合：
+   - 与某组织/地点没有关系边的角色（如非该公司员工），**不得凭空安排其出现在该组织场景**（公司办公室、员工活动等）；
+   - 若发现正文中有此类"越界登场"（角色身份/关系与场景不符，如与老板无交集却反复进出公司），
+     视为结构性缺陷：删除该出场或改由合理角色承担，不受铁律 2"只做局部手术"限制；
+   - 已在设定库/前文确立的"非公司员工""与某人无往来"等边界设定必须严格遵守。
 7. 章节标题一律不改：修订是优化不是重写，title 必须等于修订前的原标题，
    不能改成小说名或其他名字（系统会自动沿用原标题，你输出的 title 仅作自检）。
 
@@ -213,27 +234,83 @@ class ReviserAgent(Agent[NovelChapter]):
                 "相关原文保持一字不动；只处理其他问题，并在 note 中逐条交代被否决项已保留原文。"
             )
 
-        user_content = (
-            f"项目：《{novel.title if novel else novel_id}》\n\n"
-            f"【蓝图（active，修订时不得破坏既有走向）】\n{format_blueprint_for_prompt(blueprint)}\n\n"
-            f"【本章大纲】{params.get('outline', '（无）')}\n"
-            f"章节功能：{params.get('chapter_function', 'progression')}｜写作模式：{params.get('writing_mode', 'draft_free')}\n\n"
-            f"【相关设定】\n{settings_text}\n\n"
-            f"【实体关系图谱（修订时不得与已确立关系矛盾）】\n{relations_text}\n\n"
-            f"【前文记忆】\n{states_text}\n\n"
-            f"【最近章节全文（保持衔接与文风连续）】\n{prev_text}\n\n"
-            f"【L2 风格画像 / 全局文风】\n{style_text}\n\n"
-            f"【本章当前正文（要修订的文本）】\n{current_text}\n\n"
-            f"【当前正文的 AI 检测体检（本地启发式，修订时尽量改善这些指标）】\n{det_text or '（无可计算指标）'}\n\n"
-            f"【评价师报告（修订依据）】\n{review_text}\n\n"
-            + (
-                f"【必现清单（硬约束，重写段落时也不可丢项）】\n{checklist_text}\n\n"
-                if checklist_text
-                else ""
+        # 组件化上下文（token 预算器按优先级裁剪：硬约束不裁，超窗先裁前文/关系/设定/风格）
+        components = [
+            ComponentBlock(
+                "project",
+                f"项目：《{novel.title if novel else novel_id}》",
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
+                "blueprint",
+                f"【蓝图（active，修订时不得破坏既有走向）】\n{format_blueprint_for_prompt(blueprint)}",
+                PRIORITY_BASE,
+            ),
+            ComponentBlock(
+                "outline",
+                f"【本章大纲】{params.get('outline', '（无）')}\n"
+                f"章节功能：{params.get('chapter_function', 'progression')}｜写作模式：{params.get('writing_mode', 'draft_free')}",
+                PRIORITY_BASE,
+            ),
+            ComponentBlock(
+                "settings",
+                f"【相关设定】\n{settings_text}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
+                "relations",
+                f"【实体关系图谱（修订时不得与已确立关系矛盾）】\n{relations_text}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
+                "memory",
+                f"{format_memory_prompt(get_latest_memory(self.db, novel_id))}\n\n【前文记忆】\n{states_text}",
+                PRIORITY_MEMORY,
+            ),
+            ComponentBlock(
+                "prev_text",
+                f"【最近章节全文（保持衔接与文风连续）】\n{prev_text}",
+                PRIORITY_CONTEXT,
+            ),
+            ComponentBlock(
+                "style",
+                f"【L2 风格画像 / 全局文风】\n{style_text}",
+                PRIORITY_STYLE,
+            ),
+            ComponentBlock(
+                "chapter_text",
+                f"【本章当前正文（要修订的文本）】\n{current_text}",
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
+                "det",
+                f"【当前正文的 AI 检测体检（本地启发式，修订时尽量改善这些指标）】\n{det_text or '（无可计算指标）'}",
+                PRIORITY_CONTEXT,
+            ),
+            ComponentBlock(
+                "review",
+                f"【评价师报告（修订依据）】\n{review_text}",
+                PRIORITY_BASE,
+            ),
+        ]
+        if checklist_text:
+            components.append(
+                ComponentBlock(
+                    "checklist",
+                    f"【必现清单（硬约束，重写段落时也不可丢项）】\n{checklist_text}",
+                    PRIORITY_REQUIRED,
+                )
             )
-            + (f"{author_text}\n\n" if author_text else "")
-            + "请输出修订后的完整章节正文 JSON（title/content/note）。"
+        if author_text:
+            components.append(ComponentBlock("author", author_text, PRIORITY_REQUIRED))
+        components.append(
+            ComponentBlock(
+                "instruction",
+                "请输出修订后的完整章节正文 JSON（title/content/note）。",
+                PRIORITY_REQUIRED,
+            )
         )
+        user_content = "\n\n".join(c.content for c in components)
         return ContextPack(
             novel_id=novel_id,
             agent="reviser",
@@ -242,6 +319,7 @@ class ReviserAgent(Agent[NovelChapter]):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
+            components=components,
             meta={"params": params},
             temperature=self.temperature,
         )

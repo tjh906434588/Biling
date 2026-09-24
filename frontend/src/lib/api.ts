@@ -10,6 +10,10 @@ export interface Novel {
   style_directive?: string | null;
   /** 手动添加文风：作者手动维护，导入蓝图不会覆盖 */
   style_directive_manual?: string | null;
+  /** 世界背景类型：realistic=现实年代 | alternate=半架空 | pure_fantasy=纯架空（签约核查口径按类型切换） */
+  background_type?: "realistic" | "alternate" | "pure_fantasy";
+  /** 题材多选（软性写作方向指引）：如 ["都市","重生"]，复合题材可多选 */
+  genres?: string[];
   status?: string;
   created_at?: string;
   updated_at?: string;
@@ -30,7 +34,12 @@ export async function getNovel(novelId: string): Promise<Novel> {
 
 export async function updateNovel(
   novelId: string,
-  data: Partial<Pick<Novel, "title" | "premise" | "style_directive" | "style_directive_manual">>,
+  data: Partial<
+    Pick<
+      Novel,
+      "title" | "premise" | "style_directive" | "style_directive_manual" | "background_type" | "genres"
+    >
+  >,
 ): Promise<Novel> {
   const res = await fetch(`${BASE}/novels/${novelId}`, {
     method: "PATCH",
@@ -53,7 +62,12 @@ export async function deleteNovel(novelId: string): Promise<void> {
   }
 }
 
-export async function createNovel(data: { title: string; premise?: string }): Promise<Novel> {
+export async function createNovel(data: {
+  title: string;
+  premise?: string;
+  background_type?: "realistic" | "alternate" | "pure_fantasy";
+  genres?: string[];
+}): Promise<Novel> {
   const res = await fetch(`${BASE}/novels`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -165,6 +179,8 @@ export interface ChapterVersion {
   /** 版本树父节点 id：null=根（新增章节/重新生成正文）；非 null=评价优化产物（多级树）。 */
   parent_version_id: string | null;
   is_active: boolean; // true=已定稿（当前激活版本）
+  /** 签约未过签：最新评价存在 severity=high 的红线 issue → true，定稿默认被拒；null=尚无评价。 */
+  signing_blocked: boolean | null;
   created_at: string;
 }
 
@@ -199,11 +215,16 @@ export async function getChapter(novelId: string, chapterNo: number): Promise<Ch
   return res.json();
 }
 
-export async function selectVersion(novelId: string, chapterNo: number, versionId: string): Promise<ChapterDetail> {
+export async function selectVersion(
+  novelId: string,
+  chapterNo: number,
+  versionId: string,
+  force = false,
+): Promise<ChapterDetail> {
   const res = await fetch(`${BASE}/novels/${novelId}/chapters/${chapterNo}/select`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ version_id: versionId }),
+    body: JSON.stringify({ version_id: versionId, force }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

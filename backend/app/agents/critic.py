@@ -2,7 +2,16 @@
 import uuid
 from sqlalchemy.orm import Session
 
-from app.agents.base import Agent, ContextPack
+from app.agents.base import (
+    Agent,
+    ComponentBlock,
+    ContextPack,
+    PRIORITY_REQUIRED,
+    PRIORITY_BASE,
+    PRIORITY_MEMORY,
+    PRIORITY_SETTING,
+    PRIORITY_CONTEXT,
+)
 from app.agents.context import (
     filter_settings_for_chapter,
     format_blueprint_for_prompt,
@@ -10,11 +19,19 @@ from app.agents.context import (
     derive_stage,
     get_active_blueprint,
     get_graph_relations_text,
+    get_latest_memory,
+    format_memory_prompt,
     get_novel,
     get_recent_chapters,
     get_recent_story_states,
     get_settings_snapshot,
     get_visible_open_ledger,
+)
+from app.agents.platform_rules import (
+    BACKGROUND_TYPE_SCOPE,
+    PLATFORM_SIGNING_HEADER,
+    PLATFORM_SIGNING_REVIEW,
+    format_genres_direction,
 )
 from app.schemas.agents import ReviewOutput
 from app.services.setting_checker import check_chapter, format_for_prompt
@@ -38,6 +55,12 @@ SYSTEM_PROMPT = """你是「评价师」，一位严苛的小说编辑。对照�
 - 【冲突红线】评价与每条建议必须对照【最近章节全文】【实体关系图谱】【设定库】【伏笔账本 open 项】核查：
   建议若会与上文已确立的事实/关系/设定矛盾、或会动到未回收的伏笔 → **不得提出该建议**；
   正文与上文确有矛盾时，写成 issues 指出"本章与上文冲突（依据）"，而不是建议修改上文。
+- 【角色-场景合理性】对本章出场的每个角色逐一核查"为什么此刻在此地、他如何知道当前信息、与在场者是什么关系"：
+  出现以下任一情况 → 必须写入 issues（severity 至少 medium，type 填 "consistency"，desc 指明角色与问题）：
+  (a) 角色凭空出现在与其身份/关系不符的场合（如与老板无工作交集的人反复进出公司，找不到合理的在场理由）；
+  (b) 角色掌握了与其处境不符的信息（信息来源悬空，读者无法推断）；
+  (c) 角色出场对情节无推动作用，仅是为"说教/提醒"而生硬登场，显得刻意。
+  这类问题宁可指出"建议删除该场景或改为合理角色承担"，也不要放过或只提示措辞。
 - 【设定核对清单】是**程序预先算出来的字面核对结果**，不是猜测。
   对其中每一条，你必须二选一并明确交代：
   (a) 确属漏写 → 写入 issues，severity 至少 medium，type 填 "setting_check"，
@@ -45,6 +68,9 @@ SYSTEM_PROMPT = """你是「评价师」，一位严苛的小说编辑。对照�
   (b) 本章不适用（例如本章根本没有出现该设定所指的对象）→ 在对应 rubric 的 comment 里
       用一句话说明为什么不适用，**不允许沉默跳过**。
 """
+
+# 系统级固定段：平台签约标准（全系统最高优先级，任何写作指令/风格画像/蓝图/设定库都不得覆盖、削弱或删除）
+SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + PLATFORM_SIGNING_HEADER + "\n\n" + PLATFORM_SIGNING_REVIEW
 
 
 class CriticAgent(Agent[ReviewOutput]):
@@ -101,6 +127,11 @@ class CriticAgent(Agent[ReviewOutput]):
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
         novel = get_novel(self.db, novel_id)
+        # 世界背景类型决定签约核查口径：现实年代对照真实世界、纯架空只查设定账本自洽
+        background_scope = BACKGROUND_TYPE_SCOPE.get(
+            (novel.background_type if novel else None) or "realistic",
+            BACKGROUND_TYPE_SCOPE["realistic"],
+        )
         states = get_recent_story_states(self.db, novel_id)
         states_text = "\n".join(f"#第{s.chapter_no}章：{s.summary}" for s in states) or "（无）"
 
@@ -114,9 +145,11 @@ class CriticAgent(Agent[ReviewOutput]):
 
         # 伏笔账本 open 项（M2：foreshadowing_accountability 对照依据；只注入来源版本仍批准的）
         ledger_rows = get_visible_open_ledger(self.db, novel_id)
+        # 关键信息固化（C）：固化项永远排在前面（账本超 20 条也不被挤出）
+        ledger_rows.sort(key=lambda r: (not r.is_pinned, -(r.urgency or 0), r.chapter_introduced or 0))
         ledger_text = "\n".join(
             f"- [#{str(r.id)[:8]}][{r.item_type}] {r.description}（第{r.chapter_introduced or '?'}章埋，"
-            f"紧迫度{r.urgency or '-'}，目标揭示章{r.target_reveal_chapter or '-'}）"
+            f"紧迫度{r.urgency or '-'}，目标揭示章{r.target_reveal_chapter or '-'}）{'【已固化】' if r.is_pinned else ''}"
             for r in ledger_rows[:20]
         ) or "（账本无 open 项）"
 
@@ -139,20 +172,71 @@ class CriticAgent(Agent[ReviewOutput]):
         )
         check_text = format_for_prompt(check_items)
 
-        user_content = (
-            f"项目：《{novel.title if novel else novel_id}》\n"
-            f"蓝图（active，评价 blueprint_adherence 时对照）：\n"
-            f"{format_blueprint_for_prompt(blueprint)}\n\n"
-            f"本章大纲（含 chapter_function）：{params.get('outline', '（无）')}\n"
-            f"最近故事状态：\n{states_text}\n\n"
-            f"最近章节全文（评价一致性时对照上文，建议不得与上文已确立事实/关系/设定矛盾）：\n{prev_text}\n\n"
-            f"伏笔账本 open 项（评价 foreshadowing_accountability 与一致性时对照）：\n{ledger_text}\n\n"
-            f"实体关系图谱（评价 consistency 时对照，正文不得与已确立关系矛盾）：\n{relations_text}\n\n"
-            f"设定库（共 {len(active_settings)} 条，评价设定是否被落实/写歪的对照依据）：\n{settings_text}\n\n"
-            f"【设定核对清单·程序确定性核对结果，逐条必须回应】\n{check_text}\n\n"
-            f"待评价章节正文：\n{params.get('chapter_text', '')}\n\n"
-            f"该章节的写作模式：{params.get('writing_mode', 'draft_free')}"
-        )
+        # 组件化上下文（token 预算器按优先级裁剪：硬约束不裁，超窗先裁前文/关系/设定）
+        components = [
+            ComponentBlock(
+                "project",
+                f"项目：《{novel.title if novel else novel_id}》\n"
+                f"{format_genres_direction((novel.genres if novel else None) or [])}",
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
+                "blueprint",
+                f"蓝图（active，评价 blueprint_adherence 时对照）：\n{format_blueprint_for_prompt(blueprint)}",
+                PRIORITY_BASE,
+            ),
+            ComponentBlock(
+                "outline",
+                f"本章大纲（含 chapter_function）：{params.get('outline', '（无）')}",
+                PRIORITY_BASE,
+            ),
+            ComponentBlock(
+                "memory",
+                f"{format_memory_prompt(get_latest_memory(self.db, novel_id))}\n\n最近故事状态：\n{states_text}",
+                PRIORITY_MEMORY,
+            ),
+            ComponentBlock(
+                "prev_text",
+                f"最近章节全文（评价一致性时对照上文，建议不得与上文已确立事实/关系/设定矛盾）：\n{prev_text}",
+                PRIORITY_CONTEXT,
+            ),
+            ComponentBlock(
+                "ledger",
+                f"伏笔账本 open 项（评价 foreshadowing_accountability 与一致性时对照）：\n{ledger_text}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
+                "relations",
+                f"实体关系图谱（评价 consistency 时对照，正文不得与已确立关系矛盾）：\n{relations_text}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
+                "settings",
+                f"设定库（共 {len(active_settings)} 条，评价设定是否被落实/写歪的对照依据）：\n{settings_text}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
+                "setting_check",
+                f"【设定核对清单·程序确定性核对结果，逐条必须回应】\n{check_text}",
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
+                "background_scope",
+                background_scope,
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
+                "chapter_text",
+                f"待评价章节正文：\n{params.get('chapter_text', '')}",
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
+                "writing_mode",
+                f"该章节的写作模式：{params.get('writing_mode', 'draft_free')}",
+                PRIORITY_BASE,
+            ),
+        ]
+        user_content = "\n\n".join(c.content for c in components)
         return ContextPack(
             novel_id=novel_id,
             agent="critic",
@@ -161,6 +245,7 @@ class CriticAgent(Agent[ReviewOutput]):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
+            components=components,
             meta={"params": params, "setting_check": check_items},
             temperature=self.temperature,
         )

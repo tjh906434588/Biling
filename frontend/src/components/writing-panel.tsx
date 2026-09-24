@@ -558,8 +558,6 @@ export default function WritingPanel({ novelId }: Props) {
   const [reviewing, setReviewing] = useState(false);
   const [revising, setRevising] = useState(false);
   const [reviews, setReviews] = useState<QualityReview[] | null>(null);
-  /** 评价弹窗：是否展开「另有 N 条旧版本评价」折叠区。 */
-  const [showFoldedReviews, setShowFoldedReviews] = useState(false);
   /** AI 运行过程（「查看 AI 过程」弹窗）：生成正文 / 评价 / 优化各一份，任务结束保留供回看。 */
   const [genRun, setGenRun] = useState<AiRunState | null>(null);
   const [showGenRun, setShowGenRun] = useState(false);
@@ -758,7 +756,6 @@ export default function WritingPanel({ novelId }: Props) {
     async (no: number, selectVersionId?: string | null) => {
       // 请求序号 +1：本次切章的所有后续写入都受它保护，被更新的切章取代时整段丢弃
       const req = ++loadDetailReqRef.current;
-      setShowFoldedReviews(false); // 切章时收起上一章的折叠评价区
       try {
         const d = await getChapter(novelId, no);
         // 竞态守卫：若期间又点了别的章，旧的慢响应直接丢弃，不覆盖新选中章
@@ -988,9 +985,6 @@ export default function WritingPanel({ novelId }: Props) {
    *  接口已按时间倒序，取第一条即最近一次。 */
   const currentReviews = (reviews ?? []).filter((r) => r.chapter_version_id === selectedVersion?.id);
   const currentReview = currentReviews[0] ?? null;
-  /** 其他正文版本上的评价（针对当前未选中版本）：折叠展示，仅作历史参考，不驱动「按评价优化」。 */
-  const foldedReviews = (reviews ?? []).filter((r) => r.chapter_version_id !== selectedVersion?.id);
-  const foldedCount = foldedReviews.length;
   /** 当前预览正文是否为「旧大纲版本」生成的：该章已有批准大纲（approvedOutline）时，
    *  正文版本记录的 outline_id 必须等于它才算"基于激活大纲"，否则只能看、不能评价/修订/提取。
    *  无批准大纲（自由稿/该章尚未批准）时不限制。 */
@@ -1199,8 +1193,17 @@ export default function WritingPanel({ novelId }: Props) {
    *  原定稿版本随之变回草稿（同一时间只能定稿一个版本）。 */
   async function handleFinalizeSelected() {
     if (!detail || !selectedVersion || selectedIsFinal) return;
+    let force = false;
+    // 签约未过签版本：默认拦截定稿，作者确认风险后可强制定稿（逃生口）
+    if (selectedVersion.signing_blocked) {
+      const ok = window.confirm(
+        "该版本签约未过签（评价存在内容红线/抄袭类高危问题）。\n\n强制定稿会把未通过签约检查的正文作为本章正文，请先按评价师建议修改，或确认风险后继续。\n\n仍要强制定稿吗？",
+      );
+      if (!ok) return;
+      force = true;
+    }
     try {
-      const updated = await selectVersion(novelId, detail.chapter_no, selectedVersion.id);
+      const updated = await selectVersion(novelId, detail.chapter_no, selectedVersion.id, force);
       setDetail(updated);
       setSelectedVersionId(selectedVersion.id);
       showToast(
@@ -1646,6 +1649,12 @@ export default function WritingPanel({ novelId }: Props) {
               </span>
               {/* 版本号 */}
               <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">v{v.version_no}</span>
+              {/* 签约未过签标记：评价存在内容红线/抄袭类高危 issue，定稿默认被拒 */}
+              {v.signing_blocked && (
+                <span className="shrink-0 rounded-md bg-red-600/90 px-1.5 py-px text-[10px] font-medium text-white">
+                  未过签
+                </span>
+              )}
               {/* 定稿/草稿 状态 */}
               <span
                 className={`ml-auto shrink-0 font-medium ${
@@ -1933,6 +1942,12 @@ export default function WritingPanel({ novelId }: Props) {
                 <span className="ml-1 text-xs font-normal text-zinc-500">
                   {selectedIsFinal ? "已定稿" : "草稿"}
                 </span>
+                {/* 选中版本签约未过签：红色警示，提示需按评价修正或强制定稿 */}
+                {selectedVersion?.signing_blocked && (
+                  <span className="ml-1.5 inline-flex items-center gap-1 rounded-md bg-red-600/10 px-1.5 py-0.5 text-xs font-medium text-red-600 ring-1 ring-inset ring-red-600/30 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/30">
+                    未过签·定稿需确认
+                  </span>
+                )}
               </h3>
               <div className="flex items-center gap-2">
                 {/* 定稿：把当前选中的草稿版本定稿激活（同一时间只能定稿一个版本）；选中已定稿版本时隐藏 */}
@@ -1949,7 +1964,9 @@ export default function WritingPanel({ novelId }: Props) {
                           ? reviewing
                             ? "评价进行中，暂不能定稿"
                             : "提取记忆层中，暂不能定稿"
-                          : "将当前选中的草稿版本定稿为本章正文"
+                          : selectedVersion.signing_blocked
+                            ? "该版本签约未过签（存在内容红线/抄袭类高危问题），定稿需二次确认"
+                            : "将当前选中的草稿版本定稿为本章正文"
                     }
                   >
                     定稿
@@ -2344,37 +2361,6 @@ export default function WritingPanel({ novelId }: Props) {
                     </button>
                   )}
                 </div>
-              </div>
-            )}
-
-            {foldedCount > 0 && (
-              <div className="mt-4 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setShowFoldedReviews((v) => !v)}
-                  className="flex w-full items-center gap-1.5 text-left text-[11px] text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-                >
-                  <span className={`shrink-0 text-[10px] transition-transform ${showFoldedReviews ? "rotate-90" : ""}`}>
-                    ▸
-                  </span>
-                  <span>
-                    另有 {foldedCount} 条旧版本评价（针对不同正文版本）已折叠
-                    {showFoldedReviews ? "，点击收起" : "，点击展开查看"}
-                  </span>
-                </button>
-                {showFoldedReviews && (
-                  <div className="mt-2 flex flex-col gap-2">
-                    {foldedReviews.map((r) => (
-                      <ReviewCard
-                        key={r.id}
-                        review={r}
-                        onRevise={handleRevise}
-                        revising={revising}
-                        activeVersionId={selectedVersion?.id ?? null}
-                      />
-                    ))}
-                  </div>
-                )}
               </div>
             )}
           </>

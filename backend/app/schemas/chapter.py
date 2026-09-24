@@ -18,6 +18,9 @@ class ChapterVersionRead(BaseModel):
     outline_id: Optional[uuid.UUID] = None  # 该版本所用大纲版本
     parent_version_id: Optional[uuid.UUID] = None  # 版本树父节点 id（null=根：新增/重新生成；非 null=评价优化产物）
     is_active: bool
+    # 签约未过签：最新评价存在 severity=high 的红线 issue（内容红线/抄袭）→ True，
+    # 定稿默认被拒；评价更新后自动重算。null=该版本尚无评价（未检查过）
+    signing_blocked: Optional[bool] = None
     created_at: datetime
 
 
@@ -44,6 +47,7 @@ class ChapterDetail(BaseModel):
 
 class SelectVersionRequest(BaseModel):
     version_id: uuid.UUID
+    force: bool = False  # 越过签约未过签拦截强制定稿（作者权威逃生口）
 
 
 class ReviewRead(BaseModel):

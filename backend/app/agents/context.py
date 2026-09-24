@@ -1,4 +1,9 @@
-"""角色上下文装配辅助：从记忆层取数据的最小公共函数（M0 骨架版，M1 起由 token 预算器接管）。"""
+"""角色上下文装配辅助：从记忆层取数据的最小公共函数（M0 骨架版，M1 起由 token 预算器接管）。
+
+token 预算器（本模块尾部）：各角色把上下文拆成「可裁剪组件」（ComponentBlock，带优先级），
+run 前按模型 context_window 估算总 token，超窗时从低优先级组件起剔除，直到不超窗。
+硬约束（优先级 PRIORITY_REQUIRED）永不剔除；被剔除的组件记入 ctx.truncated_components。
+"""
 import uuid
 from typing import Optional
 
@@ -17,6 +22,9 @@ from app.db.models import (
     StoryState,
     StyleProfile,
 )
+
+# 默认输出预留：输入上下文预算 = context_window - 输出预留（给 max_tokens 兜底，防输出占不满被裁输入）。
+DEFAULT_OUTPUT_RESERVE = 8192
 
 
 def get_novel(db: Session, novel_id: uuid.UUID) -> Optional[Novel]:
@@ -168,10 +176,17 @@ def get_settings_snapshot(db: Session, novel_id: uuid.UUID, limit: int | None = 
 
     def sort_key(s: Setting):
         ts = s.updated_at.timestamp() if s.updated_at else 0.0
-        return (0 if has_constitution(s) else 1, -ts)
+        # 关键信息固化（C）：is_pinned 与宪法同级优先——固化项永远排在前面、截断时绝不丢失
+        return (0 if (has_constitution(s) or s.is_pinned) else 1, -ts)
 
     rows.sort(key=sort_key)
-    return rows[:limit]
+    # 固化项永不被数量上限挤出：截断只发生在非固化项之间
+    if limit is not None and len(rows) > limit:
+        pinned = [s for s in rows if s.is_pinned]
+        if len(pinned) >= limit:
+            return pinned[:limit]
+        rows = pinned + [s for s in rows if not s.is_pinned][: limit - len(pinned)]
+    return rows
 
 
 # 阶段标签（structured.stages 用英文枚举，展示层映射中文）
@@ -293,6 +308,54 @@ def get_recent_chapters(db: Session, novel_id: uuid.UUID, limit: int = 2) -> lis
     )
 
 
+def get_latest_memory(db: Session, novel_id: uuid.UUID) -> Optional[dict]:
+    """取最新一份作品编年总览 content（无则 None）。"""
+    from app.db.models import NovelMemory
+
+    row = db.execute(
+        select(NovelMemory)
+        .where(NovelMemory.novel_id == novel_id)
+        .order_by(NovelMemory.up_to_chapter.desc(), NovelMemory.version.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return row.content if row is not None else None
+
+
+def format_memory_prompt(content: dict | None) -> str:
+    """把编年总览压成注入文本；无编年返回占位（不阻塞，agent 按正常流程写）。"""
+    if not content:
+        return "作品编年：暂无（长篇小说早期主线/伏笔请以设定库、关系图谱与伏笔账本为准）。"
+    lines = [f"主线：{content.get('main_line') or '（无）'}"]
+    arcs = content.get("volumes_progress") or []
+    if arcs:
+        lines.append(
+            "各线进度："
+            + "；".join(f"{a.get('name')}（{a.get('status')}）→{a.get('progress')}" for a in arcs)
+        )
+    goals = content.get("character_goals") or []
+    if goals:
+        lines.append(
+            "角色目标："
+            + "；".join(f"{g.get('character')}：{g.get('goal')}（{g.get('progress')}）" for g in goals)
+        )
+    fw = content.get("active_foreshadowing") or []
+    if fw:
+        lines.append(
+            "未回收伏笔："
+            + "；".join(f"第{f.get('since_chapter')}章埋的「{f.get('desc')}」（提示：{f.get('hint') or '无'}）" for f in fw)
+        )
+    world = content.get("established_world") or []
+    if world:
+        lines.append("已确立设定：" + "；".join(world))
+    threads = content.get("open_threads") or []
+    if threads:
+        lines.append("未解线索：" + "；".join(threads))
+    nd = content.get("next_direction") or ""
+    if nd:
+        lines.append(f"后续走向：{nd}")
+    return "【作品编年（长期记忆，跨窗口，写作/评价时须与此一致）】\n" + "\n".join(lines)
+
+
 def get_latest_style_profile(db: Session, novel_id: uuid.UUID) -> Optional[StyleProfile]:
     return db.execute(
         select(StyleProfile)
@@ -406,3 +469,61 @@ def _rank_tag(s: Setting) -> str:
         return ""
     r = str((s.structured or {}).get("role_rank") or "").strip()
     return f"[{ROLE_RANK_LABEL.get(r, r)}]" if r else ""
+
+
+# ---------------------------------------------------------------------------
+# token 预算器：按模型 context_window 动态装配，超窗时按组件优先级从低到高剔除。
+# 硬约束（priority >= PRIORITY_REQUIRED）永不剔除；被剔除的组件记入 truncated_components。
+# ---------------------------------------------------------------------------
+
+def estimate_tokens(text: str) -> int:
+    """粗略估算 token 数（中英混排，字符加权；用于预算裁剪，非精确计费）。
+
+    中文约 1.5~2 字符/token，英文约 4 字符/token。为「宁可多裁不可超窗」，
+    估算取偏保守值（略高估），给模型上下文留余量。
+    """
+    if not text:
+        return 0
+    cjk = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+    other = len(text) - cjk
+    return max(1, int(cjk / 1.5 + other / 4))
+
+
+def assemble_components(components) -> str:
+    """把组件块按原顺序拼成 user_content（块间空行分隔）。"""
+    return "\n\n".join(c.content for c in components)
+
+
+def apply_token_budget(ctx, context_window: int, *, output_reserve: int | None = None) -> int:
+    """按 context_window 裁剪 ctx.components（就地），超窗时剔除低优先级组件。
+
+    返回被剔除的组件数量。context_window 为 0/None 时跳过（不裁剪）。
+    system 消息不计入 user 预算，但输出预留要留足，避免模型「输入挤满、输出被截」。
+    """
+    if not context_window or not ctx.components:
+        return 0
+    reserve = output_reserve or ctx.max_tokens or DEFAULT_OUTPUT_RESERVE
+    budget = max(1000, int(context_window) - int(reserve))
+    system_tokens = estimate_tokens(ctx.system_prompt)
+
+    # 估算当前总量：system + 全部组件
+    total = system_tokens + sum(estimate_tokens(c.content) for c in ctx.components)
+    if total <= budget:
+        return 0
+
+    # 从低优先级到高优先级剔除，直到不超窗；硬约束（priority >= PRIORITY_REQUIRED）不剔
+    removed = 0
+    # 稳定排序：低优先级在前
+    order = sorted(range(len(ctx.components)), key=lambda i: ctx.components[i].priority)
+    for i in order:
+        if total <= budget:
+            break
+        c = ctx.components[i]
+        if c.priority >= 100:
+            continue  # 硬约束永不剔除
+        total -= estimate_tokens(c.content)
+        ctx.truncated_components.append(c.key)
+        ctx.components[i] = None  # 先标记，避免索引错位
+        removed += 1
+    ctx.components = [c for c in ctx.components if c is not None]
+    return removed

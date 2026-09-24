@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # 设定快照注入上限（不可变优先 → 最新优先；设定多的可调大）
     settings_snapshot_limit: int = 100
 
+    # 作品编年生成周期：每 N 章自动触发一次编年师，把早期主线/伏笔压成固定大小的长期记忆注入
+    chronicle_generate_every: int = 10
+
 
 @lru_cache
 def get_settings() -> Settings:

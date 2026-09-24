@@ -15,6 +15,8 @@ class ConceptItem(BaseModel):
     extracted: dict
     conflicts_with_existing: list[str] = []
     questions_to_ask: list[str] = []
+    # 关键信息固化（C）：importance=high 的设定转正为设定库时打 is_pinned，注入不受数量上限影响（长期关键设定永远进窗口）
+    importance: str = Field(default="medium", pattern="^(high|medium|low)$")
 
 
 class ConceptExtraction(BaseModel):
@@ -169,6 +171,8 @@ class PlantItem(BaseModel):
     desc: str
     payoff_hint: str
     latest_payoff_chapter: Optional[int] = None
+    # 关键信息固化（C）：跨多章、剧情关键、回收期远的伏笔标 high → 落库 is_pinned，账本超 20 条也不被挤出
+    importance: str = "medium"
 
 
 class ResolveItem(BaseModel):
@@ -288,6 +292,41 @@ class StoryStateExtract(BaseModel):
     relations: list[RelationExtract] = []
     superseded_relations: list[SupersededRelation] = []  # 被取代的旧关系（如 师徒→叛出师门）
     next_chapter_implications: list[str] = []
+
+
+# ---------- 编年师（作品编年总览） ----------
+
+
+class ChronicleArc(BaseModel):
+    """主线/副线进度条目。"""
+
+    name: str  # 线名（如 主线/主角身世线/权谋线）
+    status: str = Field(..., pattern="^(推进中|已完结|搁置)$")
+    progress: str  # 已写到哪、下一关键节点是什么
+
+
+class ChronicleCharacterGoal(BaseModel):
+    character: str
+    goal: str  # 当前目标
+    progress: str  # 推进到哪一步
+
+
+class ChronicleForeshadowing(BaseModel):
+    desc: str  # 伏笔内容
+    since_chapter: int  # 埋设章
+    hint: str = ""  # 回收提示
+
+
+class ChronicleOutput(BaseModel):
+    """作品编年总览（每 N 章生成一次，token 固定，长期注入各 agent）。"""
+
+    main_line: str  # 主线一句话：故事当前讲到哪
+    volumes_progress: list[ChronicleArc] = []  # 各卷/各线进度
+    character_goals: list[ChronicleCharacterGoal] = []  # 主要角色当前目标
+    active_foreshadowing: list[ChronicleForeshadowing] = []  # 尚未回收的重要伏笔（含早期的）
+    established_world: list[str] = []  # 已确立的重大设定/世界状态（长期有效，窗口外不丢）
+    open_threads: list[str] = []  # 未解线索/遗留钩子
+    next_direction: str = ""  # 后续自然走向
 
 
 # ---------- 评价师 ----------

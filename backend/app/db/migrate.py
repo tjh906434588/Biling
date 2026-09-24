@@ -15,23 +15,28 @@ _ADD_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "novels": [
         ("style_directive", "TEXT"),
         ("style_directive_manual", "TEXT"),
+        ("background_type", "VARCHAR(16) NOT NULL DEFAULT 'realistic'"),  # 世界背景类型：realistic|alternate|pure_fantasy
+        ("genres", "JSON"),  # 题材多选：软性写作方向指引，如 ["都市","重生"]
     ],
     "settings": [
         ("aliases", "TEXT"),
         ("merged_into_id", "CHAR(36)"),
         ("source", "VARCHAR(16) NOT NULL DEFAULT 'manual'"),
         ("outline_ids", "TEXT"),  # 大纲批准时注入的角色设定：来源大纲版本（可多值，跨章多个），任一来源仍批准即可见
+        ("is_pinned", "BOOLEAN NOT NULL DEFAULT 0"),  # 关键信息固化：AI 判定为关键时置 1，注入不受数量上限影响
     ],
     "plot_ledger": [
         ("since_chapter", "INTEGER"),
         ("invalidated_at_chapter", "INTEGER"),
         ("source", "VARCHAR(16) NOT NULL DEFAULT 'outline'"),  # 数据来源（隐形）：outline|extractor|manual
         ("outline_id", "CHAR(36)"),  # 来源大纲版本 id（source=outline 时，隐形字段不展示）
+        ("is_pinned", "BOOLEAN NOT NULL DEFAULT 0"),  # 关键信息固化：importance=high 的伏笔置 1，注入不受 20 条上限影响
     ],
     "chapter_versions": [
         ("title", "VARCHAR(255)"),  # 该版本自己的标题（草稿各自独立，定稿时同步回章）
         ("outline_id", "CHAR(36)"),  # 该版本正文所用的大纲版本 id
         ("parent_version_id", "CHAR(36)"),  # 版本树父节点：评价优化产物挂到被优化版本下（多级树）
+        ("signing_blocked", "BOOLEAN NOT NULL DEFAULT 0"),  # 签约未过签标记：最新评价含高危红线 issue 时为 1，定稿默认拒绝
     ],
     "story_state": [
         ("since_chapter", "INTEGER"),
