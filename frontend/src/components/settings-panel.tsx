@@ -764,6 +764,121 @@ function EraListCard({
   );
 }
 
+/** 时代行业研究编辑表单：与后端 JSON 存储一一对应，但用普通人能看懂的中文字段呈现（不再直接编辑 JSON）。 */
+interface EraFormState {
+  story_start_year: string;
+  era: string;
+  industry: string;
+  note: string;
+  boss_portrait: string;
+  location_pattern: string;
+  organization_forms: string;
+  business_list: string;
+  evolution: string;
+  era_mismatch_red_flags: string;
+}
+
+const EMPTY_ERA_FORM: EraFormState = {
+  story_start_year: "",
+  era: "",
+  industry: "",
+  note: "",
+  boss_portrait: "",
+  location_pattern: "",
+  organization_forms: "",
+  business_list: "",
+  evolution: "",
+  era_mismatch_red_flags: "",
+};
+
+/** 研究 JSON → 编辑表单（列表字段按「一行一条」展开成多行文本）。 */
+function eraToForm(r: Record<string, unknown>): EraFormState {
+  const list = (v: unknown): string =>
+    Array.isArray(v) ? (v as unknown[]).map((x) => String(x ?? "")).join("\n") : "";
+  return {
+    story_start_year: r.story_start_year != null ? String(r.story_start_year) : "",
+    era: String(r.era ?? ""),
+    industry: String(r.industry ?? ""),
+    note: String(r.note ?? ""),
+    boss_portrait: String(r.boss_portrait ?? ""),
+    location_pattern: String(r.location_pattern ?? ""),
+    organization_forms: list(r.organization_forms),
+    business_list: list(r.business_list),
+    evolution: list(r.evolution),
+    era_mismatch_red_flags: list(r.era_mismatch_red_flags),
+  };
+}
+
+/** 编辑表单 → 研究 JSON（列表字段按行拆分；confidence 等表单外字段由调用方合并原对象保留）。 */
+function eraFromForm(f: EraFormState): Record<string, unknown> {
+  const lines = (s: string): string[] =>
+    s
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean);
+  const year = Number.parseInt(f.story_start_year.trim(), 10);
+  return {
+    story_start_year: Number.isFinite(year) ? year : null,
+    era: f.era.trim(),
+    industry: f.industry.trim(),
+    note: f.note.trim(),
+    boss_portrait: f.boss_portrait.trim(),
+    location_pattern: f.location_pattern.trim(),
+    organization_forms: lines(f.organization_forms),
+    business_list: lines(f.business_list),
+    evolution: lines(f.evolution),
+    era_mismatch_red_flags: lines(f.era_mismatch_red_flags),
+  };
+}
+
+/** 时代行业研究编辑表单：单个字段（输入框 / 多行文本）。 */
+function EraField({
+  label,
+  hint,
+  value,
+  onChange,
+  textarea = false,
+  rows = 3,
+  placeholder,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+  textarea?: boolean;
+  rows?: number;
+  placeholder?: string;
+}) {
+  const cls =
+    "w-full rounded-lg border border-zinc-300 bg-sunken/40 px-2.5 py-2 text-xs leading-5 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">
+        {label}
+        {hint ? <span className="ml-1.5 font-normal text-zinc-400 dark:text-zinc-500">{hint}</span> : null}
+      </span>
+      {textarea ? (
+        <textarea
+          className={`${cls} resize-y`}
+          rows={rows}
+          spellCheck={false}
+          value={value}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ) : (
+        <input
+          type="text"
+          className={cls}
+          value={value}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </label>
+  );
+}
+
 export default function SettingsPanel({ novelId }: Props) {
   const [settings, setSettings] = useState<Setting[]>([]);
   const [typeFilter, setTypeFilter] = useState<string>("");
@@ -788,7 +903,7 @@ export default function SettingsPanel({ novelId }: Props) {
   const [loading, setLoading] = useState(true);
   // 时代行业研究（蓝图生成时自动研究，作者可查看/修改）：null=未加载，undefined=无研究
   const [eraResearch, setEraResearch] = useState<Record<string, unknown> | null | undefined>(undefined);
-  const [eraText, setEraText] = useState("");
+  const [eraForm, setEraForm] = useState<EraFormState>(EMPTY_ERA_FORM);
   const [eraEditing, setEraEditing] = useState(false);
   const [eraBusy, setEraBusy] = useState(false);
   // 世界背景类型与题材：创建时可留空，导入蓝图时由 AI 推断引导确认，这里可直接修改
@@ -822,7 +937,6 @@ export default function SettingsPanel({ novelId }: Props) {
       // 时代行业研究：同步加载最新值（作者在别处改过也要反映出来）
       const er = novel.era_research ?? null;
       setEraResearch(er);
-      setEraText(er ? JSON.stringify(er, null, 2) : "");
       setBgType(novel.background_type ?? undefined);
       setGenres(novel.genres ?? []);
     } catch (e) {
@@ -965,18 +1079,21 @@ export default function SettingsPanel({ novelId }: Props) {
   async function handleSaveEra() {
     setEraBusy(true);
     try {
-      const trimmed = eraText.trim();
-      if (trimmed) {
-        const obj = JSON.parse(trimmed);
-        if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
-          message.error("需保存为一个 JSON 对象");
-          return;
-        }
-        await updateNovel(novelId, { era_research: obj });
-        setEraResearch(obj);
-      } else {
+      const next = eraFromForm(eraForm);
+      // 全部清空 = 视为清除研究；否则合并原对象（保留 confidence 等表单外字段）
+      const isEmpty = Object.values(next).every(
+        (v) => v === null || v === "" || (Array.isArray(v) && v.length === 0),
+      );
+      if (isEmpty) {
         await updateNovel(novelId, { era_research: null });
         setEraResearch(null);
+      } else {
+        const merged = {
+          ...(eraResearch && typeof eraResearch === "object" ? eraResearch : {}),
+          ...next,
+        };
+        await updateNovel(novelId, { era_research: merged });
+        setEraResearch(merged);
       }
       setEraEditing(false);
       message.success("时代行业研究已保存");
@@ -1116,7 +1233,10 @@ export default function SettingsPanel({ novelId }: Props) {
                   <button
                     type="button"
                     className="btn btn-ghost px-3 py-1.5 text-xs"
-                    onClick={() => setEraEditing(true)}
+                    onClick={() => {
+                      setEraForm(eraResearch ? eraToForm(eraResearch) : EMPTY_ERA_FORM);
+                      setEraEditing(true);
+                    }}
                   >
                     编辑
                   </button>
@@ -1129,12 +1249,83 @@ export default function SettingsPanel({ novelId }: Props) {
 
           {eraResearch ? (
             eraEditing ? (
-              <div className="flex flex-col gap-2">
-                <textarea
-                  className="h-48 w-full resize-y rounded-lg border border-zinc-300 bg-sunken/40 p-2.5 font-mono text-xs outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                  spellCheck={false}
-                  value={eraText}
-                  onChange={(e) => setEraText(e.target.value)}
+              <div className="flex flex-col gap-2.5">
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  <EraField
+                    label="开局年份"
+                    hint="故事从哪一年开始"
+                    placeholder="如：2000"
+                    value={eraForm.story_start_year}
+                    onChange={(v) => setEraForm({ ...eraForm, story_start_year: v })}
+                  />
+                  <EraField
+                    label="行业"
+                    hint="判定出的行业"
+                    placeholder="如：人才中介 / 职业介绍"
+                    value={eraForm.industry}
+                    onChange={(v) => setEraForm({ ...eraForm, industry: v })}
+                  />
+                </div>
+                <EraField
+                  label="时代定位"
+                  hint="如：2000 年代起的现代都市"
+                  value={eraForm.era}
+                  onChange={(v) => setEraForm({ ...eraForm, era: v })}
+                />
+                <EraField
+                  label="判定依据"
+                  hint="AI 是从哪里判断出这个年代与行业的"
+                  textarea
+                  rows={2}
+                  value={eraForm.note}
+                  onChange={(v) => setEraForm({ ...eraForm, note: v })}
+                />
+                <EraField
+                  label="老板 / 负责人画像"
+                  textarea
+                  rows={2}
+                  value={eraForm.boss_portrait}
+                  onChange={(v) => setEraForm({ ...eraForm, boss_portrait: v })}
+                />
+                <EraField
+                  label="地域分布特征"
+                  hint="门店 / 机构通常开在哪里、为什么"
+                  textarea
+                  rows={2}
+                  value={eraForm.location_pattern}
+                  onChange={(v) => setEraForm({ ...eraForm, location_pattern: v })}
+                />
+                <EraField
+                  label="机构典型形态"
+                  hint="一行一条"
+                  textarea
+                  rows={3}
+                  value={eraForm.organization_forms}
+                  onChange={(v) => setEraForm({ ...eraForm, organization_forms: v })}
+                />
+                <EraField
+                  label="业务范围"
+                  hint="一行一条"
+                  textarea
+                  rows={3}
+                  value={eraForm.business_list}
+                  onChange={(v) => setEraForm({ ...eraForm, business_list: v })}
+                />
+                <EraField
+                  label="行业阶段演进时间轴"
+                  hint="一行一条，带起止年份"
+                  textarea
+                  rows={3}
+                  value={eraForm.evolution}
+                  onChange={(v) => setEraForm({ ...eraForm, evolution: v })}
+                />
+                <EraField
+                  label="时代错位雷点"
+                  hint="一行一条，写作红线（需带时间前提）"
+                  textarea
+                  rows={3}
+                  value={eraForm.era_mismatch_red_flags}
+                  onChange={(v) => setEraForm({ ...eraForm, era_mismatch_red_flags: v })}
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -1148,14 +1339,13 @@ export default function SettingsPanel({ novelId }: Props) {
                   <button
                     type="button"
                     className="btn btn-ghost px-3 py-1.5 text-xs"
-                    onClick={() => {
-                      setEraEditing(false);
-                      setEraText(eraResearch ? JSON.stringify(eraResearch, null, 2) : "");
-                    }}
+                    onClick={() => setEraEditing(false)}
                   >
                     取消
                   </button>
-                  <span className="text-[11px] text-zinc-400">JSON 字段：开局年份 / 时代定位 / 行业 / 判定依据 / 老板画像 / 机构形态 / 业务范围 / 地域分布 / 阶段演进时间轴 / 时代错位雷点</span>
+                  <span className="text-[11px] text-zinc-400">
+                    列表字段每行一条；全部清空并保存 = 清除这份研究
+                  </span>
                 </div>
               </div>
             ) : (
@@ -1292,7 +1482,7 @@ export default function SettingsPanel({ novelId }: Props) {
             </div>
           )
         ) : (
-          <ul className="grid min-h-0 flex-1 grid-cols-1 gap-2.5 overflow-y-auto xl:grid-cols-2">
+          <ul className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
             {visibleSettings.map((s) => {
               const { con, dyn } = splitSetting(s);
               const meta = settingMeta(s);

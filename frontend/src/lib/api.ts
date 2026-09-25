@@ -1024,6 +1024,8 @@ export interface SettingGap {
   present: string[];
   missing: string[];
   source: string;
+  /** 命中类型：org_archive_gap=机构档案缺维度（设定卡本身未定档，非本章正文漏写）；缺省=正文必现清单漏写。 */
+  kind?: string;
 }
 
 export interface StreamEventData {

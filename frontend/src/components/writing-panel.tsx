@@ -37,7 +37,6 @@ interface GenForm {
   title: string;
   outline: string;
   chapter_function: string;
-  writing_mode: string;
   goal: string;
   reader_knows: string;
   protagonist_knows: string;
@@ -86,6 +85,12 @@ let rewriteNotifId: number | null = null;
 let rewriteFailData: RewriteFailData | null = null;
 let rewriteNovelId: string | null = null;
 let rewriteRemainingMs = 0;
+
+/** 写后设定自检（setting_warning）→ 右上角告警通知的模块级状态：带「重新生成/忽略」操作。
+ *  切换章节或离开工作台即自动移除，避免挂着一个旧章节的告警（此时点「重新生成」目标会错）。 */
+let gapsNotifId: number | null = null;
+let gapsNotifChapter: number | null = null;
+let gapsNotifNovel: string | null = null;
 
 function rewriteFailDataKey(novelId: string) {
   return `biling.rewriteFail.${novelId}.data`;
@@ -213,6 +218,12 @@ export function hideWorkspaceNotifs(novelId: string) {
   if (rewriteNotifId != null && rewriteNovelId === novelId) {
     removeNotification(rewriteNotifId);
     rewriteNotifId = null;
+  }
+  if (gapsNotifId != null && gapsNotifNovel === novelId) {
+    removeNotification(gapsNotifId);
+    gapsNotifId = null;
+    gapsNotifChapter = null;
+    gapsNotifNovel = null;
   }
 }
 
@@ -352,7 +363,6 @@ const EMPTY_FORM: GenForm = {
   title: "",
   outline: "",
   chapter_function: "", // 留空 = 由小说家按剧情节奏自动判定（与大纲页一致）
-  writing_mode: "outline_guided",
   goal: "",
   reader_knows: "",
   protagonist_knows: "",
@@ -533,6 +543,8 @@ export default function WritingPanel({ novelId }: Props) {
   const [activeNo, setActiveNo] = useState<number | null>(null);
   const [detail, setDetail] = useState<ChapterDetail | null>(null);
   const [form, setForm] = useState<GenForm>(EMPTY_FORM);
+  /** 「沿用该章已批大纲」开关：仅该章有已批大纲时在弹窗显示；关 = 自由草稿（不预填大纲）。 */
+  const [useOutline, setUseOutline] = useState(true);
   const [generating, setGenerating] = useState(false);
   /** 正上方悬浮条已迁移到全局 Message：showToast 为本地别名，统一走 message API。 */
   const showToast = (msg: string, level: "success" | "warning" | "error" = "success") => {
@@ -583,12 +595,6 @@ export default function WritingPanel({ novelId }: Props) {
   const reviewElapsed = useElapsed(reviewRun?.running ?? false, reviewStartRef.current);
   const reviseElapsed = useElapsed(reviseRun?.running ?? false, reviseStartRef.current);
   const [showReviseRun, setShowReviseRun] = useState(false);
-  /**
-   * 写后设定自检命中的疑似漏项：蓝图/设定里要求「成组同时出现」的内容只写了一部分
-   * （如面板必须 天赋清单+兴趣爱好+适配推荐，正文漏了「兴趣爱好」）。
-   * 由后端 SSE setting_warning 事件下发，属提示性质，不阻断成文。
-   */
-  const [settingGaps, setSettingGaps] = useState<SettingGap[] | null>(null);
 
   /** 记忆层提取时记录：提取的是哪一章的哪个版本（id）。用于判断「当前正文」是否与提取的不一致，
    *  一致则无需重提取，不一致则高亮「提取→记忆层」按钮提醒用户重新提取。
@@ -656,10 +662,7 @@ export default function WritingPanel({ novelId }: Props) {
    */
   const maxChapterNo = chapters.reduce((m, c) => Math.max(m, c.chapter_no), 0);
   const nextNo = maxChapterNo + 1;
-  const targetOutline =
-    form.writing_mode === "outline_guided"
-      ? approvedOutlines.find((o) => o.chapter_no === form.chapter_no) ?? null
-      : null;
+  const targetOutline = approvedOutlines.find((o) => o.chapter_no === form.chapter_no) ?? null;
   // 大纲+章节合并后：写正文前由「本章规划」弹窗确认（后端 novelist 前置钩子），
   // 不再要求该章必须有已批大纲——有则自动回填预览，无则规划确认后直接写作。
   const canAdd = true;
@@ -685,10 +688,8 @@ export default function WritingPanel({ novelId }: Props) {
 
   /** 打开「新增章节」弹窗：按当前目录算好目标章号、回填该章已批大纲（若有）。 */
   const openAddModal = useCallback(() => {
-    const o =
-      form.writing_mode === "outline_guided"
-        ? approvedOutlines.find((x) => x.chapter_no === nextNo) ?? null
-        : null;
+    const o = approvedOutlines.find((x) => x.chapter_no === nextNo) ?? null;
+    setUseOutline(o != null);
     setForm((f) => ({
       ...f,
       chapter_no: nextNo,
@@ -698,38 +699,135 @@ export default function WritingPanel({ novelId }: Props) {
     }));
     setRegenerateNo(null);
     setShowAddModal(true);
-  }, [approvedOutlines, form.writing_mode, nextNo]);
+  }, [approvedOutlines, nextNo]);
 
   /** 打开「重新生成正文」弹窗：复用新增章节弹窗，章节号锁定为当前章，其余字段可改。
    *  后端 _persist_novelist 会基于该 chapter_no 追加一个新草稿版本（需手动定稿）。
-   *  版本树：重新生成与新增章节平级，产物为根节点（handleGenerate 不传 parent_version_id）。 */
+   *  版本树：重新生成与新增章节平级，产物为根节点（handleGenerate 不传 parent_version_id）。
+   *  重新生成=新增：默认完全空白——不自动沿用已批大纲（避免带入旧章大纲/标题/内容），
+   *  不继承旧版本标题；标题留空由 AI 根据新正文重新起。作者可手动打开「沿用已批大纲」开关。 */
   const openRegenerateModal = useCallback(() => {
     if (activeNo == null) return;
-    const o = approvedOutlines.find((x) => x.chapter_no === activeNo) ?? null;
+    setUseOutline(false);
     setForm((f) => ({
       ...f,
       chapter_no: activeNo,
-      // 预填当前选中版本的标题（草稿各自独立，谁被选中就用谁的标题）
-      title: selectedVersion?.title ?? detail?.title ?? o?.title ?? "",
-      outline: o ? summarizeOutline(o) : "",
+      title: "",
+      outline: "",
       chapter_function: "",
-      writing_mode: o ? "outline_guided" : "draft_free",
     }));
     setRegenerateNo(activeNo);
     setShowAddModal(true);
-  }, [approvedOutlines, activeNo, detail, selectedVersion]);
+  }, [activeNo]);
 
-  /** 弹窗内切换写作模式：同步重算目标章号与大纲回填。 */
-  function changeWritingMode(mode: string) {
-    const o = mode === "outline_guided" ? approvedOutlines.find((x) => x.chapter_no === nextNo) ?? null : null;
+  /**
+   * 写后设定自检命中 → 右上角常驻告警通知（带「重新生成/忽略」操作）。
+   * 切换章节/换小说即自动移除本通知（见下方 effect），避免挂着旧章节的告警。
+   */
+  function fireGapNotif(chapterNo: number, gaps: SettingGap[]) {
+    if (gapsNotifId != null) {
+      removeNotification(gapsNotifId);
+      gapsNotifId = null;
+    }
+    gapsNotifNovel = novelId;
+    gapsNotifChapter = chapterNo;
+    // 区分两类命中：机构档案缺维度（设定卡本身未定档，重新生成正文解决不了）vs 正文必现清单漏写
+    const hasOrgGap = gaps.some((g) => g.kind === "org_archive_gap");
+    const hasContentGap = gaps.some((g) => g.kind !== "org_archive_gap");
+    gapsNotifId = notification.warning({
+      duration: 0, // 常驻：等作者处理（重新生成 / 忽略 / 手动关闭）
+      title: `设定自检：第 ${chapterNo} 章发现 ${gaps.length} 处设定问题`,
+      message: (
+        <div className="space-y-1">
+          {gaps.map((g) =>
+            g.kind === "org_archive_gap" ? (
+              <div key={`${g.rule}-${g.missing.join("-")}`} className="leading-5">
+                《{g.rule}》档案缺少维度：{" "}
+                <span className="font-medium text-amber-900 dark:text-amber-100">{g.missing.join("、")}</span>
+              </div>
+            ) : (
+              <div key={`${g.rule}-${g.missing.join("-")}`} className="leading-5">
+                《{g.rule}》要求 [{g.group.join(" + ")}] 同时出现，已写到 {g.present.join("、")}，缺失{" "}
+                <span className="font-medium text-amber-900 dark:text-amber-100">{g.missing.join("、")}</span>
+              </div>
+            ),
+          )}
+          <div className="pt-0.5 text-[11px] leading-5 opacity-75">
+            {hasOrgGap ? (
+              hasContentGap ? (
+                <>
+                  机构档案缺维度属设定卡不完整，重新生成正文无法补齐，请到「设定」为该机构补上档案维度；
+                  其余正文漏写项可按下方处理。
+                </>
+              ) : (
+                <>
+                  属设定卡不完整（非本章正文漏写）：重新生成正文无法补齐，请到「设定」为该机构补上档案维度；
+                  若确认为背景机构无需完整档案，可忽略。
+                </>
+              )
+            ) : (
+              <>
+                属机器字面核对：若本章确实不该写到该项可忽略；否则建议重新生成，
+                或到「评价与优化」的【作者批注】里写明补写内容，让修订师补上。
+              </>
+            )}
+          </div>
+        </div>
+      ),
+      actions: (
+        <>
+          {hasContentGap && (
+            <button
+              type="button"
+              onClick={() => {
+                closeNotification(gapsNotifId!);
+                gapsNotifId = null;
+                gapsNotifChapter = null;
+                gapsNotifNovel = null;
+                openRegenerateModal();
+              }}
+              className="rounded-md bg-amber-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-amber-700"
+            >
+              重新生成
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              closeNotification(gapsNotifId!);
+              gapsNotifId = null;
+              gapsNotifChapter = null;
+              gapsNotifNovel = null;
+            }}
+            className="rounded-md border border-zinc-300 px-2 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            忽略
+          </button>
+        </>
+      ),
+    });
+  }
+
+  // 切章 / 换小说：移除「设定自检」常驻通知（其操作目标是通知当时所在章，切走后不再适用）
+  useEffect(() => {
+    if (gapsNotifId != null && (gapsNotifChapter !== activeNo || gapsNotifNovel !== novelId)) {
+      removeNotification(gapsNotifId);
+      gapsNotifId = null;
+      gapsNotifChapter = null;
+      gapsNotifNovel = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNo, novelId]);
+
+  /** 弹窗内切换「沿用大纲」开关：开启回填该章已批大纲，关闭清空（= 自由草稿，标题交给 AI）。 */
+  function toggleUseOutline(on: boolean) {
+    const o = on ? approvedOutlines.find((x) => x.chapter_no === form.chapter_no) ?? null : null;
     setForm((f) => ({
       ...f,
-      writing_mode: mode,
-      chapter_no: nextNo,
       title: o ? o.title ?? "" : "",
       outline: o ? summarizeOutline(o) : "",
-      chapter_function: "",
     }));
+    setUseOutline(on);
   }
 
   // 切章请求序号：每次发起 loadDetail/loadApprovedOutlines 递增，await 后比对，
@@ -997,13 +1095,20 @@ export default function WritingPanel({ novelId }: Props) {
    *  接口已按时间倒序，取第一条即最近一次。 */
   const currentReviews = (reviews ?? []).filter((r) => r.chapter_version_id === selectedVersion?.id);
   const currentReview = currentReviews[0] ?? null;
+  /** 当前选中正文是否「刚生成」：生成后系统通常会在 1-2 分钟内异步自动评价落库，
+   *  此时打开弹窗若还没有评价，多半是自动评价还在跑（而非永远没有），提示作者稍候而非误以为要手动点。 */
+  const isRecentlyGenerated =
+    selectedVersion != null && Date.now() - new Date(selectedVersion.created_at).getTime() < 3 * 60 * 1000;
   /** 当前预览正文是否为「旧大纲版本」生成的：该章已有批准大纲（approvedOutline）时，
    *  正文版本记录的 outline_id 必须等于它才算"基于激活大纲"，否则只能看、不能评价/修订/提取。
+   *  仅当版本绑定了大纲（outline_id 非空）才参与判定：outline_id 为空的自由草稿
+   *  （作者主动选择不沿用大纲重写）不受此限，可正常评价/修订/提取。
    *  无批准大纲（自由稿/该章尚未批准）时不限制。 */
   const isStaleForActiveOutline =
     !!selectedVersion &&
     approvedOutline != null &&
-    String(selectedVersion.outline_id ?? "") !== approvedOutline.id;
+    !!selectedVersion.outline_id &&
+    String(selectedVersion.outline_id) !== approvedOutline.id;
   /** 右侧正文区是否"有内容"：有正文版本或已选中某章时为 true → 撑满页面高度；
    *  无内容（未选章）时为 false → 自然高度，不让它强行占满整屏，也不反向把左侧模块带高。 */
   const hasContent = detail != null || activeNo != null;
@@ -1103,7 +1208,8 @@ export default function WritingPanel({ novelId }: Props) {
 
   async function handleGenerate(override?: Partial<typeof form>) {
     setGenerating(true);
-    setSettingGaps(null);
+    // 写后设定自检：本次生成收集到的疑似漏项（SSE setting_warning），完成后弹右上角告警通知
+    let collectedGaps: SettingGap[] = [];
     genStartRef.current = Date.now();
     // 记录本次生成模式：新增章节 or 重新生成正文（弹窗关闭后 regenerateNo 会重置，按钮禁用方向靠它判断）
     genIsRegenerateRef.current = regenerateNo != null;
@@ -1123,17 +1229,14 @@ export default function WritingPanel({ novelId }: Props) {
       if (v.trim()) infoControl[k] = v.trim();
     }
 
-    const tgt =
-      f.writing_mode === "outline_guided"
-        ? approvedOutlines.find((o) => o.chapter_no === f.chapter_no) ?? null
-        : null;
+    const tgt = useOutline ? approvedOutlines.find((o) => o.chapter_no === f.chapter_no) ?? null : null;
     const params: Record<string, unknown> = {
       chapter_no: f.chapter_no,
       title: f.title.trim() || undefined,
       outline: f.outline.trim() || undefined,
       outline_id: tgt?.id ?? undefined, // 正文-大纲版本关联：记录用的是哪个已批大纲版本
       chapter_function: f.chapter_function || undefined, // 空 = 交给小说家自动判定
-      writing_mode: f.writing_mode,
+      writing_mode: useOutline ? "outline_guided" : "draft_free",
       goal: f.goal.trim() || undefined,
       // 版本树：新增章节与重新生成正文平级，都是根节点（不传 parent_version_id）；
       // 评价优化（reviser）单独传 parent_version_id=被优化版本，挂为子节点
@@ -1175,7 +1278,7 @@ export default function WritingPanel({ novelId }: Props) {
           }
         } else if (ev.event === "setting_warning") {
           const items = (ev.data as { items?: SettingGap[] }).items ?? [];
-          setSettingGaps(items.length ? items : null);
+          collectedGaps = items.length ? items : [];
         } else if (ev.event === "stream_error") {
           showToast(d.message ?? "AI 生成出错，请稍后重试。", "error");
         }
@@ -1193,6 +1296,8 @@ export default function WritingPanel({ novelId }: Props) {
       setActiveNo(f.chapter_no);
       await loadChapters();
       await loadDetail(f.chapter_no);
+      // 写后设定自检命中：弹右上角常驻告警（重新生成 / 忽略）
+      if (collectedGaps.length > 0) fireGapNotif(f.chapter_no, collectedGaps);
     }
   }
 
@@ -1415,6 +1520,18 @@ export default function WritingPanel({ novelId }: Props) {
     }
   }
 
+  /** 打开「评价与优化」：自动评价是生成后异步后台落库的（1-2 分钟），
+   *  若沿用打开页面时的旧评价快照，会看到「还没有评价」的过期空态。
+   *  打开时按当前章重新拉一次评价列表，保证展示最新（含刚落库的自动评价）；失败则保留现有数据。 */
+  function openReviewModal() {
+    setShowReviewModal(true);
+    if (detail) {
+      listReviews(novelId, detail.chapter_no)
+        .then((rs) => setReviews(rs))
+        .catch(() => undefined);
+    }
+  }
+
   /** 根部关系被删/改后，按序串行处理受影响的下游章节：
    *   第 A 章重写正文（按该章已批大纲，无大纲则自由草稿）→ 第 B 章重写 → …
    *  重写用的是 novelist（按大纲写新正文、追加为草稿版本），不自动「提取→记忆层」：作者查看满意后手动定稿再提取。
@@ -1531,7 +1648,8 @@ export default function WritingPanel({ novelId }: Props) {
       return;
     }
     setRevising(true);
-    setSettingGaps(null);
+    // 写后设定自检：本次优化收集到的疑似漏项（SSE setting_warning），完成后弹右上角告警通知
+    let collectedGaps: SettingGap[] = [];
     reviseStartRef.current = Date.now();
     setReviseRun({ thinking: "", output: "", running: true });
     let failed = false; // 流内失败标记（stream_error / schema 最终校验失败）：失败时不再弹完成提示、不关闭弹窗
@@ -1544,7 +1662,7 @@ export default function WritingPanel({ novelId }: Props) {
           chapter_no: detail.chapter_no, // 以详情章节为准（与 selectedVersion/parent_version_id 同源），
           // 避免目录高亮与详情错位时把优化产物写进错误章节的版本树
           chapter_text: selectedVersion.content,
-          writing_mode: form.writing_mode,
+          writing_mode: useOutline ? "outline_guided" : "draft_free",
           outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
           outline_id: approvedOutline?.id ?? undefined, // 正文-大纲版本关联
           chapter_function: form.chapter_function,
@@ -1574,7 +1692,7 @@ export default function WritingPanel({ novelId }: Props) {
             setReviseRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
           } else if (ev.event === "setting_warning") {
             const items = (ev.data as { items?: SettingGap[] }).items ?? [];
-            setSettingGaps(items.length ? items : null);
+            collectedGaps = items.length ? items : [];
           } else if (ev.event === "schema_validate" && d.status !== "ok") {
             failed = true;
             showToast("优化 schema 校验失败，可重试。", "error");
@@ -1621,6 +1739,8 @@ export default function WritingPanel({ novelId }: Props) {
         }
       }
       await loadDetail(detail.chapter_no, selectNewVersionId);
+      // 写后设定自检命中：弹右上角常驻告警（重新生成 / 忽略）
+      if (!failed && collectedGaps.length > 0) fireGapNotif(detail.chapter_no, collectedGaps);
     }
   }
 
@@ -2017,7 +2137,7 @@ export default function WritingPanel({ novelId }: Props) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowReviewModal(true)}
+                  onClick={openReviewModal}
                   // 评价中不禁用：本次评价锁定了章节与版本，仍可重开弹窗查看「查看生成过程」进度；
                   // 提取中禁用（本次是提取，进度在「提取 → 记忆层」按钮状态与提示上）
                   disabled={activeNo == null || extracting}
@@ -2038,25 +2158,6 @@ export default function WritingPanel({ novelId }: Props) {
                 </button>
               </div>
             </div>
-            {/* 写后设定自检：本轮 AI 输出疑似漏写了某组成组内容时给出明确告警 */}
-            {settingGaps && settingGaps.length > 0 && (
-              <div className="mb-3 shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs leading-6 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-                <p className="font-medium">
-                  设定自检：本轮正文疑似漏写了 {settingGaps.length} 处成组内容
-                </p>
-                <ul className="mt-1 space-y-0.5">
-                  {settingGaps.map((g) => (
-                    <li key={`${g.rule}-${g.missing.join("-")}`}>
-                      《{g.rule}》要求 [{g.group.join(" + ")}] 同时出现，已写到{" "}
-                      {g.present.join("、")}，<span className="font-medium">缺失 {g.missing.join("、")}</span>
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-1 text-amber-700/80 dark:text-amber-300/70">
-                  属机器字面核对的提醒：若本章确实不该写到该项，可忽略；否则建议重新生成，或在这一茬上手动补写。
-                </p>
-              </div>
-            )}
             {selectedVersion ? (
               <div className="reading flex-1 min-h-0 overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50 p-5 whitespace-pre-wrap dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
                 {selectedVersion.content}
@@ -2143,44 +2244,59 @@ export default function WritingPanel({ novelId }: Props) {
         }
       >
         <div className="flex flex-col gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="flex items-center gap-1 text-xs text-zinc-500">
-              写作模式
-              <InfoTip portal>
-                <p className="font-medium text-zinc-700 dark:text-zinc-200">决定本章的写作方式（写正文前都会弹出「本章规划」供你确认）</p>
-                · 大纲约束：优先沿用该章已批大纲（有则自动回填），无大纲时以弹窗确认的规划为准
-                <br />· 自由草稿：不预填大纲，直接以弹窗确认的本章规划为准，标题由 AI 根据内容生成
-              </InfoTip>
-            </span>
-            <select
-              className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              value={form.writing_mode}
-              onChange={(e) => changeWritingMode(e.target.value)}
-              disabled={generating}
-            >
-              <option value="outline_guided">大纲约束（按大纲）</option>
-              <option value="draft_free">自由草稿（不按大纲）</option>
-            </select>
-          </label>
-
-          {/* 大纲约束：有已批大纲自动回填预览；无则说明写前会弹「本章规划」确认（不再阻断） */}
-          {form.writing_mode === "outline_guided" &&
-            (targetOutline ? (
-              <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5 text-xs text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300">
-                将基于已批大纲：第 {targetOutline.chapter_no} 章
-                {targetOutline.title ? `《${targetOutline.title}》` : ""}（大纲内容已自动填入下方「本章目标」，
-                写正文前仍会弹出本章规划，你可确认沿用或另选一套）。
+          {/* 沿用大纲开关：仅该章有已批大纲时出现；无大纲直接说明靠「本章规划」弹窗（大纲已变选填，不再需要选择写作模式） */}
+          {targetOutline ? (
+            <>
+              <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900">
+                <span className="flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-300">
+                  沿用该章已批大纲
+                  <InfoTip portal>
+                    <p className="font-medium text-zinc-700 dark:text-zinc-200">第 {form.chapter_no} 章有已批大纲</p>
+                    开启：自动回填到下方「本章目标」，写正文前仍会弹出本章规划供你确认沿用或另选
+                    <br />关闭：当作自由草稿，不预填大纲，标题由 AI 根据内容生成
+                  </InfoTip>
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={useOutline}
+                  onClick={() => toggleUseOutline(!useOutline)}
+                  disabled={generating}
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    useOutline ? "bg-seal" : "bg-zinc-300 dark:bg-zinc-600"
+                  }`}
+                >
+                  <span
+                    aria-hidden
+                    className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                      useOutline ? "translate-x-4" : ""
+                    }`}
+                  />
+                </button>
               </div>
-            ) : (
-              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs leading-6 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
-                第 {nextNo} 章还没有已批大纲，无需提前规划。
-                <br />
-                写正文前会先弹出「本章规划」（目标/节奏/视角/节拍/结尾钩子）供你确认，确认后直接写作。
-              </div>
-            ))}
+              {useOutline ? (
+                <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5 text-xs leading-5 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300">
+                  将基于已批大纲：第 {targetOutline.chapter_no} 章
+                  {targetOutline.title ? `《${targetOutline.title}》` : ""}（大纲内容已自动填入下方「本章目标」，
+                  写正文前仍会弹出本章规划，你可确认沿用或另选一套）。
+                </div>
+              ) : (
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs leading-5 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400">
+                  已关闭大纲沿用：本章按自由草稿写作，不预填大纲，标题由 AI 根据内容生成
+                  （写正文前仍会弹出本章规划供你确认）。
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs leading-6 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
+              第 {form.chapter_no} 章还没有已批大纲，无需提前规划。
+              <br />
+              写正文前会先弹出「本章规划」（目标/节奏/视角/节拍/结尾钩子）供你确认，确认后直接写作。
+            </div>
+          )}
 
-          {/* 自由草稿：章节名称（带标签，避免高度错位） */}
-          {form.writing_mode === "draft_free" && (
+          {/* 自由草稿（未沿用大纲）：章节名称可手动填（带标签，避免高度错位） */}
+          {!useOutline && (
             <label className="flex flex-col gap-1">
               <span className="text-xs text-zinc-500">章节名称</span>
               <input
@@ -2218,7 +2334,7 @@ export default function WritingPanel({ novelId }: Props) {
               maxHeight={200}
               disabled={generating}
               placeholder={
-                form.writing_mode === "outline_guided"
+                targetOutline && useOutline
                   ? "已自动来自该章已批大纲（可微调）。写正文前仍会弹出本章规划供确认"
                   : "本章目标/写作要求（可选）。写正文前会弹出本章规划供确认，不填则按蓝图自动规划"
               }
@@ -2359,7 +2475,14 @@ export default function WritingPanel({ novelId }: Props) {
                     <>
                       当前选中正文（v{selectedVersion.version_no}
                       {selectedVersion ? ` ${sourceLabel(selectedVersion.source)}` : ""}）还没有评价。
-                      点下方「评价本章」，评价师会对照蓝图、伏笔账本与设定逐项打分。
+                      {isRecentlyGenerated ? (
+                        <>
+                          该版本刚生成，系统通常会在生成后 1-2 分钟内自动评价并出现在这里，
+                          可稍候重新打开查看；若仍未出现，再点下方手动评价。
+                        </>
+                      ) : (
+                        <>点下方「评价本章」，评价师会对照蓝图、伏笔账本与设定逐项打分。</>
+                      )}
                     </>
                   ) : (
                     "该章还没有选定版本的正文，先在界面生成并选定一版，再回来评价。"

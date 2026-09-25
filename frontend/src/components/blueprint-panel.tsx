@@ -89,6 +89,28 @@ export default function BlueprintPanel({ novelId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey, run.novelId, run.status]);
 
+  // 导入会话自动持久化：importName 非空时把「文档全文 + 文件名 + AI 校验状态」写入 localStorage，
+  // 供关闭弹窗/切换页面/刷新后重开「新增蓝图」时恢复（含进行中校验的自动续跑）。
+  // 清空导入或生成完成后 importName 置空，自动清除该会话；生成进行中不写入（该场景由 draftKey 恢复草稿）。
+  const importKey = `biling:blueprint-import:${novelId}`;
+  useEffect(() => {
+    if (!importName) {
+      try {
+        localStorage.removeItem(importKey);
+      } catch {
+        /* 忽略存储异常 */
+      }
+      return;
+    }
+    if (run.novelId === novelId && run.status === "running") return;
+    try {
+      localStorage.setItem(importKey, JSON.stringify({ text: inputText, importName, outlineCheck }));
+    } catch {
+      /* 忽略存储失败 */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importName, inputText, outlineCheck, run.novelId, run.status, novelId]);
+
   const load = useCallback(async (): Promise<Blueprint[]> => {
     setLoading(true);
     try {
@@ -297,6 +319,32 @@ export default function BlueprintPanel({ novelId }: Props) {
     checkAbortRef.current = null;
   }
 
+  /** 发起大纲骨架 LLM 语义校验：结果回来覆盖关键词初筛；完成时弹成功/失败提示（弹窗关闭也照常提示）。
+   *  恢复场景（重开弹窗续跑）与导入共用此函数，避免重复逻辑。 */
+  function runOutlineCheck(text: string) {
+    // 取消上一次未完成的校验（如恢复时重复发起），再发起新请求
+    checkAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    checkAbortRef.current = ctrl;
+    void checkOutlineSkeleton(novelId, text, ctrl.signal)
+      .then((r) => {
+        // 仅当本次请求仍是最新的才覆盖结果（防止清空/换文件后被旧结果污染）
+        if (checkAbortRef.current !== ctrl) return;
+        setOutlineCheck({ status: "done", source: "llm", modules: r.modules });
+        if (r.modules.length > 0 && r.modules.every((m) => m.ok)) {
+          message.success("AI 校验通过：大纲骨架完整，可直接生成蓝图");
+        } else {
+          const missing = r.modules.filter((m) => !m.ok).length;
+          message.warning(`AI 校验完成：${missing} 个模块建议补充（见弹窗提示，可跳过直接生成）`);
+        }
+      })
+      .catch(() => {
+        // 用户主动取消（清空/生成）或请求中断（切页/刷新）时保持现状；
+        // 仅当仍是最新请求才标 done，避免输入框一直锁定
+        if (checkAbortRef.current === ctrl) setOutlineCheck((prev) => (prev ? { ...prev, status: "done" } : prev));
+      });
+  }
+
   async function handleImportFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ""; // 允许再次选择同一文件
@@ -309,25 +357,7 @@ export default function BlueprintPanel({ novelId }: Props) {
       setInputText(res.text);
       // 骨架检测：先用关键词快速扫描立即给出初筛提示，同时后台跑 LLM 语义校验，结果回来覆盖
       setOutlineCheck({ status: "pending", source: "keyword", modules: keywordOutlineCheck(res.text) });
-      // 取消上一次未完成的校验（比如之前导入后又清空/换文件），再发起新请求，供清空内容时 abort
-      checkAbortRef.current?.abort();
-      const ctrl = new AbortController();
-      checkAbortRef.current = ctrl;
-      void checkOutlineSkeleton(novelId, res.text, ctrl.signal)
-        .then((r) => {
-          // 仅当本次请求仍是最新的才覆盖结果（防止清空/换文件后被旧结果污染）
-          if (checkAbortRef.current === ctrl) {
-            setOutlineCheck({ status: "done", source: "llm", modules: r.modules });
-            // AI 校验通过（骨架完整无缺失）：无提示块可看，弹顶部悬浮提示让用户明确知道结果
-            if (r.modules.length > 0 && r.modules.every((m) => m.ok)) {
-              message.success("AI 校验通过：大纲骨架完整，可直接生成蓝图");
-            }
-          }
-        })
-        .catch(() => {
-          // 用户主动取消（清空/关闭弹窗）时 prev 已被置空，保持空；仅当仍是最新请求才标 done
-          if (checkAbortRef.current === ctrl) setOutlineCheck((prev) => (prev ? { ...prev, status: "done" } : prev));
-        });
+      runOutlineCheck(res.text);
     } catch (e) {
       message.error((e as Error).message);
     } finally {
@@ -404,13 +434,40 @@ export default function BlueprintPanel({ novelId }: Props) {
     }
   }
 
-  /** 关闭新增蓝图弹窗：取消未完成的 AI 校验；输入框内容与导入状态保留，重新进入时内容仍在（生成完成时才清空）。 */
+  /** 关闭新增蓝图弹窗：不取消进行中的 AI 校验（继续跑，重开时进度/结果仍在），
+   *  输入框内容与导入状态保留，重新进入时内容仍在（生成完成时才清空）。 */
   function closeAddModal() {
-    checkAbortRef.current?.abort();
-    checkAbortRef.current = null;
     setShowAddModal(false);
-    // 骨架校验若因 abort 停在 pending，降级为 done，避免再次进入时输入框被锁定
-    setOutlineCheck((prev) => (prev && prev.status === "pending" ? { ...prev, status: "done" } : prev));
+  }
+
+  /** 打开新增蓝图弹窗：刷新/切页后组件重挂载，若存在持久化的导入会话则先恢复文档与校验状态；
+   *  校验曾进行中（被关闭/切页/刷新打断）时自动续跑，进度条与成功/失败提示不再丢失。
+   *  生成进行中不恢复（该场景由 draftKey 恢复草稿，避免干扰进行中的输入锁定）。 */
+  function openAddModal() {
+    if (!(run.novelId === novelId && run.status === "running")) {
+      try {
+        const raw = localStorage.getItem(importKey);
+        if (raw) {
+          const s = JSON.parse(raw) as {
+            text?: string;
+            importName?: string | null;
+            outlineCheck?: OutlineCheckState | null;
+          } | null;
+          if (s?.text) {
+            setInputText(s.text);
+            setImportName(s.importName ?? null);
+            if (s.outlineCheck) setOutlineCheck(s.outlineCheck);
+            // 校验被打断（pending）：重开时自动续跑；同组件内校验仍在后台跑则不必重复发起
+            if (s.outlineCheck?.status === "pending" && !checkAbortRef.current) {
+              runOutlineCheck(s.text);
+            }
+          }
+        }
+      } catch {
+        /* 忽略损坏数据 */
+      }
+    }
+    setShowAddModal(true);
   }
 
   const statusBadge = (s: Blueprint["status"]) =>
@@ -428,8 +485,10 @@ export default function BlueprintPanel({ novelId }: Props) {
           <h3 className="panel-title">蓝图版本</h3>
           <button
             type="button"
-            onClick={() => setShowAddModal(true)}
-            className="btn btn-primary px-2.5 py-1 text-xs font-medium"
+            onClick={openAddModal}
+            disabled={activatingId !== null}
+            title={activatingId !== null ? "蓝图正在激活中，完成后方可新增" : "让蓝图师整理新的世界蓝图"}
+            className="btn btn-primary px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
           >
             新增蓝图
           </button>

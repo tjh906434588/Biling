@@ -231,7 +231,11 @@ ORG_ARCHIVE_DIMENSIONS = tuple(_ORG_DIMENSION_KEYWORDS.keys())
 
 
 def _collect_org_text(st: dict, description: str = "") -> str:
-    """把机构卡的全部文本信息拼成一个 haystack，供维度命中检测。"""
+    """把机构卡的全部文本信息拼成一个 haystack，供维度命中检测。
+
+    键名与值一并纳入：structured 的维度键名（如"成立时间""负责人"）本身即是权威标注，
+    即使值里没有重复关键词（如值"2000年之前已存在"不含"成立于"），也应视为已定档。
+    """
     parts: list[str] = []
     if description:
         parts.append(str(description))
@@ -248,6 +252,7 @@ def _collect_org_text(st: dict, description: str = "") -> str:
                 continue
             if isinstance(v, (str, int, float)):
                 parts.append(str(v))
+            parts.append(str(k))  # 键名纳入命中检测：维度键即权威标注
     return "\n".join(parts)
 
 

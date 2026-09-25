@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.agents.base import Agent, ContextPack
 from app.agents.registry import get_agent
 from app.db.models import (
+    AgentTask,
     Chapter,
     ChapterVersion,
     EntityRelation,
@@ -48,6 +49,9 @@ SSE_KEEPALIVE_SECONDS = 15
 # 内容增量轮询间隔（秒）：思考期内容队列长时间为空，主循环按此频率轮询，
 # 保证「思考增量」能逐段实时下发（而非攒满一个心跳周期 15s 才倒一次）。
 SSE_POLL_INTERVAL = 0.25
+# AgentTask 心跳写入间隔（秒）：后台生成任务存活期间定期刷新 updated_at。
+# 请求入口的懒清理据此判死——running 且长时间无心跳的任务视为僵尸，自动标 error 释放并发位。
+HEARTBEAT_INTERVAL_SECONDS = 30
 
 
 class SchemaValidationError(Exception):
@@ -70,12 +74,53 @@ async def run_agent_stream(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     dry_run: bool = False,
+    task_id: Optional[uuid.UUID] = None,
 ) -> AsyncIterator[str]:
     """通用流式生成入口：返回 SSE 格式文本流。自动识别单/多版本。
 
     dry_run=True：只生成不落库（调试沙箱），stored 事件携带产出，由用户决定是否
     通过 commit 接口显式加入正式库。
+
+    task_id：后台 AgentTask 行 id。生成期间每 HEARTBEAT_INTERVAL_SECONDS 刷新一次
+    updated_at 作为心跳，供请求入口的懒清理把失联任务判死解锁（不依赖重启后端）。
     """
+    last_touch = 0.0
+
+    async def _heartbeat() -> None:
+        nonlocal last_touch
+        if task_id is None:
+            return
+        now = time.monotonic()
+        if now - last_touch < HEARTBEAT_INTERVAL_SECONDS:
+            return
+        last_touch = now
+        try:
+            t = db.get(AgentTask, uuid.UUID(str(task_id)))
+            if t is not None and t.status == "running":
+                t.updated_at = datetime.utcnow()
+                db.commit()
+        except Exception:
+            db.rollback()  # 心跳失败不影响生成，仅失去心跳（下次懒清理可能判死该任务）
+
+    async for sse in _run_agent_stream_raw(
+        db, agent_name, novel_id, params,
+        temperature=temperature, max_tokens=max_tokens, dry_run=dry_run,
+    ):
+        await _heartbeat()
+        yield sse
+
+
+async def _run_agent_stream_raw(
+    db: Session,
+    agent_name: str,
+    novel_id: uuid.UUID,
+    params: dict,
+    *,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    dry_run: bool = False,
+) -> AsyncIterator[str]:
+    """流式生成主体（run_agent_stream 的原始实现，事件产生处由心跳包装驱动）。"""
     agent: Agent = get_agent(db, agent_name)
     base_ctx: ContextPack = agent.build_context(novel_id, params)
     if temperature is not None:
@@ -334,6 +379,75 @@ def _alert_schema_error(
     db.commit()
 
 
+def _timeline_stages_for_entity(events: list[dict], blueprint: dict) -> list[str]:
+    """按时间线年份推导实体卡的生效阶段：年份 → 所在卷（focus 年份区间）→ 卷章范围 → 全书三等分。
+
+    与 derive_stage 的三等分口径一致（前 1/3=early、中 1/3=middle、后 1/3=late），
+    卷跨越两个阶段时并集标注。无法推导（无年份、无卷年份区间）返回空列表 = 不限制。
+    """
+    import re as _re
+
+    from app.agents.context import derive_stage
+
+    vols = [v for v in (blueprint.get("volumes") or []) if isinstance(v, dict)]
+    vol_ranges: list[tuple[int, int, int, int]] = []  # (start_year, end_year, 章起, 章止)
+    for v in vols:
+        focus = str(v.get("focus") or "")
+        m = _re.match(r"^\s*(\d{4})\s*[-—～~]\s*(\d{4})", focus)
+        if m:
+            start, end = int(m.group(1)), int(m.group(2))
+        else:
+            # 开区间卷（如 "2022—结局"）：起点后是汉字/占位 → 视为开放到全书末尾
+            m2 = _re.match(r"^\s*(\d{4})\s*[-—～~]\s*\S", focus)
+            if not m2:
+                continue
+            start, end = int(m2.group(1)), 9999
+        rng = str(v.get("chapters_range") or "")
+        mm = _re.match(r"(\d+)\s*[-—]\s*(\d+)", rng)
+        if not mm:
+            continue
+        vol_ranges.append((start, end, int(mm.group(1)), int(mm.group(2))))
+    if not vol_ranges:
+        return []
+    vol_ranges.sort(key=lambda x: x[0])
+
+    years: set[int] = set()
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        y = e.get("year")
+        if isinstance(y, int) and y > 0:
+            years.add(y)
+        period = str(e.get("period") or "")
+        m = _re.match(r"^\s*(\d{4})\s*[-—～~]", period)
+        if m:
+            years.add(int(m.group(1)))
+            m2 = _re.search(r"[-—～~]\s*(\d{4})", period)
+            if m2:
+                years.add(int(m2.group(1)))
+    if not years:
+        return []
+
+    bp_lite = {"volumes": [{"chapters_range": str(v.get("chapters_range") or "")} for v in vols]}
+    stages: set[str] = set()
+    for y in years:
+        # 年份可能被相邻两卷同时覆盖（如 2022 属 2018-2022 卷也属 2022-结局 卷），取最晚开卷的卷
+        matches = [(cs, ce, vs) for vs, ve, cs, ce in vol_ranges if vs <= y <= ve]
+        vol = max(matches, key=lambda t: t[2])[:2] if matches else None
+        if vol is None:
+            # 年份落在卷区间外（如早于第一卷）→ 归首卷
+            vol = (vol_ranges[0][2], vol_ranges[0][3])
+        cs, ce = vol
+        for ch in {cs, ce, (cs + ce) // 2}:
+            st = derive_stage(ch, bp_lite)
+            if st:
+                stages.add(st)
+    order = {"early": 0, "middle": 1, "late": 2}
+    result = sorted(stages, key=lambda s: order.get(s, 99))
+    # 三个阶段全命中 = 全程有效，与「不限制」等价；留空更干净（前端无徽章 = 全程）
+    return [] if len(result) >= 3 else result
+
+
 async def seed_entity_cards_from_blueprint(
     db: Session, novel_id: uuid.UUID, blueprint_id: uuid.UUID
 ) -> dict:
@@ -412,6 +526,11 @@ async def seed_entity_cards_from_blueprint(
         else:
             updated += 1
         st = dict(row.structured or {})
+        # 生效阶段：按时间线年份推导（仅无阶段时补，不覆盖抽取师/作者已定的）
+        if "stages" not in st:
+            stages = _timeline_stages_for_entity(evs, content)
+            if stages:
+                st["stages"] = stages
         hard = dict(st.get("hard_facts") or {})
         for k, v in facts.items():
             if k not in hard:
@@ -600,11 +719,19 @@ async def _extract_settings_from_import(
     """
     from app.agents.registry import get_agent
 
+    # 把蓝图师整理好的结构化结果（分卷章范围 + 时间线年份）一并传给抽取师，
+    # 让其能据此判断设定生效阶段——原文没写明时机时也可从年份/卷号推导，而非一律留空
+    from app.db.models import Blueprint
+
+    bp = db.get(Blueprint, blueprint_id)
+    bp_content = (bp.content or {}) if bp is not None else {}
+
     try:
         agent = get_agent(db, "setting_extractor")
         ctx = agent.build_context(novel_id, {
             "text": params.get("import_source", ""),
             "doc_name": params.get("doc_name") or "导入的大纲文档",
+            "blueprint": bp_content,
         })
         out = ""
         async for piece in agent.run(ctx):
@@ -1284,7 +1411,20 @@ def _persist_novelist(
                 parent = db.get(ChapterVersion, uuid.UUID(str(parent_version_id)))
             except (ValueError, TypeError):
                 parent = None
-        title = (parent.title if parent else None) or chapter.title
+        base_title = (parent.title if parent else None) or chapter.title
+        # 评价优化默认沿用被优化版本标题；仅当 AI 判定「原标题与正文严重不符」且给出新标题时换题。
+        # 守卫（防老 bug：AI 把小说名当章节标题输出）：新标题非空、不等于原名、不等于小说名才采用。
+        ai_title = (getattr(parsed, "title", None) or "").strip()
+        novel_row = db.get(Novel, novel_id)
+        novel_title = novel_row.title if novel_row else None
+        if (
+            ai_title
+            and ai_title != base_title
+            and (not novel_title or ai_title != novel_title.strip())
+        ):
+            title = ai_title
+        else:
+            title = base_title
     else:
         novel_row = db.get(Novel, novel_id)
         novel_title = novel_row.title if novel_row else None

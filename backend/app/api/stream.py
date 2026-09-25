@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import uuid
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -46,6 +47,11 @@ PROGRESS: dict[str, dict[str, str]] = {}
 # 注意：等作者确认的时间不计入该预算（见 _ConfirmAwareTimeout），否则确认等待会占用
 # 生成预算导致「等满 15 分钟自动跳过后剩余预算不足，任务被超时终止、蓝图无数据」。
 TASK_ABSOLUTE_TIMEOUT_SECONDS = 1200
+
+# 僵尸任务判死阈值（秒）：running 任务每 HEARTBEAT_INTERVAL_SECONDS(30s) 心跳刷新 updated_at；
+# 超过该阈值仍无心跳的 running 视为失联（进程中断/协程挂死/状态写失败），懒清理自动标 error 解锁并发位。
+# 合法任务不可能超过此阈值无心跳，因此取值远小于任务超时，让僵尸能快速自动解锁，不依赖重启后端。
+STALE_RUNNING_AFTER_SECONDS = 600
 
 
 class _ConfirmAwareTimeout:
@@ -150,7 +156,7 @@ async def _run_auto_review(novel_id: uuid.UUID, params: dict, task_id: uuid.UUID
     task_db = SessionLocal()
     try:
         async with asyncio.timeout(TASK_ABSOLUTE_TIMEOUT_SECONDS):
-            async for _sse in run_agent_stream(task_db, "critic", novel_id, params):
+            async for _sse in run_agent_stream(task_db, "critic", novel_id, params, task_id=task_id):
                 pass  # 自动评价无前端 SSE 消费者：事件只用来驱动生成，落库由 pipeline 完成
     except Exception as e:
         logger.exception("agent=critic task=%s 自动评价失败", task_id)
@@ -174,6 +180,8 @@ def _schedule_auto_reviews(db: Session, novel_id: uuid.UUID, agent_name: str, pa
     chapter_no = params.get("chapter_no")
     if chapter_no is None:
         return
+    # 先懒清理该小说的僵尸 critic 任务，避免失联评价任务永远占着并发位、自动评价整批跳过
+    _sweep_stale_tasks(db, novel_id, "critic")
     running_critic = db.execute(
         select(AgentTask).where(
             AgentTask.novel_id == novel_id,
@@ -209,7 +217,7 @@ async def _run_memory_keeper(novel_id: uuid.UUID, params: dict, task_id: uuid.UU
     task_db = SessionLocal()
     try:
         async with asyncio.timeout(TASK_ABSOLUTE_TIMEOUT_SECONDS):
-            async for _sse in run_agent_stream(task_db, "memory_keeper", novel_id, params):
+            async for _sse in run_agent_stream(task_db, "memory_keeper", novel_id, params, task_id=task_id):
                 pass  # 无前端 SSE 消费者：事件只用来驱动生成，落库由 pipeline 完成
     except Exception as e:
         logger.exception("agent=memory_keeper task=%s 编年生成失败", task_id)
@@ -410,6 +418,21 @@ async def _ensure_era_research(
 _BLUEPRINT_ISSUE_ASK_LIMIT = 5
 
 
+def _blueprint_issue_options(issue: dict, suggestion: str) -> list[dict]:
+    """组装单条疑点的处理选项：优先按质检师给出的 options id 清单展示，
+    未指定（或 id 非法）时默认给全三个。选项按疑点情况可多可少，避免无关选项干扰作者判断。"""
+    candidates = [
+        {"id": "apply", "label": "按建议处理", "desc": suggestion or "以 AI 建议为准修正蓝图"},
+        {"id": "keep", "label": "保持原文", "desc": "保留文档原样，不修正"},
+        {"id": "delegate", "label": "交由蓝图师自行把握", "desc": "保留疑点与 AI 建议，由蓝图师结合整体自行决定"},
+    ]
+    ids = [str(i) for i in (issue.get("options") or []) if str(i) in {"apply", "keep", "delegate"}]
+    if not ids:
+        return candidates
+    by_id = {o["id"]: o for o in candidates}
+    return [by_id[i] for i in ids]
+
+
 async def _ensure_blueprint_issues(
     db: Session,
     novel_id: uuid.UUID,
@@ -423,7 +446,7 @@ async def _ensure_blueprint_issues(
 
     - 仅导入模式（import_source 非空）触发；无弹窗通道 / 预检失败 / 无疑点 → 返回 None（不打断生成）；
     - 每条疑点一个 author_confirm 弹窗：
-      - vague/conflict/missing/compliance：按建议处理 / 保持原文 / 我自己来（可另输入自定义处理意见；compliance 也可按建议修改后注入蓝图师）；
+      - vague/conflict/missing/compliance：按建议处理 / 保持原文 / 交由蓝图师自行把握，具体给哪几项由质检师按疑点情况决定（能删就删；可另输入自定义处理意见；compliance 也可按建议修改后注入蓝图师）；
       - quality：继续生成 / 取消生成（作者选取消 → cancelled=True，中止蓝图生成）；
     - 疑点超过 _BLUEPRINT_ISSUE_ASK_LIMIT 条时只逐条问前 N 条，其余按 AI 建议处理；
     - 作者忽略/超时：该条按「保持原文」处理。
@@ -500,11 +523,7 @@ async def _ensure_blueprint_issues(
                     + (f"\n建议：{suggestion}" if suggestion else "")
                     + "\n\n要如何处理？"
                 ),
-                options=[
-                    {"id": "apply", "label": "按建议处理", "desc": suggestion or "以 AI 建议为准修正蓝图"},
-                    {"id": "keep", "label": "保持原文", "desc": "保留文档原样，不修正"},
-                    {"id": "custom", "label": "我自己来", "desc": "按自己的思路处理，在下方输入框直接写"},
-                ],
+                options=_blueprint_issue_options(issue, suggestion),
                 allow_custom=True,
                 on_pending=on_pending,
             )
@@ -761,6 +780,36 @@ def _update_progress(task_id: uuid.UUID, sse_text: str) -> None:
     PROGRESS[str(task_id)] = cur
 
 
+def _sweep_stale_tasks(db: Session, novel_id: uuid.UUID, agent: str | None = None) -> None:
+    """懒清理：把「running 但长时间无心跳」的僵尸任务标 error，释放并发位。
+
+    生产环境不能靠重启后端清僵尸（会中断所有用户的进行中任务）；改由请求路径顺带清扫：
+    任务运行期间每 30s 心跳刷新 updated_at，超过 STALE_RUNNING_AFTER_SECONDS 无心跳即为失联。
+    幂等 UPDATE，多 worker 下谁收到请求谁清理，天然安全。
+    """
+    q = select(AgentTask).where(
+        AgentTask.novel_id == novel_id,
+        AgentTask.status == "running",
+    )
+    if agent is not None:
+        q = q.where(AgentTask.agent == agent)
+    stale_until = datetime.utcnow() - timedelta(seconds=STALE_RUNNING_AFTER_SECONDS)
+    rows = db.execute(q).scalars().all()
+    cleaned = False
+    for t in rows:
+        last_active = t.updated_at or t.created_at
+        if last_active is not None and last_active < stale_until:
+            t.status = "error"
+            t.error = "任务长时间无心跳（失联/进程中断），已自动清理，请重试。"
+            logger.warning(
+                "novel_id=%s agent=%s task=%s 僵尸任务自动清理（最后活跃 %s）",
+                novel_id, t.agent, t.id, last_active,
+            )
+            cleaned = True
+    if cleaned:
+        db.commit()
+
+
 def _finish_task(task_db: Session, task_id: uuid.UUID, *, status: str, msg: str | None = None, error: str | None = None) -> None:
     """后台任务结束时更新 agent_tasks 记录状态（供前端刷新后轮询）。
 
@@ -794,6 +843,8 @@ def stream_status(novel_id: uuid.UUID, db: Session = Depends(get_db)):
     - running：后台仍在生成，前端提示"生成中"并轮询到完成（刷新/切页不会打断，结果照常落库）
     - recent：最近一次任务（done/error），用于提示"上次生成结果"
     """
+    # 顺带懒清理：前端轮询状态时也能触发僵尸解锁，无需用户发起新生成
+    _sweep_stale_tasks(db, novel_id)
     running = db.execute(
         select(AgentTask)
         .where(AgentTask.novel_id == novel_id, AgentTask.status == "running")
@@ -925,6 +976,9 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
                 "设定库为空，无法生成蓝图。请先在「设定」中添加角色、地点、规则等设定。",
             )
 
+    # 先懒清理该 novel+agent 的僵尸任务（失联超时无心跳的 running），再查并发位，
+    # 否则进程中断遗留的 running 会永远占位导致 409，只能靠重启后端（生产不可取）。
+    _sweep_stale_tasks(db, payload.novel_id, agent)
     # 同 novel + agent 已有进行中任务：拒绝重复启动（如刷新后误点），等它跑完
     existing = db.execute(
         select(AgentTask).where(
@@ -1071,6 +1125,7 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
             temperature=payload.temperature,
             max_tokens=payload.max_tokens,
             dry_run=payload.dry_run,
+            task_id=task.id,  # 心跳：生成期间定期刷新 updated_at，供懒清理判死僵尸任务
         ):
             _update_progress(task.id, sse)  # 累积流式文字，供刷新后恢复显示
             try:

@@ -26,6 +26,8 @@ export interface NotificationOptions {
   onClose?: () => void;
   /** 点击通知卡片触发（如跳转到对应小说工作台）；设置后整张卡片可点击 */
   onClick?: () => void;
+  /** 操作区（按钮等 ReactNode），渲染在描述下方（分隔线之上）；卡片默认不可整体点击时按钮各自响应 */
+  actions?: ReactNode;
 }
 
 interface NotificationItem extends NotificationOptions {
@@ -147,6 +149,11 @@ function NotificationCard({ item }: { item: NotificationItem }) {
         {item.message != null && (
           <div className="mt-0.5 whitespace-pre-wrap text-xs leading-5 text-zinc-600 opacity-90 dark:text-zinc-300">
             {item.message}
+          </div>
+        )}
+        {item.actions != null && (
+          <div className="mt-1.5 flex items-center gap-1.5 border-t border-black/5 pt-1.5 dark:border-white/10">
+            {item.actions}
           </div>
         )}
       </div>

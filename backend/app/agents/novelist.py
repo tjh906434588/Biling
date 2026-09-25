@@ -129,6 +129,16 @@ class NovelistAgent(Agent[NovelChapter]):
 
         # 最近章节全文（保文风连续性）
         chapters = get_recent_chapters(self.db, novel_id)
+        # 重新生成=新增：本章自己的旧正文（若已定稿进 Chapter 表）不得作为参考，
+        # 必须从上下文排除，否则 AI 会基于旧稿改写而不是全新创作。取前文 3 章再过滤，保证仍有 2 章衔接上下文。
+        if params.get("regenerate"):
+            chapters = get_recent_chapters(self.db, novel_id, limit=3)
+            try:
+                cur_no = int(params.get("chapter_no") or 0)
+            except (TypeError, ValueError):
+                cur_no = 0
+            if cur_no:
+                chapters = [c for c in chapters if c.chapter_no != cur_no]
         prev_text = "\n\n".join(f"[第{c.chapter_no}章 {c.title or ''}]\n{c.content}" for c in reversed(chapters)) or "（无前文）"
 
         # L2 风格画像（存在则注入）

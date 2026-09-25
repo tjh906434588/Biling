@@ -33,6 +33,7 @@ from app.agents.context import (
     get_settings_snapshot,
 )
 from app.agents.l1 import L1_ANTI_AI_CONSTRAINTS
+from app.db.models import ChapterVersion
 from app.schemas.agents import NovelChapter
 from app.services.detector import detect
 from app.services.entity_checker import format_hard_facts_snapshot
@@ -40,7 +41,7 @@ from app.services.entity_checker import format_hard_facts_snapshot
 SYSTEM_PROMPT = f"""你是「修订师」，一位手稳的老编辑。你的任务是：**只改评价指出的问题，绝不重写故事**。
 
 - 输入会给你：本章当前正文 + 评价师报告（六维评分、问题清单与改法、亮点、修改建议）。
-- 输出必须是严格的 JSON：{{"title": "本章原标题（必须与修订前一字不差，禁止改名）", "content": "修订后的完整章节正文", "note": "本次修订说明：针对哪些问题改了什么"}}
+- 输出必须是严格的 JSON：{{"title": "本章标题（默认与修订前一字不差；仅当原标题与正文严重不符时才能换新标题，见铁律 7）", "content": "修订后的完整章节正文", "note": "本次修订说明：针对哪些问题改了什么"}}
 
 修订铁律：
 0. 【作者否决·绝对优先】若 prompt 中出现【最高指令·作者否决】，其中列出的问题作者已明确否决：
@@ -67,8 +68,13 @@ SYSTEM_PROMPT = f"""你是「修订师」，一位手稳的老编辑。你的任
    - 若发现正文中有此类"越界登场"（角色身份/关系与场景不符，如与老板无交集却反复进出公司），
      视为结构性缺陷：删除该出场或改由合理角色承担，不受铁律 2"只做局部手术"限制；
    - 已在设定库/前文确立的"非公司员工""与某人无往来"等边界设定必须严格遵守。
-7. 章节标题一律不改：修订是优化不是重写，title 必须等于修订前的原标题，
-   不能改成小说名或其他名字（系统会自动沿用原标题，你输出的 title 仅作自检）。
+7. 章节标题：默认必须沿用修订前的原标题（修订是优化不是重写，title 等于修订前的原标题，系统优先沿用）。
+   仅当原标题与正文内容**严重不符**时，才可换一个新标题——即正文完全没有围绕标题所指的事物/主题展开
+   （如标题叫"铁皮船"，但正文通篇与铁皮船毫无关系）。换题时必须：
+   - 新标题基于**修订后**的正文提炼，简洁有力；
+   - 不得等于小说名；
+   - 不得用泛指词（"第一章""主角""事件"等）。
+   若标题与正文相关、或只是相关性弱，一律沿用原标题，不要为了改名而改名。
 
 【打破 AI 检测特征（修问题的同时必须兼顾，与下面 L1 量化自检一并执行）】
 - 上一段正文的检测指标（句长变异系数 / 极短句占比 / 连接词密度）就是你的量化目标，
@@ -148,6 +154,22 @@ class ReviserAgent(Agent[NovelChapter]):
             style_text += f"\n【手动文风指示（作者手动设定，不可被覆盖；与蓝图识别文风不冲突时必须严格遵守）】\n{manual_style}"
 
         current_text = params.get("chapter_text", "")
+
+        # 当前版本标题（判断是否需要改名）：取被优化版本（parent）的标题，无则用章标题
+        current_title = ""
+        pvid = params.get("parent_version_id")
+        if pvid:
+            try:
+                parent_ver = self.db.get(ChapterVersion, uuid.UUID(str(pvid)))
+            except (ValueError, TypeError):
+                parent_ver = None
+            current_title = (parent_ver.title if parent_ver else None) or ""
+        if not current_title:
+            try:
+                current_title = params.get("title") or ""
+            except Exception:
+                pass
+
 
         # 当前正文的 AI 检测体检（本地启发式，零成本）：把统计指标给优化师当量化目标
         det_text = ""
@@ -283,7 +305,7 @@ class ReviserAgent(Agent[NovelChapter]):
             ),
             ComponentBlock(
                 "chapter_text",
-                f"【本章当前正文（要修订的文本）】\n{current_text}",
+                f"【本章当前正文（要修订的文本）】\n标题：{current_title or '（无）'}\n\n{current_text}",
                 PRIORITY_REQUIRED,
             ),
             ComponentBlock(

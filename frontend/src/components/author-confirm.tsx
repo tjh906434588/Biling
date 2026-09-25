@@ -210,10 +210,8 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
   // 已被其他入口处理掉（如刷新恢复时后端已 answered）
   if (gone) return null;
 
-  // 「我自己来」选项被选中时，以输入框内容为最终答复（必填）；
-  // 未选中任何选项但输入了自定义内容，同样以输入内容为准
-  const isCustomPicked = selected === "custom";
-  const answer = isCustomPicked ? custom.trim() : (selected ?? (custom.trim() || ""));
+  // 选中 AI 建议选项时以该选项为答复；未选中任何选项但输入了自定义内容，同样以输入内容为准
+  const answer = selected ?? (custom.trim() || "");
   const canSubmit = !busy && answer.length > 0;
 
   async function submit() {
@@ -266,10 +264,6 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
               onClick={() => {
                 setSelected(opt.id);
                 setCustom("");
-                // 点「我自己来」→ 聚焦自定义输入框，直接开始输入
-                if (opt.id === "custom") {
-                  requestAnimationFrame(() => customRef.current?.focus());
-                }
               }}
               className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
                 selected === opt.id
@@ -351,10 +345,21 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
       )}
 
       {confirm.allow_custom && (
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
-            或者，自己输入一个方向（你的脑洞）：
-          </label>
+        <div
+          className={`flex w-full items-start gap-3 rounded-lg border p-3 transition-colors ${
+            custom.trim()
+              ? "border-seal bg-seal/5"
+              : "border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:border-zinc-600 dark:hover:bg-zinc-800/60"
+          }`}
+        >
+          <span
+            aria-hidden
+            className={`mt-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+              custom.trim() ? "border-seal" : "border-zinc-300 dark:border-zinc-600"
+            }`}
+          >
+            {custom.trim() && <span aria-hidden className="h-2 w-2 rounded-full bg-seal" />}
+          </span>
           <input
             ref={customRef}
             type="text"
@@ -362,12 +367,11 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
             onChange={(e) => {
               const v = e.target.value;
               setCustom(v);
-              // 输入自定义内容时：若已选中「按建议/保持原文」则取消选中；
-              // 选中「我自己来」时保持高亮，提交即以输入内容为准
-              if (selected && selected !== "custom") setSelected(null);
+              // 输入自定义内容时：若已选中某个 AI 建议则取消选中，提交以输入内容为准
+              if (selected) setSelected(null);
             }}
-            placeholder="例：主角被逼入绝境，被迫提前动用底牌…"
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-[13px] text-zinc-900 outline-none transition-colors focus:border-seal dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+            placeholder="输入你的想法…"
+            className="w-full rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[13px] text-zinc-900 outline-none transition-colors placeholder:text-zinc-400 focus:border-seal dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder:text-zinc-500"
           />
         </div>
       )}

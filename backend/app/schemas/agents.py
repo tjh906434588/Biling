@@ -79,6 +79,9 @@ class BlueprintIssue(BaseModel):
     issue: str  # 问题描述（一句话说清哪里模糊 / 哪里矛盾）
     source: str = ""  # 文档原文摘录（≤80 字，必须出自原文；定位不到填「（无法定位原文）」）
     suggestion: str = ""  # 建议如何处理（一句话，可执行）
+    # 可选：本条疑点要展示的处理选项 id（apply 按建议处理 / keep 保持原文 / delegate 交由蓝图师自行把握）。
+    # 缺省给全三个；给出时按此清单展示（作者侧还会固定附一个「自定义输入」框）。
+    options: list[str] = []
 
 
 class BlueprintPrecheck(BaseModel):

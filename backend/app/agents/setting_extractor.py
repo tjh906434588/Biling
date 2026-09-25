@@ -47,6 +47,13 @@ SYSTEM_PROMPT = """你是「设定抽取师」，从导入的外部大纲/蓝图
 文档里写明「后期/前期/中期才出现」「第 X 章之后」「故事后半段」等，必须如实转成上面的字段；
 文档没提到时机的，不要脑补，留空 = 不限制（全程有效）。
 
+【蓝图的卷与时间线（辅助判断出现时机）】输入末尾会附带蓝图整理结果的分卷与时间线：
+- 分卷 volumes：每卷有年份区间（focus 开头如 "2000—2002"）与章范围（chapters_range 如 "1-85"）；
+- 时间线 timeline：条目含 year（年份）或 period（年份区间）、entity（实体）、event（事件）、status（established 成立 / changed 变化）。
+判断某设定的生效阶段时，优先结合这两者，而不是只依赖原文措辞：
+- 实体「成立/活跃」的年份落在哪一卷，就按该卷在全书中的位置标注阶段（全书三等分：前1/3=前期、中1/3=中期、后1/3=后期），卷跨越两段时可标多段；
+- 跨全书贯穿的设定（主角、背景城市、核心系统、世界规则等）不标 = 全程有效。
+
 输出必须是严格的 JSON，格式：
 {"concepts": [{"type": "character|location|faction|world_rule|item|concept",
   "name": "概念名", "raw_quote": "文档原话片段",
@@ -57,6 +64,38 @@ SYSTEM_PROMPT = """你是「设定抽取师」，从导入的外部大纲/蓝图
   "questions_to_ask": ["追问"]}],
  "follow_up_questions": []}
 """
+
+
+def _format_blueprint_block(blueprint) -> str:
+    """把蓝图整理结果压缩成抽取师可读的分卷 + 时间线摘要（用于判断设定生效阶段）。
+
+    只取对「出现时机」有信息量的字段，避免整份蓝图灌给模型造成噪音。
+    """
+    if not blueprint or not isinstance(blueprint, dict):
+        return ""
+    lines: list[str] = ["【蓝图分卷与时间线（用于判断设定生效阶段）】"]
+    vols = blueprint.get("volumes") or []
+    for v in vols:
+        if not isinstance(v, dict):
+            continue
+        no = v.get("no")
+        name = str(v.get("name") or "").strip()
+        focus = str(v.get("focus") or "").strip()
+        rng = str(v.get("chapters_range") or "").strip()
+        head = focus.split(" ", 1)[0] if focus else ""  # 卷首年份区间（如 2000—2002）
+        lines.append(f"- 第{no}卷 {name}：{head or '（年份未知）'}，章节 {rng or '?'}")
+    tl = blueprint.get("timeline") or []
+    for e in tl:
+        if not isinstance(e, dict):
+            continue
+        ent = str(e.get("entity") or "").strip()
+        ev = str(e.get("event") or "").strip()
+        if not ent or not ev:
+            continue
+        when = e.get("year") or e.get("period")
+        tag = "成立" if e.get("status") == "established" else ("变化" if e.get("status") == "changed" else "")
+        lines.append(f"- {ent}（{when}，{tag}）：{ev}")
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 class SettingExtractorAgent(Agent[ConceptExtraction]):
@@ -93,6 +132,10 @@ class SettingExtractorAgent(Agent[ConceptExtraction]):
             f"已有设定摘要（避免重复抽取）：\n{existing}\n\n"
             f"【{doc_name}】\n{params.get('text', '')}"
         )
+        # 蓝图整理结果（分卷 + 时间线）：辅助判断设定生效阶段（年份 → 卷 → 前/中/后期）
+        bp_block = _format_blueprint_block(params.get("blueprint"))
+        if bp_block:
+            user_content = user_content + "\n\n" + bp_block
         # 年代×行业研究（运行时按需生成，落库 novel.era_research；无研究或纯架空则空）
         era_block = format_era_research_for_prompt(novel.era_research if novel else None)
         if era_block:
