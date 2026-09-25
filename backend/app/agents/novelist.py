@@ -38,6 +38,8 @@ from app.agents.platform_rules import (
 )
 from app.schemas.agents import NovelChapter
 from app.services.detector import detect
+from app.services.entity_checker import format_hard_facts_snapshot
+from app.services.era_industry import format_era_research_for_prompt
 
 SYSTEM_PROMPT = f"""你是「小说家」，一部小说的写作者。
 你的任务：基于给定的大纲/前文/设定，写出一个章节的正文。
@@ -103,6 +105,13 @@ class NovelistAgent(Agent[NovelChapter]):
         except Exception:  # 抽取失败不影响写作主流程
             pass
 
+        # 【实体硬事实】数据化定档（机构成立时间/人员量级等），写前注入防自造事实
+        hard_facts_text = format_hard_facts_snapshot(active_settings)
+
+        # 【年代×行业背景研究】时代常识参考（开局年份 + 按时间演进的形态/红线）：
+        # 与蓝图 timeline 硬事实配合——本章所处的故事时间点对应哪个年份，就只用该年份已存在的事物
+        era_block = format_era_research_for_prompt(novel.era_research if novel else None)
+
         # 前文记忆：最近 story_state 摘要 + 各章角色状态快照（方案1：让小说家直接读到角色当前状态，最新章在前）
         states = get_recent_story_states(self.db, novel_id)
         states_text = "\n".join(f"#第{s.chapter_no}章：{s.summary}" for s in states) or "（无前文记忆）"
@@ -153,6 +162,8 @@ class NovelistAgent(Agent[NovelChapter]):
             l3 += f"\n【L3·时间线】当前是第 {chapter_no} 章。"
             if stage:
                 l3 += f" 故事处于【{STAGE_LABELS.get(stage, stage)}】阶段，只使用当前阶段已出现的设定与伏笔，不得提前引入后期才登场的内容。"
+            if era_block:
+                l3 += " 结合【年代×行业背景研究】与蓝图时间线（timeline）判断本章所处的故事年份，只用该年份已存在的事物（其中红线带时间前提，只拦时间错位）。"
 
         # L3 反 AI 味：把上一章的实测统计交给模型，避免它模仿自己上一章的节奏
         # （续写最容易出的问题：越写句长越均匀，AI 检测分数逐章恶化）
@@ -257,6 +268,24 @@ class NovelistAgent(Agent[NovelChapter]):
                     "以上每一组都是『要么整体不写，要写就必须写全』。动笔前先确认本章会涉及哪几组，"
                     "写完再逐组自查一遍，缺一项就补进去。",
                     PRIORITY_REQUIRED,
+                )
+            )
+        if hard_facts_text:
+            components.append(
+                ComponentBlock(
+                    "entity_facts",
+                    f"{hard_facts_text}\n"
+                    "若本章需要推进这些实体的事实变化（如机构扩张、人员增减），"
+                    "必须先在前文/大纲中有铺垫，且该变化会在下一章回写设定卡；否则一律沿用硬事实。",
+                    PRIORITY_REQUIRED,
+                )
+            )
+        if era_block:
+            components.append(
+                ComponentBlock(
+                    "era",
+                    f"【年代×行业背景研究（时代常识；红线带时间前提，只拦时间错位）】\n{era_block}",
+                    PRIORITY_SETTING,
                 )
             )
         user_content = "\n\n".join(c.content for c in components)

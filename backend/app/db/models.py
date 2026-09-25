@@ -25,13 +25,18 @@ class Novel(Base):
     style_directive: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 手动添加文风：作者手动维护，导入蓝图不会覆盖；与蓝图识别文风冲突时以蓝图识别为准
     style_directive_manual: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # 世界背景类型（新建时作者选一次）：realistic=现实年代（有真实世界参照，签约核查需对照真实时代细节）
+    # 世界背景类型（可留空不选，导入蓝图时由 AI 按素材推断、作者确认后落库）：
+    # realistic=现实年代（有真实世界参照，签约核查需对照真实时代细节）
     # | alternate=半架空（现实框架+虚构元素，虚构部分以设定账本为准）| pure_fantasy=纯架空（无现实参照，
     # 一切以设定账本为唯一事实源，禁止用真实世界规则判定正文错误）
-    background_type: Mapped[str] = mapped_column(String(16), default="realistic", server_default="realistic")
+    background_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     # 题材多选（如 ["都市","重生"]）：软性写作方向指引（区别于 background_type 的硬性核查口径）。
     # 复合题材天然支持多选；注入生成/评价 agent 作为"往哪方面下手"的指引
     genres: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
+    # 时代行业研究（运行时按需生成，非代码内置）：LLM 按本小说的"年代×行业"现场研究，
+    # 产出机构形态/老板画像/业务清单/位置规律/行业演进/时代错位雷点，供设定生成与评价复用；
+    # 换一本小说自动重新研究，不依赖开发加知识包。作者可在项目设置页查看/修改。
+    era_research: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -53,6 +58,32 @@ class AgentTask(Base):
     error: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class AuthorConfirm(Base):
+    """作者确认请求（生成流程内的暂停点）。
+
+    生成 agent 遇到「需要作者定夺」的岔路口（如大纲下一步发展脉络方向、时代研究结论、背景×题材
+    校验）时，落一条 pending 确认请求并暂停等待；前端轮询/SSE 事件发现后弹窗展示 3 个 AI 提案选项
+    + 自定义输入框，作者提交后生成任务恢复继续。刷新/断线不丢——请求持久化在库，恢复时重查。
+    """
+    __tablename__ = "author_confirms"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    novel_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("novels.id"), index=True)
+    agent: Mapped[str] = mapped_column(String(64), index=True)  # 请求确认的 agent：outliner / era_researcher / ...
+    task_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, ForeignKey("agent_tasks.id"), nullable=True, index=True)
+    # 确认点标识（同一 agent 同一确认点在任务内唯一），用于恢复时精确定位 & 防止重复弹窗
+    confirm_key: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|answered|dismissed
+    question: Mapped[str] = mapped_column(Text)  # 咨询问题（展示给作者）
+    options: Mapped[Optional[list]] = mapped_column(JSON)  # [{id, label, desc}] AI 提案选项（如 3 个故事方向）
+    allow_custom: Mapped[bool] = mapped_column(Boolean, default=True)  # 是否允许作者自定义输入
+    # 作者提交的答案：命中选项存选项 id；自定义输入存原文；dismissed 存 NULL
+    answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    answer_meta: Mapped[Optional[dict]] = mapped_column(JSON)  # {label, note} 选中的选项 label + 作者补充说明
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    answered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class Setting(Base):

@@ -24,6 +24,8 @@ export interface NotificationOptions {
   closable?: boolean;
   /** 消失（自动或手动关闭）后回调 */
   onClose?: () => void;
+  /** 点击通知卡片触发（如跳转到对应小说工作台）；设置后整张卡片可点击 */
+  onClick?: () => void;
 }
 
 interface NotificationItem extends NotificationOptions {
@@ -118,10 +120,24 @@ function NotificationCard({ item }: { item: NotificationItem }) {
   }, [item.id, item.duration]);
 
   const c = TYPE_CLS[item.type];
+  const clickable = typeof item.onClick === "function";
   return (
     <div
-      className={`rise pointer-events-auto flex w-[20rem] max-w-[calc(100vw-2rem)] items-start gap-2.5 rounded-lg border px-3.5 py-3 shadow-book backdrop-blur ${c.wrap}`}
-      role="status"
+      className={`rise pointer-events-auto flex w-[20rem] max-w-[calc(100vw-2rem)] items-start gap-2.5 rounded-lg border px-3.5 py-3 shadow-book backdrop-blur ${
+        clickable ? "cursor-pointer transition-colors hover:brightness-[0.98] dark:hover:brightness-110" : ""
+      } ${c.wrap}`}
+      role={clickable ? "button" : "status"}
+      title={clickable ? "点击前往确认" : undefined}
+      onClick={
+        clickable
+          ? (e) => {
+              // 点击卡片 = 确认前往：关闭通知并执行跳转回调
+              e.stopPropagation();
+              closeNotification(item.id);
+              item.onClick?.();
+            }
+          : undefined
+      }
     >
       <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px] font-bold ${c.icon}`}>
         {c.mark}
@@ -138,7 +154,10 @@ function NotificationCard({ item }: { item: NotificationItem }) {
         <button
           type="button"
           aria-label="关闭通知"
-          onClick={() => closeNotification(item.id)}
+          onClick={(e) => {
+            e.stopPropagation();
+            closeNotification(item.id);
+          }}
           className="-mr-1 -mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded text-xs leading-none text-zinc-500 opacity-60 transition-opacity hover:opacity-100 dark:text-zinc-400"
         >
           ✕

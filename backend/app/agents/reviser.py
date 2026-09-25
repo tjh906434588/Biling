@@ -35,6 +35,7 @@ from app.agents.context import (
 from app.agents.l1 import L1_ANTI_AI_CONSTRAINTS
 from app.schemas.agents import NovelChapter
 from app.services.detector import detect
+from app.services.entity_checker import format_hard_facts_snapshot
 
 SYSTEM_PROMPT = f"""你是「修订师」，一位手稳的老编辑。你的任务是：**只改评价指出的问题，绝不重写故事**。
 
@@ -118,6 +119,9 @@ class ReviserAgent(Agent[NovelChapter]):
             checklist_text = format_required_list(extract_checklist(bp_content, all_settings))
         except Exception:
             pass
+
+        # 【实体硬事实】数据化定档（机构成立时间/人员量级等）：修订时不得把硬事实改歪
+        hard_facts_text = format_hard_facts_snapshot(active_settings)
 
         states = get_recent_story_states(self.db, novel_id)
         states_text = "\n".join(f"#第{s.chapter_no}章：{s.summary}" for s in states) or "（无前文记忆）"
@@ -298,6 +302,15 @@ class ReviserAgent(Agent[NovelChapter]):
                 ComponentBlock(
                     "checklist",
                     f"【必现清单（硬约束，重写段落时也不可丢项）】\n{checklist_text}",
+                    PRIORITY_REQUIRED,
+                )
+            )
+        if hard_facts_text:
+            components.append(
+                ComponentBlock(
+                    "entity_facts",
+                    f"{hard_facts_text}\n修订时不得把已定档的实体硬事实改歪；"
+                    "若要体现变化（扩张/增减），仅当评价/批注明确要求且前文有铺垫时才允许，否则沿用硬事实。",
                     PRIORITY_REQUIRED,
                 )
             )

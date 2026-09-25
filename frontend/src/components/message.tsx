@@ -38,6 +38,13 @@ function emit() {
 }
 
 function push(type: MessageType, content: ReactNode, options: MessageOptions = {}): () => void {
+  // 同内容去重：相同 (type, content) 的消息已在展示时不重复入列。
+  // 典型场景：dev 模式 StrictMode 下组件 effect 双执行（如蓝图面板 mount 时加载两次），
+  // 同一请求失败会把同一个错误弹两遍；去重后只显示一条。
+  const existing = items.find((i) => i.type === type && i.content === content);
+  if (existing) {
+    return () => dismiss(existing.id);
+  }
   // 默认 3 秒自动消失（与 Element Plus 默认一致）；显式传 0 才表示常驻
   const item: MessageItem = { id: ++seq, type, content, ...options, duration: options.duration ?? 3000 };
   items = [...items, item];

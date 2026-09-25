@@ -15,8 +15,9 @@ _ADD_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "novels": [
         ("style_directive", "TEXT"),
         ("style_directive_manual", "TEXT"),
-        ("background_type", "VARCHAR(16) NOT NULL DEFAULT 'realistic'"),  # 世界背景类型：realistic|alternate|pure_fantasy
+        ("background_type", "VARCHAR(16)"),  # 世界背景类型：可空，未选择（导入蓝图时 AI 推断、作者确认后落库）
         ("genres", "JSON"),  # 题材多选：软性写作方向指引，如 ["都市","重生"]
+        ("era_research", "JSON"),  # 时代行业研究（运行时按需生成，作者可改）：机构形态/老板画像/业务/演进/时代雷点
     ],
     "settings": [
         ("aliases", "TEXT"),
@@ -68,6 +69,36 @@ def ensure_columns(engine: Engine) -> None:
                     continue
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
                 logger.info("迁移：%s 表补列 %s", table, col)
+
+
+def ensure_novel_background_type_nullable(engine: Engine) -> None:
+    """旧库 novels.background_type 为 NOT NULL DEFAULT 'realistic'，无法表示「未选择」。
+    SQLite 不支持 ALTER COLUMN 改约束，重建该表为 NULLABLE（无默认值）。
+    SQLite 外键未启用，重建安全；幂等：列已可空则跳过（全新库/已迁移）。"""
+    inspector = inspect(engine)
+    if "novels" not in set(inspector.get_table_names()):
+        return
+    col_nullable = True
+    for col in inspector.get_columns("novels"):
+        if col["name"] == "background_type":
+            col_nullable = bool(col.get("nullable", True))
+            break
+    if col_nullable:
+        return
+    logger.info("迁移：重建 novels 表，background_type 改为可空（支持「未选择」）")
+    from app.db.base import Base
+
+    with engine.begin() as conn:
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        conn.execute(text("ALTER TABLE novels RENAME TO novels_old"))
+        Base.metadata.tables["novels"].create(bind=conn, checkfirst=False)
+        conn.execute(text(
+            "INSERT INTO novels (id, title, premise, style_directive, style_directive_manual, "
+            "background_type, genres, era_research, created_at, updated_at) "
+            "SELECT id, title, premise, style_directive, style_directive_manual, "
+            "background_type, genres, era_research, created_at, updated_at FROM novels_old"
+        ))
+        conn.execute(text("DROP TABLE novels_old"))
 
 
 def ensure_prompts_schema(engine: Engine) -> None:

@@ -427,6 +427,21 @@ def format_blueprint_for_prompt(content: dict | None) -> str:
     subs = content.get("subplots") or []
     if subs:
         parts.append("长线支线：" + "；".join(subs[:8]))
+    tl = content.get("timeline") or []
+    if tl:
+        tl_bits = []
+        for e in tl[:20]:
+            if not isinstance(e, dict):
+                continue
+            label = str(e.get("period") or "")
+            if not label and isinstance(e.get("year"), int):
+                label = f"{e['year']}年"
+            tl_bits.append(f"{label or '（时间不明）'} {e.get('entity')} {e.get('event')}")
+        if tl_bits:
+            parts.append(
+                "时间线硬事实（数据化定档，写作/评价不得与其中任何一条矛盾）："
+                + "；".join(tl_bits)
+            )
     notes = content.get("notes") or []
     if notes:
         parts.append("保留要点（作者原话，须遵循）：" + "；".join(notes[:12]))
@@ -450,9 +465,34 @@ def format_settings_for_prompt(settings: list[Setting]) -> str:
         else:
             mark = "[宪法]" if s.is_constitution else ""
             lines.append(f"- [{s.type}]{rank}{mark} {s.name}：{s.description or ''}")
-            if st:
-                lines.append(f"    {st}")
+            # 其余结构化字段：实体卡的硬事实/锁定细节单独成行渲染（见下），避免整块 dict 混排
+            rest = {k: v for k, v in st.items() if k not in ("hard_facts", "locked_details")}
+            if rest:
+                lines.append(f"    {rest}")
+        lines.extend(_format_entity_card(st))
     return "\n".join(lines)
+
+
+def _format_entity_card(st: dict) -> list[str]:
+    """把实体卡的「硬事实 / 锁定细节」渲染为独立行（硬事实是确定性核对的依据）。
+
+    - hard_facts：不可变可核对事实（如 成立时间=2000年、人员规模=3人），写作/评价不得矛盾；
+    - locked_details：正文「首次提及即冻结」的具体细节（提取师回写），后续章节不得推翻。
+    """
+    out: list[str] = []
+    hard = st.get("hard_facts")
+    if isinstance(hard, dict) and hard:
+        bits = []
+        for k, v in hard.items():
+            if v in (None, ""):
+                continue
+            bits.append(f"{k}={v}")
+        if bits:
+            out.append(f"    [硬事实·不可变，写作不得与之矛盾] {'；'.join(bits)}")
+    locked = st.get("locked_details")
+    if isinstance(locked, list) and locked:
+        out.append("    [已冻结细节·正文确立后锁定，不得推翻] " + "；".join(str(x) for x in locked))
+    return out
 
 
 ROLE_RANK_LABEL = {

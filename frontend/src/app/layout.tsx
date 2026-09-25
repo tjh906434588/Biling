@@ -4,6 +4,7 @@ import "./globals.css";
 import { AiStatusProvider } from "@/lib/ai-status";
 import { MessageHost } from "@/components/message";
 import { NotificationHost } from "@/components/notification";
+import { ConfirmNotifier } from "@/components/author-confirm";
 
 // Geist 只提供拉丁字形，中文由 globals.css 中的 --sans-stack 回退链接管
 // （Noto Sans SC / 苹方 / 微软雅黑），避免引入体积巨大的中文字体包。
@@ -48,6 +49,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         {/* 全局悬浮提示体系：Message（居中靠上）/ Notification（右上角），页面内统一走这两个全局 API */}
         <MessageHost />
         <NotificationHost />
+        {/* 全局作者确认提醒中心：跨小说轮询，任意小说的生成流程停在确认点时右上角提醒并支持点击跳转 */}
+        <ConfirmNotifier />
       </body>
     </html>
   );

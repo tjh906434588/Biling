@@ -51,49 +51,60 @@ def _get_blueprint(novel_id: uuid.UUID, blueprint_id: uuid.UUID, db: Session) ->
 async def _run_blueprint_injection(
     db: Session, novel_id: uuid.UUID, blueprint_id: uuid.UUID
 ) -> Optional[str]:
-    """执行激活前的注入：设定抽取 + 文风提炼（导入模式且该版本尚未抽取过）。
+    """执行激活前的注入：设定抽取 + 文风提炼（导入模式且该版本尚未抽取过）+ 时间线实体卡播种。
 
     已注入过的版本（has_settings / has_style 命中）直接复用对应版本数据，不重复调 AI；
     抽取失败不阻断激活（蓝图仍生效），返回 extract_warning（无则 None）供前端提示。
+    实体卡播种放在所有抽取之后执行：先播种会命中 has_settings 导致设定抽取被整体跳过；
+    无导入文档的手写蓝图同样播种（从 timeline 数据化落卡）。
     """
     from app.db.models import BlueprintStyle, Setting
-    from app.services.pipeline import _apply_style_from_import, _extract_settings_from_import
+    from app.services.pipeline import (
+        _apply_style_from_import,
+        _extract_settings_from_import,
+        seed_entity_cards_from_blueprint,
+    )
 
     bp = db.get(Blueprint, blueprint_id)
     if bp is None:
         return None
     source_doc = (bp.source_doc or "").strip()
-    if not source_doc:
-        return None
 
     missing = []
-    has_settings = db.execute(
-        select(Setting.id).where(
-            Setting.novel_id == novel_id,
-            Setting.blueprint_id == blueprint_id,
-            Setting.deleted_at.is_(None),
-        ).limit(1)
-    ).scalar_one_or_none() is not None
-    if not has_settings:
-        await _extract_settings_from_import(
-            db, novel_id, {"import_source": source_doc, "doc_name": bp.doc_name}, blueprint_id
-        )
-        # 抽取失败（无 AI/超时/没解析出条目）时设定库仍无该版本条目，需提示
-        if db.execute(
+    if source_doc:
+        has_settings = db.execute(
             select(Setting.id).where(
                 Setting.novel_id == novel_id,
                 Setting.blueprint_id == blueprint_id,
                 Setting.deleted_at.is_(None),
             ).limit(1)
-        ).scalar_one_or_none() is None:
-            missing.append("设定")
-    has_style = db.execute(
-        select(BlueprintStyle.id).where(BlueprintStyle.blueprint_id == blueprint_id).limit(1)
-    ).scalar_one_or_none() is not None
-    if not has_style:
-        style_result = await _apply_style_from_import(db, novel_id, {"import_source": source_doc}, blueprint_id)
-        if style_result.get("action") == "error":
-            missing.append("文风")
+        ).scalar_one_or_none() is not None
+        if not has_settings:
+            await _extract_settings_from_import(
+                db, novel_id, {"import_source": source_doc, "doc_name": bp.doc_name}, blueprint_id
+            )
+            # 抽取失败（无 AI/超时/没解析出条目）时设定库仍无该版本条目，需提示
+            if db.execute(
+                select(Setting.id).where(
+                    Setting.novel_id == novel_id,
+                    Setting.blueprint_id == blueprint_id,
+                    Setting.deleted_at.is_(None),
+                ).limit(1)
+            ).scalar_one_or_none() is None:
+                missing.append("设定")
+        has_style = db.execute(
+            select(BlueprintStyle.id).where(BlueprintStyle.blueprint_id == blueprint_id).limit(1)
+        ).scalar_one_or_none() is not None
+        if not has_style:
+            style_result = await _apply_style_from_import(db, novel_id, {"import_source": source_doc}, blueprint_id)
+            if style_result.get("action") == "error":
+                missing.append("文风")
+
+    # 时间线实体卡播种：幂等合并（已存在卡只补 hard_facts 缺失键，不重复建），失败不阻断激活
+    try:
+        seed_entity_cards_from_blueprint(db, novel_id, blueprint_id)
+    except Exception:
+        logger.exception("从蓝图时间线播种实体卡失败（不阻断激活）")
 
     if missing:
         return (

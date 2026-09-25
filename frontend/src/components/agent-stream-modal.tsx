@@ -1,7 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Modal from "./modal";
+import {
+  ConfirmPanel,
+  getAuthorConfirms,
+  removeConfirm,
+  setInlineHost,
+  subscribeAuthorConfirms,
+} from "./author-confirm";
+
+/** SSR 服务端快照：恒为空，且引用稳定（避免 "getServerSnapshot should be cached" 警告） */
+const EMPTY_CONFIRM_SNAPSHOT: ReturnType<typeof getAuthorConfirms> = [];
 
 interface AgentStreamModalProps {
   open: boolean;
@@ -19,6 +29,19 @@ interface AgentStreamModalProps {
   emptyRunningText: string;
   /** 生成完成、无正文输出时的占位文案 */
   emptyDoneText: string;
+  /** 当前工作台小说 id：非空时本弹窗作为「作者确认」的内嵌宿主，
+   * 生成中出现的作者确认（方向提案/时代研究/蓝图质检等）改在弹窗内联展示，
+   * 不再单独叠一层全局弹窗（避免层级被覆盖 / 误关其它弹窗）。 */
+  novelId?: string;
+}
+
+/** 格式化已用时：不足 1 分钟显示秒（如 37s），满 1 分钟显示分+秒（如 1m05s、2m00s） */
+function formatElapsed(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}m${String(r).padStart(2, "0")}s`;
 }
 
 /**
@@ -92,18 +115,34 @@ export default function AgentStreamModal({
   elapsed,
   emptyRunningText,
   emptyDoneText,
+  novelId,
 }: AgentStreamModalProps) {
   const [thinkingOpen, setThinkingOpen] = useState(true);
   const streamRef = useRef<HTMLPreElement | null>(null);
+  const thinkingRef = useRef<HTMLPreElement | null>(null);
   // 打字机逐字展示（区别于已收到的 draftText/thinkingText 总量）
   const typedDraft = useTypewriter(draftText, open, running);
   const typedThinking = useTypewriter(thinkingText, open, running);
 
-  // 流式输出自动滚到底部（含思考过程），按打字进度滚动
+  // 内嵌确认宿主：弹窗打开且正在生成时注册 +1，关闭/停止/卸载时 -1。
+  // 计数 > 0 时全局作者确认弹窗让位，确认随本弹窗内联展示。
   useEffect(() => {
-    const el = streamRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [typedDraft, typedThinking, running]);
+    if (open && running && novelId) {
+      setInlineHost(novelId, true);
+      return () => setInlineHost(novelId, false);
+    }
+  }, [open, running, novelId]);
+
+  // 当前小说的待确认项（SSR 快照恒为空数组，避免服务端渲染报错）
+  const confirms = useSyncExternalStore(subscribeAuthorConfirms, getAuthorConfirms, () => EMPTY_CONFIRM_SNAPSHOT);
+  const pendingConfirm = novelId ? confirms.find((c) => c.novel_id === novelId) : undefined;
+
+  // 流式输出自动吸底：深度思考与正文都始终把最新内容保持在可见区底部，
+  // 内容不断增长（滚动条不断变短）时不做任何"停留在原处"，永远显示最新
+  useEffect(() => {
+    if (streamRef.current) streamRef.current.scrollTop = streamRef.current.scrollHeight;
+    if (thinkingRef.current) thinkingRef.current.scrollTop = thinkingRef.current.scrollHeight;
+  }, [typedDraft, typedThinking, thinkingOpen, running]);
 
   // 思考过程折叠块：生成中自动展开，生成完成后自动收起
   useEffect(() => {
@@ -132,9 +171,22 @@ export default function AgentStreamModal({
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-3.5 py-2 dark:border-zinc-800 dark:bg-zinc-900">
             <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">生成内容</h4>
             <span className="font-mono text-[11px] text-zinc-400">
-              {running ? `已输出 ${draftText.length} 字 · 已用时 ${elapsed}s` : `共 ${draftText.length} 字`}
+              {running ? `已输出 ${draftText.length} 字 · 已用时 ${formatElapsed(elapsed)}` : `共 ${draftText.length} 字`}
             </span>
           </div>
+
+          {/* 作者确认（内嵌在生成内容模块顶部）：生成流程在此暂停，需手动选择后自动继续。
+              色系与生成内容统一（灰阶卡片，区别于外层模块背景），
+              仅用琥珀色标题 + 脉动圆点突出"这一块需要手动选择"。 */}
+          {pendingConfirm ? (
+            <div className="shrink-0 border-b border-zinc-200 px-3.5 py-3 dark:border-zinc-800">
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                需要你确认 · 生成流程已暂停
+              </div>
+              <ConfirmPanel embedded confirm={pendingConfirm} onSettled={(id) => removeConfirm(id)} />
+            </div>
+          ) : null}
 
           {/* 深度思考折叠条：生成中自动展开、完成自动收起，可点击展开/收起（豆包/DeepSeek 折叠样式） */}
           {thinkingText ? (
@@ -154,7 +206,10 @@ export default function AgentStreamModal({
                 </span>
               </button>
               {thinkingOpen && (
-                <pre className="max-h-40 shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-zinc-200 bg-zinc-50/60 px-3.5 py-2.5 font-mono text-xs leading-5 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                <pre
+                  ref={thinkingRef}
+                  className="max-h-40 shrink-0 overflow-y-auto whitespace-pre-wrap border-b border-zinc-200 bg-zinc-50/60 px-3.5 py-2.5 font-mono text-xs leading-5 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400"
+                >
                   {typedThinking}
                 </pre>
               )}

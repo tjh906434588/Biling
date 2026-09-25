@@ -9,8 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 class NovelCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     premise: Optional[str] = None
-    # 世界背景类型：realistic=现实年代 | alternate=半架空 | pure_fantasy=纯架空（签约核查口径按类型切换）
-    background_type: str = Field(default="realistic", pattern="^(realistic|alternate|pure_fantasy)$")
+    # 世界背景类型（可留空）：realistic=现实年代 | alternate=半架空 | pure_fantasy=纯架空
+    # （签约核查口径按类型切换）；不确定可不选，导入蓝图时 AI 按素材推断、作者确认后落库
+    background_type: Optional[str] = Field(default=None, pattern="^(realistic|alternate|pure_fantasy)$")
     # 题材多选（软性写作方向指引，区别于 background_type 硬性核查口径）：如 ["都市","重生"]，复合题材可多选
     genres: Optional[list[str]] = None
 
@@ -25,6 +26,8 @@ class NovelUpdate(BaseModel):
     style_directive: Optional[str] = None
     # 手动添加文风：作者手动维护，导入蓝图不会覆盖
     style_directive_manual: Optional[str] = None
+    # 时代行业研究（运行时按需生成，作者可改）：机构形态/老板画像/业务/演进/时代雷点
+    era_research: Optional[dict] = None
 
 
 class NovelRead(BaseModel):
@@ -33,10 +36,12 @@ class NovelRead(BaseModel):
     id: uuid.UUID
     title: str
     premise: Optional[str]
-    background_type: str
+    # 可为空：未选择（不确定可不选，导入蓝图时 AI 推断、作者确认后落库）
+    background_type: Optional[str] = None
     genres: Optional[list[str]] = None
     style_directive: Optional[str]
     style_directive_manual: Optional[str]
+    era_research: Optional[dict]
     created_at: datetime
     updated_at: datetime
 

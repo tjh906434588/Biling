@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.agents.base import Agent, ContextPack
 from app.agents.context import get_novel, get_settings_snapshot, format_settings_for_prompt
 from app.schemas.agents import ConceptExtraction
+from app.services.era_industry import format_era_research_for_prompt
 
 SYSTEM_PROMPT = """你是「设定抽取师」，从导入的外部大纲/蓝图文档中抽取可沉淀进设定库的设定。
 只抽取「能沉淀为设定」的内容，类型只能是以下六种之一，且与设定库一一对应：
@@ -29,6 +30,10 @@ SYSTEM_PROMPT = """你是「设定抽取师」，从导入的外部大纲/蓝图
 - 每个 concept 的 extracted 必须包含 description 字段——一段完整、可直接作为该设定描述的话；
   其余字段按类型补充（角色：appearance/personality/role_in_story；地点：features/atmosphere；
   物品：function/limitations 等）；
+- 机构档案模板（faction 专属）：type 为 faction 时，extracted 必须按机构档案维度展开——
+  成立时间、负责人、人员规模、业务范围、位置布局、时代特征，能判断的维度各写一个键值字段
+  （如 "业务范围": "职业介绍、招工代理"），判断不出的维度不写、不要硬编；
+  文档里的机构老板若另有独立人物描写，单独再抽一条 type=character；
 - raw_quote 填文档中对应的原文片段（尽量短）。
 
 【出现时机（重要）】根据文档描述判断该设定在故事中是「全程存在」还是「特定阶段/章节才登场」，写入 extracted：
@@ -88,6 +93,10 @@ class SettingExtractorAgent(Agent[ConceptExtraction]):
             f"已有设定摘要（避免重复抽取）：\n{existing}\n\n"
             f"【{doc_name}】\n{params.get('text', '')}"
         )
+        # 年代×行业研究（运行时按需生成，落库 novel.era_research；无研究或纯架空则空）
+        era_block = format_era_research_for_prompt(novel.era_research if novel else None)
+        if era_block:
+            user_content = user_content + "\n\n" + era_block
         return ContextPack(
             novel_id=novel_id,
             agent="setting_extractor",

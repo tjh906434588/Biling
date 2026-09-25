@@ -16,6 +16,7 @@ import GraphPanel from "@/components/graph-panel";
 import ModelsPanel from "@/components/models-panel";
 import PromptsModal from "@/components/prompts-modal";
 import AgentTaskToasts from "@/components/agent-task-toasts";
+import AuthorConfirmHost from "@/components/author-confirm";
 import { notification, removeNotification } from "@/components/notification";
 import { message } from "@/components/message";
 
@@ -195,7 +196,6 @@ const NAV_GROUPS: { label: string; items: [Tab, string, keyof typeof ICONS][] }[
     label: "创作",
     items: [
       ["blueprint", "蓝图", "blueprint"],
-      ["outline", "大纲", "outline"],
       ["write", "写作", "write"],
     ],
   },
@@ -211,6 +211,7 @@ const NAV_GROUPS: { label: string; items: [Tab, string, keyof typeof ICONS][] }[
   {
     label: "质量与工具",
     items: [
+      ["outline", "大纲（高级）", "outline"],
       ["detect", "体检", "detect"],
       ["models", "模型", "models"],
     ],
@@ -242,11 +243,11 @@ interface LogItem {
   kind: "info" | "ok" | "err" | "delta";
 }
 
-/** 首次进入工作台的路径引导步骤：点步骤跳转对应页面（通知保持常驻），✕ 关闭后不再出现。 */
+/** 首次进入工作台的路径引导步骤：点步骤跳转对应页面（通知保持常驻），✕ 关闭后不再出现。
+ *  大纲+章节合并后：写作直接由蓝图出发，写正文前弹「本章规划」确认，不再单独排大纲。 */
 const GUIDE_STEPS: [Tab, string, string][] = [
   ["blueprint", "蓝图", "读设定，定全书骨架"],
-  ["outline", "大纲", "排章节节拍与冲突"],
-  ["write", "写作", "生成正文，定稿入库"],
+  ["write", "写作", "写正文前确认本章规划，直接生成"],
 ];
 
 /**
@@ -273,7 +274,7 @@ function FirstRunGuide({ novelId, onGo }: { novelId: string; onGo: (t: Tab) => v
       message: (
         <>
           <p className="text-[12px] leading-5 text-zinc-500 dark:text-zinc-400">
-            蓝图是全书宪法，从设定出发定骨架；大纲批准后会自动填进写作表单。
+            蓝图是全书宪法，从设定出发定骨架；写正文前会先弹出「本章规划」供你确认，确认后直接写作。
           </p>
           <ol className="mt-2 flex flex-col gap-1">
             {GUIDE_STEPS.map(([t, label, hint], i) => (
@@ -585,6 +586,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
 
       {/* 全局 AI 后台任务悬浮框：跨 tab 常驻，左上角进行中 / 右上角完成 */}
       <AgentTaskToasts novelId={id} tab={tab} />
+
+      {/* 全局作者确认弹窗：生成流程在确认点暂停时弹出，跨 tab 常驻，刷新后自动恢复 */}
+      <AuthorConfirmHost novelId={id} />
 
       {/* 写作指令配置弹窗（左下角入口，每部小说独立生效） */}
       <PromptsModal open={showPrompts} onClose={() => setShowPrompts(false)} novelId={id} />

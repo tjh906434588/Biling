@@ -34,6 +34,15 @@ from app.agents.platform_rules import (
     format_genres_direction,
 )
 from app.schemas.agents import ReviewOutput
+from app.services.entity_checker import (
+    check_entity_facts,
+    check_org_archive_gaps,
+    extract_entity_facts,
+    format_conflicts_for_prompt,
+    format_org_archive_snapshot,
+    format_org_gaps_for_prompt,
+)
+from app.services.era_industry import format_era_research_critic_snapshot
 from app.services.setting_checker import check_chapter, format_for_prompt
 
 SYSTEM_PROMPT = """你是「评价师」，一位严苛的小说编辑。对照蓝图/伏笔账本/设定评价章节质量。
@@ -67,6 +76,22 @@ SYSTEM_PROMPT = """你是「评价师」，一位严苛的小说编辑。对照�
       desc 里说明"本章出现了 X 却没有 Y，违反《规则名》要求一组同时出现"；
   (b) 本章不适用（例如本章根本没有出现该设定所指的对象）→ 在对应 rubric 的 comment 里
       用一句话说明为什么不适用，**不允许沉默跳过**。
+- 【实体硬事实核对清单】同样是**程序预先算出来的字面比对结果**（机构成立时间、人员量级
+  等已定档硬事实 vs 本章正文），不是猜测。对其中每一条，你必须二选一并明确交代：
+  (a) 确属与已定档硬事实矛盾 → 写入 issues，severity 至少 medium，type 填 "consistency"，
+      desc 里引用实体名、定档值、正文相冲突的原文，说明"本章把《实体》的〈事实〉写成了
+      X，与设定库硬事实 Y 冲突"；
+  (b) 判定正文是在故意推进设定（如机构被收购/人员扩张等剧情演变）→ 必须给出依据：
+      上文/蓝图是否已确立这次变化；若没有依据，仍按 (a) 判冲突，并建议"先改实体卡硬事实
+      再写正文"。不允许沉默跳过。
+- 【机构档案完整性】程序已列出每张机构卡的档案维度现状（成立时间/负责人/人员规模/
+  业务范围/位置布局/时代特征 = 有/缺）。对**本章涉及（正文出现）的机构**：
+  (a) 缺关键维度（负责人/人员规模/业务范围）且本章把该维度写成了既定事实 → 判冲突，
+      issues（severity 至少 low，type 填 "consistency"），desc 指明缺什么维度；
+  (b) 现实题材（background_scope 为现实对照）下，机构形态/老板画像/业务范围明显不符合
+      设定年代（如 2000 年用线上 APP、老板是 90 后创业大学生、业务是"人力资源 SaaS"）
+      → issues（severity 至少 medium，type 填 "consistency"），desc 说明"该机构设定与
+      《年代》的行业现实明显不符（依据：当时行业为……）"。
 """
 
 # 系统级固定段：平台签约标准（全系统最高优先级，任何写作指令/风格画像/蓝图/设定库都不得覆盖、削弱或删除）
@@ -172,6 +197,20 @@ class CriticAgent(Agent[ReviewOutput]):
         )
         check_text = format_for_prompt(check_items)
 
+        # 确定性实体核对：不靠 LLM 印象，用字面匹配算"正文是否与已定档硬事实冲突"
+        # （机构成立时间、人员量级等；依据来自设定卡 hard_facts / 蓝图 timeline 播种）
+        entity_items = check_entity_facts(
+            params.get("chapter_text", "") or "", extract_entity_facts(active_settings)
+        )
+        entity_text = format_conflicts_for_prompt(entity_items)
+
+        # 机构档案完整性：程序列出各机构档案维度现状 + 本章涉及的机构缺哪些维度
+        org_gap_items = check_org_archive_gaps(params.get("chapter_text", "") or "", active_settings)
+        org_gap_text = format_org_gaps_for_prompt(org_gap_items)
+        org_snapshot_text = format_org_archive_snapshot(active_settings)
+        # 年代×行业研究精简快照：现实题材下判断"机构是否符合当时情况"的依据（作者可改）
+        era_snapshot_text = format_era_research_critic_snapshot(novel.era_research if novel else None)
+
         # 组件化上下文（token 预算器按优先级裁剪：硬约束不裁，超窗先裁前文/关系/设定）
         components = [
             ComponentBlock(
@@ -221,6 +260,18 @@ class CriticAgent(Agent[ReviewOutput]):
                 PRIORITY_REQUIRED,
             ),
             ComponentBlock(
+                "entity_check",
+                f"【实体硬事实核对清单·程序字面比对结果，逐条必须回应】\n{entity_text}",
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
+                "org_archive_check",
+                f"【机构档案完整性·程序列出的维度现状 + 本章涉及的机构缺失项，逐条必须回应】\n"
+                f"{org_snapshot_text}\n\n本章涉及机构缺失项：\n{org_gap_text}"
+                f"\n\n{era_snapshot_text}",
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
                 "background_scope",
                 background_scope,
                 PRIORITY_REQUIRED,
@@ -246,7 +297,12 @@ class CriticAgent(Agent[ReviewOutput]):
                 {"role": "user", "content": user_content},
             ],
             components=components,
-            meta={"params": params, "setting_check": check_items},
+            meta={
+                "params": params,
+                "setting_check": check_items,
+                "entity_check": entity_items,
+                "org_archive_gaps": org_gap_items,
+            },
             temperature=self.temperature,
         )
 

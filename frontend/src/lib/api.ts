@@ -10,10 +10,13 @@ export interface Novel {
   style_directive?: string | null;
   /** 手动添加文风：作者手动维护，导入蓝图不会覆盖 */
   style_directive_manual?: string | null;
-  /** 世界背景类型：realistic=现实年代 | alternate=半架空 | pure_fantasy=纯架空（签约核查口径按类型切换） */
-  background_type?: "realistic" | "alternate" | "pure_fantasy";
+  /** 世界背景类型：realistic=现实年代 | alternate=半架空 | pure_fantasy=纯架空（签约核查口径按类型切换）。
+   *  可空：未选择（不确定可不选，导入蓝图时 AI 按素材推断、作者确认后落库） */
+  background_type?: "realistic" | "alternate" | "pure_fantasy" | null;
   /** 题材多选（软性写作方向指引）：如 ["都市","重生"]，复合题材可多选 */
   genres?: string[];
+  /** 时代行业研究（运行时按需生成，作者可改）：机构形态/老板画像/业务/演进/时代雷点 */
+  era_research?: Record<string, unknown> | null;
   status?: string;
   created_at?: string;
   updated_at?: string;
@@ -37,7 +40,7 @@ export async function updateNovel(
   data: Partial<
     Pick<
       Novel,
-      "title" | "premise" | "style_directive" | "style_directive_manual" | "background_type" | "genres"
+      "title" | "premise" | "style_directive" | "style_directive_manual" | "background_type" | "genres" | "era_research"
     >
   >,
 ): Promise<Novel> {
@@ -1011,6 +1014,7 @@ export type StreamEvent =
   | "setting_warning"
   | "stored"
   | "notify"
+  | "author_confirm"
   | "stream_error";
 
 /** 设定写后自检命中的疑似漏项（SSE setting_warning）。 */
@@ -1025,6 +1029,84 @@ export interface SettingGap {
 export interface StreamEventData {
   event: StreamEvent;
   data: unknown;
+}
+
+/** 作者确认请求里的一个候选选项（radio 卡片）。 */
+export interface AuthorConfirmOption {
+  id: string;
+  label: string;
+  desc?: string;
+  /** 章节规划（novelist 写正文前咨询「本章规划」）：标题/目标/节奏功能/视角/节拍/结尾钩子 */
+  title?: string;
+  goal?: string;
+  chapter_function?: string;
+  pov?: string;
+  beats?: string[];
+  ending_hook?: string;
+}
+
+/** 生成流程内作者确认请求（SSE author_confirm / GET confirm 轮询恢复）。 */
+export interface AuthorConfirm {
+  id: string;
+  novel_id: string;
+  /** 所属小说标题（跨小说通知时展示书名；SSE 实时事件里可能没有） */
+  novel_title?: string | null;
+  /** 发起确认的角色（outliner / era_researcher …） */
+  agent: string;
+  task_id: string | null;
+  confirm_key: string;
+  /** pending | answered | dismissed */
+  status: string;
+  question: string;
+  options: AuthorConfirmOption[];
+  /** 是否允许作者自定义输入（大纲方向咨询时开启） */
+  allow_custom: boolean;
+  answer?: string | null;
+  answer_meta?: { label?: string | null; note?: string } | null;
+  created_at?: string | null;
+}
+
+/**
+ * 查询待作者确认的请求。
+ * - 传 novelId：只查该小说（刷新后恢复当前工作台弹窗）；
+ * - 不传：返回所有小说的待确认项（全局确认提醒中心跨小说轮询，用于"不在对应工作台也要提醒"）。
+ * agent 传入时精确到角色。
+ */
+export async function fetchPendingConfirms(novelId?: string, agent?: string): Promise<AuthorConfirm[]> {
+  const q = new URLSearchParams();
+  if (novelId) q.set("novel_id", novelId);
+  if (agent) q.set("agent", agent);
+  const res = await fetch(`${BASE}/stream/agents/confirm?${q}`);
+  if (!res.ok) throw new Error(`查询作者确认请求失败：${res.status}`);
+  const data = await res.json();
+  return (data.items ?? []) as AuthorConfirm[];
+}
+
+/** 提交作者确认：answer 为选项 id 或自定义输入文本；note 为可选补充说明。 */
+export async function submitAuthorConfirm(
+  confirmId: string,
+  answer: string,
+  note?: string,
+): Promise<AuthorConfirm> {
+  const res = await fetch(`${BASE}/stream/agents/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm_id: confirmId, answer, note: note || undefined }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `提交作者确认失败：${res.status}`);
+  }
+  return res.json() as Promise<AuthorConfirm>;
+}
+
+/** 作者主动跳过确认点（关闭弹窗）：后端 dismissed，生成任务按默认方向继续。 */
+export async function dismissAuthorConfirm(confirmId: string): Promise<void> {
+  const res = await fetch(`${BASE}/stream/agents/confirm/${confirmId}/dismiss`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `跳过作者确认失败：${res.status}`);
+  }
 }
 
 /** 调用角色 SSE 接口，逐事件回调（使用 fetch ReadableStream 手动解析 SSE）。 */

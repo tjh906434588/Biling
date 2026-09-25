@@ -215,6 +215,11 @@ export default function BlueprintPanel({ novelId }: Props) {
     void tryResumeBlueprintRun(novelId);
   }, [novelId]);
 
+  // 生成启动（本页发起或刷新恢复）：自动弹出生成过程弹窗（生成中会出现需要作者确认的选择）
+  useEffect(() => {
+    if (run.novelId === novelId && run.status === "running") setShowStreamModal(true);
+  }, [run.status, run.novelId, novelId]);
+
   // 生成结束（在本页完成，或切走后期间完成）→ 刷新版本列表，新版蓝图自动出现
   const prevStatus = useRef<BlueprintRunStatus | null>(null);
   useEffect(() => {
@@ -284,9 +289,9 @@ export default function BlueprintPanel({ novelId }: Props) {
     } else {
       startBlueprintRun(novelId, inputText);
     }
-    // 顶部悬浮提示：蓝图开始生成（完成/失败由下方 status 监听 effect 提示）
-    message.success("蓝图正在生成中…生成期间可点「查看生成过程」查看进度");
-    // 弹窗保持打开，生成期间输入锁定、导入/清除隐藏；右侧出现「查看生成过程」入口
+    // 顶部悬浮提示：蓝图开始生成（完成/失败由下方 status 监听 effect 提示）；生成过程弹窗已自动弹出
+    message.success("蓝图正在生成中…");
+    // 弹窗保持打开，生成期间输入锁定、导入/清除隐藏；生成过程弹窗自动弹出（右下「查看生成过程」可重开）
     // 取消尚未完成的骨架校验（结果不再需要）
     checkAbortRef.current?.abort();
     checkAbortRef.current = null;
@@ -823,6 +828,7 @@ export default function BlueprintPanel({ novelId }: Props) {
         thinkingText={run.thinkingText}
         error={run.status === "error"}
         elapsed={elapsed}
+        novelId={novelId}
         emptyRunningText={
           "模型正在深度思考与整理蓝图（推理模型思考期约 1-3 分钟，此阶段通常没有正文输出），\n正文开始生成后会在这里实时滚动显示…"
         }

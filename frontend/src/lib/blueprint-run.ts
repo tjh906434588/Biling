@@ -7,7 +7,8 @@
  * - 生成不因切换页面而中断；
  * - 回到蓝图页时流式输出、进度、结果自动恢复显示。
  */
-import { friendlyRunError, getAgentRunningTask, getStreamStatus, runAgent, type AgentRunningTaskResult } from "./api";
+import { friendlyRunError, getAgentRunningTask, getStreamStatus, runAgent, type AgentRunningTaskResult, type AuthorConfirm } from "./api";
+import { pushAuthorConfirm } from "@/components/author-confirm";
 
 export type BlueprintRunStatus = "idle" | "running" | "done" | "error";
 
@@ -219,6 +220,10 @@ export function startBlueprintRun(
           } else if (ev.event === "stream_error") {
             failed = true;
             apply({ errMsg: d.message ?? "AI 生成蓝图出错，请稍后重试。", status: "error" });
+          } else if (ev.event === "author_confirm") {
+            // 生成流程确认点（如时代×行业研究结论）：全局弹窗交给作者定夺
+            const c = (ev.data as { confirm?: AuthorConfirm }).confirm;
+            if (c?.id && c.novel_id === novelId) pushAuthorConfirm(c);
           }
         },
       );

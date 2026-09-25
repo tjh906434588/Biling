@@ -557,6 +557,16 @@ export default function WritingPanel({ novelId }: Props) {
   const [approvedOutlines, setApprovedOutlines] = useState<Outline[]>([]);
   const [reviewing, setReviewing] = useState(false);
   const [revising, setRevising] = useState(false);
+  // AI 流程启动（发起或刷新恢复）：自动弹出对应「AI 过程」弹窗（生成中会出现需要作者确认的选择）
+  useEffect(() => {
+    if (generating) setShowGenRun(true);
+  }, [generating]);
+  useEffect(() => {
+    if (reviewing) setShowReviewRun(true);
+  }, [reviewing]);
+  useEffect(() => {
+    if (revising) setShowReviseRun(true);
+  }, [revising]);
   const [reviews, setReviews] = useState<QualityReview[] | null>(null);
   /** AI 运行过程（「查看 AI 过程」弹窗）：生成正文 / 评价 / 优化各一份，任务结束保留供回看。 */
   const [genRun, setGenRun] = useState<AiRunState | null>(null);
@@ -642,7 +652,7 @@ export default function WritingPanel({ novelId }: Props) {
 
   /**
    * 目录里「最新一章」的下一章号：新增永远只追加最新的一章，不允许跳号或回填旧章。
-   * 大纲约束模式下该章必须有已批大纲才能生成；自由草稿模式无此限制。
+   * 大纲+章节合并后不再要求该章有已批大纲：写正文前由「本章规划」弹窗确认，确认后直接写作。
    */
   const maxChapterNo = chapters.reduce((m, c) => Math.max(m, c.chapter_no), 0);
   const nextNo = maxChapterNo + 1;
@@ -650,7 +660,9 @@ export default function WritingPanel({ novelId }: Props) {
     form.writing_mode === "outline_guided"
       ? approvedOutlines.find((o) => o.chapter_no === form.chapter_no) ?? null
       : null;
-  const canAdd = form.writing_mode === "draft_free" || targetOutline != null;
+  // 大纲+章节合并后：写正文前由「本章规划」弹窗确认（后端 novelist 前置钩子），
+  // 不再要求该章必须有已批大纲——有则自动回填预览，无则规划确认后直接写作。
+  const canAdd = true;
   const infoFilledCount = [form.reader_knows, form.protagonist_knows, form.must_hide, form.hint_only].filter(
     (v) => v.trim(),
   ).length;
@@ -1127,6 +1139,9 @@ export default function WritingPanel({ novelId }: Props) {
       // 评价优化（reviser）单独传 parent_version_id=被优化版本，挂为子节点
       // 来源标记：重新生成正文落 source="regenerate"（版本名「再稿」），与新增「初稿」区分
       regenerate: regenerateNo != null ? true : undefined,
+      // 重写标记：重新生成章节方向已定（作者已在弹窗表达意愿），跳过写前「本章规划」咨询；
+      // 新增章节不传 → 后端 novelist 前置钩子先弹规划确认再写正文
+      rewrite: regenerateNo != null ? true : undefined,
     };
     if (Object.keys(infoControl).length > 0) params.info_control = infoControl;
 
@@ -1314,6 +1329,10 @@ export default function WritingPanel({ novelId }: Props) {
   }
 
   async function handleReview() {
+    if (!detail) {
+      showToast("请先在章节目录选择一章", "warning");
+      return;
+    }
     if (!activeChapter) {
       showToast("请先在章节目录选择一章", "warning");
       return;
@@ -1428,6 +1447,8 @@ export default function WritingPanel({ novelId }: Props) {
               outline: o ? summarizeOutline(o) : undefined,
               outline_id: o?.id ?? undefined, // 正文-大纲版本关联
               writing_mode: o ? "outline_guided" : "draft_free",
+              // 自动重写流程方向已定：跳过写前「本章规划」咨询，避免打断批量自动化
+              rewrite: true,
             },
             (ev) => {
               // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
@@ -2080,7 +2101,7 @@ export default function WritingPanel({ novelId }: Props) {
         subtitle={
           regenerateNo != null
             ? `将基于当前章节设置重新生成第 ${form.chapter_no} 章正文（新增为一个版本），标题 / 大纲目标 / 章节功能等均可修改。`
-            : `将追加为第 ${nextNo} 章（目录最新一章的下一章），生成后为草稿，需手动定稿。`
+            : `将追加为第 ${nextNo} 章（目录最新一章的下一章）。写正文前会先弹出「本章规划」（目标/节奏/视角/节拍/结尾钩子）供你确认，生成后为草稿，需手动定稿。`
         }
         onClose={() => {
           setShowAddModal(false);
@@ -2126,9 +2147,9 @@ export default function WritingPanel({ novelId }: Props) {
             <span className="flex items-center gap-1 text-xs text-zinc-500">
               写作模式
               <InfoTip portal>
-                <p className="font-medium text-zinc-700 dark:text-zinc-200">决定本章是否严格按大纲走</p>
-                · 大纲约束：按已批大纲写，系统自动取「第 {nextNo} 章」的已批大纲回填
-                <br />· 自由草稿：不按大纲，章节名自己填，标题由 AI 根据内容生成
+                <p className="font-medium text-zinc-700 dark:text-zinc-200">决定本章的写作方式（写正文前都会弹出「本章规划」供你确认）</p>
+                · 大纲约束：优先沿用该章已批大纲（有则自动回填），无大纲时以弹窗确认的规划为准
+                <br />· 自由草稿：不预填大纲，直接以弹窗确认的本章规划为准，标题由 AI 根据内容生成
               </InfoTip>
             </span>
             <select
@@ -2142,18 +2163,19 @@ export default function WritingPanel({ novelId }: Props) {
             </select>
           </label>
 
-          {/* 大纲约束：自动取该章已批大纲；无则提示去大纲页 */}
+          {/* 大纲约束：有已批大纲自动回填预览；无则说明写前会弹「本章规划」确认（不再阻断） */}
           {form.writing_mode === "outline_guided" &&
             (targetOutline ? (
               <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5 text-xs text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300">
                 将基于已批大纲：第 {targetOutline.chapter_no} 章
-                {targetOutline.title ? `《${targetOutline.title}》` : ""}（大纲内容已自动填入下方「本章大纲目标」）。
+                {targetOutline.title ? `《${targetOutline.title}》` : ""}（大纲内容已自动填入下方「本章目标」，
+                写正文前仍会弹出本章规划，你可确认沿用或另选一套）。
               </div>
             ) : (
-              <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs leading-6 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-                第 {nextNo} 章还没有已批大纲，无法按大纲生成。
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs leading-6 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
+                第 {nextNo} 章还没有已批大纲，无需提前规划。
                 <br />
-                请先到「大纲」页让大纲师排第 {nextNo} 章并「批准生效」，再回来新增。
+                写正文前会先弹出「本章规划」（目标/节奏/视角/节拍/结尾钩子）供你确认，确认后直接写作。
               </div>
             ))}
 
@@ -2189,7 +2211,7 @@ export default function WritingPanel({ novelId }: Props) {
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">本章大纲目标</span>
+            <span className="text-xs text-zinc-500">本章目标 / 写作要求</span>
             <AutoTextarea
               value={form.outline}
               onChange={(v) => setForm({ ...form, outline: v })}
@@ -2197,8 +2219,8 @@ export default function WritingPanel({ novelId }: Props) {
               disabled={generating}
               placeholder={
                 form.writing_mode === "outline_guided"
-                  ? "已自动来自该章已批大纲，可微调后交给小说家"
-                  : "本章大纲/目标（可选，填了会交给小说家；不填则自由发挥）"
+                  ? "已自动来自该章已批大纲（可微调）。写正文前仍会弹出本章规划供确认"
+                  : "本章目标/写作要求（可选）。写正文前会弹出本章规划供确认，不填则按蓝图自动规划"
               }
               className="resize-none rounded-lg border border-zinc-300 bg-zinc-50 p-3 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             />
@@ -2396,6 +2418,7 @@ export default function WritingPanel({ novelId }: Props) {
         draftText={genRun?.output ?? ""}
         thinkingText={genRun?.thinking ?? ""}
         elapsed={genElapsed}
+        novelId={novelId}
         emptyRunningText={
           "小说家正在构思正文（推理模型思考期约 1-3 分钟，此阶段通常没有正文输出），\n正文开始生成后会在这里实时滚动显示…"
         }
@@ -2409,6 +2432,7 @@ export default function WritingPanel({ novelId }: Props) {
         draftText={reviewRun?.output ?? ""}
         thinkingText={reviewRun?.thinking ?? ""}
         elapsed={reviewElapsed}
+        novelId={novelId}
         emptyRunningText={
           "评价师正在对照蓝图、伏笔账本与设定逐项评审（推理模型思考期约 1-3 分钟），\n评价内容开始输出后会在这里实时滚动显示…"
         }
@@ -2422,6 +2446,7 @@ export default function WritingPanel({ novelId }: Props) {
         draftText={reviseRun?.output ?? ""}
         thinkingText={reviseRun?.thinking ?? ""}
         elapsed={reviseElapsed}
+        novelId={novelId}
         emptyRunningText={
           "修订师正在逐条对照评价问题优化正文（推理模型思考期约 1-3 分钟），\n优化后的正文开始输出后会在这里实时滚动显示…"
         }

@@ -189,6 +189,19 @@ class OutlinerAgent(Agent[ChapterOutline]):
             else "本章目标：由你根据剧情自行把握。"
         )
 
+        # 作者确认的发展方向（生成大纲前由方向提案师产出 3 个候选，作者选择或自定义输入后注入；
+        # 未确认/超时则不注入，由大纲师自行把握）
+        direction_line = ""
+        author_dir = params.get("author_direction") or {}
+        if author_dir and author_dir.get("label"):
+            direction_line = (
+                f"本章发展方向（作者已确认，必须贯彻）：{author_dir['label']}"
+                + (f"——{author_dir.get('desc')}" if author_dir.get("desc") else "")
+            )
+            note = (author_dir.get("note") or "").strip()
+            if note:
+                direction_line += f"；作者补充：{note}"
+
         # 组件化上下文（token 预算器按优先级裁剪：硬约束不裁，超窗先裁设定/关系/状态）
         components = [
             ComponentBlock(
@@ -233,7 +246,8 @@ class OutlinerAgent(Agent[ChapterOutline]):
             ),
             ComponentBlock(
                 "author_requirements",
-                f"作者要求：\n{goal_line}\n{fn_line}\n{pov_line}",
+                f"作者要求：\n{goal_line}\n{fn_line}\n{pov_line}"
+                + (f"\n{direction_line}" if direction_line else ""),
                 PRIORITY_REQUIRED,
             ),
             ComponentBlock(

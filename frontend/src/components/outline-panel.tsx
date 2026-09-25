@@ -13,6 +13,7 @@ import {
   outlineHasChapter,
   runAgent,
   type AgentRunningTaskResult,
+  type AuthorConfirm,
   type Blueprint,
   type Outline,
   type OutlineApprovalStatusResult,
@@ -21,6 +22,7 @@ import {
 import Modal from "./modal";
 import ConfirmDialog from "./confirm-dialog";
 import AgentStreamModal from "./agent-stream-modal";
+import { pushAuthorConfirm } from "./author-confirm";
 import { useElapsed } from "@/lib/use-elapsed";
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
@@ -216,6 +218,10 @@ export default function OutlinePanel({ novelId }: Props) {
   const [generating, setGenerating] = useState(false);
   const [draftText, setDraftText] = useState("");
   const [thinkingText, setThinkingText] = useState("");
+  // 生成启动（本页发起或刷新恢复）：自动弹出生成过程弹窗（生成中会出现需要作者确认的选择）
+  useEffect(() => {
+    if (generating) setShowStreamModal(true);
+  }, [generating]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** 被折叠的卷 key（默认全展开）。搜索时强制展开匹配卷（与写作页章节目录一致）。 */
   const [collapsedKeys, setCollapsedKeys] = useState<Record<string, boolean>>({});
@@ -544,6 +550,10 @@ export default function OutlinePanel({ novelId }: Props) {
           if (typeof d.id === "string") storedIdRef.current = d.id;
         } else if (ev.event === "stream_error") {
           message.error((ev.data as { message?: string }).message ?? "AI 生成大纲出错，请稍后重试。");
+        } else if (ev.event === "author_confirm") {
+          // 大纲方向提案确认点：全局弹窗交给作者定夺（3 选项 + 自定义）
+          const c = (ev.data as { confirm?: AuthorConfirm }).confirm;
+          if (c?.id && c.novel_id === novelId) pushAuthorConfirm(c);
         }
       });
     } catch (e) {
@@ -1131,6 +1141,7 @@ export default function OutlinePanel({ novelId }: Props) {
         draftText={draftText}
         thinkingText={thinkingText}
         elapsed={elapsed}
+        novelId={novelId}
         emptyRunningText={
           "模型正在深度思考与整理大纲（推理模型思考期约 1-3 分钟，此阶段通常没有正文输出），\n正文开始生成后会在这里实时滚动显示…"
         }

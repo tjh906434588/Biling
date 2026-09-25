@@ -11,6 +11,7 @@ from app.agents.platform_rules import (
     format_genres_direction,
 )
 from app.schemas.agents import Blueprint
+from app.services.era_industry import format_era_research_for_prompt
 
 SYSTEM_PROMPT = """你是「蓝图师」，把作者的设定与脑洞整理成一部小说的完整蓝图。
 输出必须是严格的 JSON（除 JSON 外不要输出任何文字），且必须严格匹配下面的字段名与结构：
@@ -28,6 +29,7 @@ SYSTEM_PROMPT = """你是「蓝图师」，把作者的设定与脑洞整理成�
   "volumes": [{"no": 1, "name": "卷名", "focus": "本卷重点", "chapters_range": "1-20", "word_count": "25万字", "chapter_count": "85章"}],
   "foreshadowing_plan": [{"plant_chapter": 5, "payoff_chapter": 38, "desc": "伏笔内容"}],
   "subplots": ["长线支线1（贯穿多卷的持续剧情线）"],
+  "timeline": [{"period": "2000年—2010年", "year": 2000, "entity": "涉及的人物/机构/地点", "event": "发生了什么事", "status": "established"}],
   "notes": ["无法归入其他字段的重要信息1（原文保留）"]
 }
 
@@ -39,7 +41,18 @@ SYSTEM_PROMPT = """你是「蓝图师」，把作者的设定与脑洞整理成�
 - world_rules 中核心不可变规则在 detail 开头标注（宪法·不可变）并写明约束；随剧情演变的规则在 detail 开头标注（随剧情演变）。
 - subplots：输入材料中明确列出的"长效支线 / 可穿插支线 / 长线副线"必须全部收录，一条不落；没有则留空数组。
 - foreshadowing_plan：输入材料中有具体埋/揭安排的伏笔必须收录；若材料只有支线描述没有具体章号，把这些支线放进 subplots，不要硬造章号。
-- notes（通用保留区，最重要）：输入材料中**凡是无法干净归入 title/logline/theme/core_conflict/world_rules/character_arcs/volumes/foreshadowing_plan/subplots 任何一个字段的重要信息**——包括但不限于风格取向、文风基调、对标作品、创作参考、叙事节奏、题材标签、特殊约束、时间线规则等，无论它在材料里叫什么名字——**必须逐条原文（或尽量保留原意）收录进 notes，一条不落**；没有则留空数组。这是防丢失的兜底字段，宁可多收不可漏收。
+- timeline（时间线硬事实，新增）：把输入材料中**所有带明确时间的事实**逐条收录——成立/创办时间、入职/离职时间、自主创业、搬迁、重大事件、人物关系变化等。**每一条 = 一个元素**，元素字段：
+  - entity：涉及实体名（人物/机构/地点），同一实体的多个时间事实各自成条；
+  - period 与 year 二选一：跨区间的用 period（如 "2000年—2010年"），有明确单年用 year（数字年份），两者都有则都填，都没有的模糊时间不收录；
+  - event：发生了什么（一句完整的话）；
+  - status：established（确立，该时间段内此状态成立）/ changed（演变，状态发生改变）/ ended（终结）。
+  timeline 的作用是让"2000年开始打工、2010年自主创业"这类散文时间线变成**可核对的数据**，后续写作/评价不得与它矛盾。材料没有明确时间的，不写进 timeline（宁可少收，不可捏造时间）。
+- notes（通用保留区，最重要）：输入材料中**凡是无法干净归入 title/logline/theme/core_conflict/world_rules/character_arcs/volumes/foreshadowing_plan/subplots/timeline 任何一个字段的重要信息**——包括但不限于风格取向、文风基调、对标作品、创作参考、叙事节奏、题材标签、特殊约束、时间线规则等，无论它在材料里叫什么名字——**必须逐条原文（或尽量保留原意）收录进 notes，一条不落**；没有则留空数组。这是防丢失的兜底字段，宁可多收不可漏收。
+- 机构档案（新增）：输入材料中出现机构/组织/单位等实体（faction）时，**必须把它展开成完整档案**，以 notes 条目写出，格式：
+  `机构档案·{机构名}：成立时间={值}；负责人={值}；人员规模={值}；业务范围={值}；位置布局={值}；时代特征={值}`
+  各维度用全角分号「；」分隔、键值用「=」连接；材料未给出的维度写「待定」，不得捏造。
+  负责人若在材料中有独立人物描写（性格/弧光/结局），**同时**收录进 character_arcs；没有则只留在机构档案里。
+  机构档案与 timeline 并行存在：timeline 管"何时发生什么"，机构档案管"机构本身长什么样"。
 - 蓝图是后续所有角色的"宪法"。
 """
 
@@ -97,6 +110,10 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
         "volumes": [{"no": 1, "name": "灰烬", "focus": "结识与背叛", "chapters_range": "1-20", "word_count": "25万字", "chapter_count": "85章"}],
         "foreshadowing_plan": [{"plant_chapter": 5, "payoff_chapter": 38, "desc": "主角左手的印记"}],
         "subplots": ["秘史组织沿主线暗中追踪主角"],
+        "timeline": [
+            {"period": "2000年—2010年", "year": 2000, "entity": "主角", "event": "进入江城人才信息服务部打工", "status": "established"},
+            {"period": "2010年至今", "year": 2010, "entity": "主角", "event": "离开打工单位，自主创业", "status": "changed"},
+        ],
         "notes": ["文风基调：冷峻克制，少抒情（示例）"],
         "blueprint_conflicts": [],
     }
@@ -132,6 +149,28 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
             f"{material}\n\n"
             f"作者补充要求：{params.get('requirements', '（无）')}"
         )
+        # 蓝图导入质检：作者对疑点的处理意见（来自生成前置的逐条问询弹窗），
+        # 优先级最高，正式整理时必须逐条执行（处理意见优先于文档原文）
+        resolutions = params.get("issue_resolutions") or []
+        if resolutions:
+            lines = []
+            for idx, r in enumerate(resolutions, 1):
+                if not isinstance(r, dict):
+                    continue
+                decision_text = str(r.get("decision_text") or r.get("decision") or "保持原文")
+                lines.append(f"疑点{idx}：{r.get('issue') or '（未描述）'}")
+                if r.get("source"):
+                    lines.append(f"原文：「{r.get('source')}」")
+                if r.get("decision") == "apply" and r.get("suggestion"):
+                    lines.append(f"作者处理意见：按建议处理（建议：{r.get('suggestion')}）")
+                else:
+                    lines.append(f"作者处理意见：{decision_text}")
+            if lines:
+                user_content += "\n\n【作者对整理疑点的处理意见（必须遵守，逐条执行；意见优先于文档原文）】\n" + "\n".join(lines)
+        # 年代×行业研究（运行时按需生成，落库 novel.era_research；无研究或纯架空则空）
+        era_block = format_era_research_for_prompt(novel.era_research if novel else None)
+        if era_block:
+            user_content = user_content + "\n\n" + era_block
         return ContextPack(
             novel_id=novel_id,
             agent="blueprint_architect",

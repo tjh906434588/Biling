@@ -11,8 +11,10 @@
 - 结构化入库由各角色 _persist 钩子完成（M0 extractor 入库 story_state；M1 novelist 入库 chapters + chapter_versions）。
 """
 import asyncio
+import contextvars
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
@@ -43,6 +45,9 @@ MAX_EMPTY_RETRY = 3
 # SSE 心跳间隔：推理模型长首 token（1-3 分钟）期间连接零字节闲置，中间代理/网关可能掐断连接，
 # 表现为前端"生成失败"而后端无错、未落库。超时未产出则发 ping 保活，事件本身被前端忽略。
 SSE_KEEPALIVE_SECONDS = 15
+# 内容增量轮询间隔（秒）：思考期内容队列长时间为空，主循环按此频率轮询，
+# 保证「思考增量」能逐段实时下发（而非攒满一个心跳周期 15s 才倒一次）。
+SSE_POLL_INTERVAL = 0.25
 
 
 class SchemaValidationError(Exception):
@@ -205,19 +210,24 @@ async def _stream_single(
 
         pump_task = asyncio.create_task(pump())
         try:
+            last_ping = time.monotonic()
             while True:
+                # 先排空当前已累积的思考增量：思考期逐段实时下发（不等内容出现才一起倒出来）
                 async for ev in drain_reason():
                     yield ev
                 if pump_done.is_set() and q.empty():
                     break
                 try:
-                    piece = await asyncio.wait_for(q.get(), timeout=SSE_KEEPALIVE_SECONDS)
+                    # 短轮询内容增量：模型每生成一小段立刻推送，而非攒满 15s 一次性给
+                    piece = await asyncio.wait_for(q.get(), timeout=SSE_POLL_INTERVAL)
+                    text += piece
+                    yield _event("stream_delta", {"delta": piece})
+                    last_ping = time.monotonic()
                 except asyncio.TimeoutError:
-                    # 长思考期连接零字节闲置会被代理掐断：发 ping 保活，继续等（不取消生成器）
-                    yield _event("ping", {})
-                    continue
-                text += piece
-                yield _event("stream_delta", {"delta": piece})
+                    # 无内容增量（通常处于思考期）：静默超过保活间隔才发 ping，避免高频空转
+                    if time.monotonic() - last_ping >= SSE_KEEPALIVE_SECONDS:
+                        yield _event("ping", {})
+                        last_ping = time.monotonic()
             async for ev in drain_reason():
                 yield ev
             if pump_error[0] is not None:
@@ -322,6 +332,256 @@ def _alert_schema_error(
     )
     db.add(alert)
     db.commit()
+
+
+async def seed_entity_cards_from_blueprint(
+    db: Session, novel_id: uuid.UUID, blueprint_id: uuid.UUID
+) -> dict:
+    """从蓝图 timeline 自动生成/补全实体卡（source="blueprint"，随版本存储）。
+
+    触发时机：蓝图被「设为生效中」时（先于设定抽取执行，与是否导入模式无关）。
+    作用：把「2000年开始打工、2010年自主创业」这类时间线硬事实落成设定卡
+    structured.hard_facts / locked_details，供 entity_checker 做确定性核对——
+    解决"机构/人物只有一句散文描述，无法核对位置/布局/人员/业务"的问题。
+
+    幂等：已存在的同名卡不重复建，只把 timeline 事实合并进 hard_facts（已有键不覆盖）。
+    """
+    from app.db.models import Blueprint
+
+    bp = db.get(Blueprint, blueprint_id)
+    if bp is None or bp.novel_id != novel_id:
+        return {"action": "skipped", "created": 0, "updated": 0, "reason": "蓝图不存在"}
+    content = bp.content or {}
+    events = [e for e in (content.get("timeline") or []) if isinstance(e, dict)]
+    if not events:
+        return {"action": "skipped", "created": 0, "updated": 0, "reason": "蓝图无时间线"}
+
+    arcs = {
+        str(a.get("character", "")).strip(): a
+        for a in (content.get("character_arcs") or [])
+        if isinstance(a, dict) and a.get("character")
+    }
+    grouped: dict[str, list[dict]] = {}
+    for e in events:
+        ent = str(e.get("entity") or "").strip()
+        if not ent:
+            continue
+        grouped.setdefault(ent, []).append(e)
+
+    created = updated = 0
+    for ent, evs in grouped.items():
+        item_type = _infer_entity_type(ent, arcs)
+        facts: dict[str, str] = {}
+        locked: list[str] = []
+        # 起始/结束时间（仅机构/地点出可核对硬事实，角色卡只留锁定细节，避免误判）
+        if item_type in ("faction", "location"):
+            first_est = next((e for e in evs if e.get("status") in (None, "established")), None)
+            if first_est:
+                label = _timeline_label(first_est)
+                if label:
+                    facts["起始时间"] = label
+            ended = next((e for e in evs if e.get("status") == "ended"), None)
+            if ended:
+                label = _timeline_label(ended)
+                if label:
+                    facts["结束时间"] = label
+        for e in evs:
+            label = _timeline_label(e)
+            ev = str(e.get("event") or "").strip()
+            if label and ev:
+                locked.append(f"{label}：{ev}")
+        if not facts and not locked:
+            continue
+        # 定位已有卡：精确优先，模糊兜底；全新实体才建卡（防同名变体污染）
+        row = _find_entity_setting(db, novel_id, ent)
+        if row is None:
+            desc = locked[0] if locked else f"{ent}（蓝图时间线自动生成的实体卡）"
+            row = Setting(
+                novel_id=novel_id,
+                type=item_type,
+                name=ent,
+                description=desc,
+                structured={"constitution_text": desc, "dynamic_text": ""},
+                is_pinned=(len(evs) >= 2 or ent in arcs),
+                source="blueprint",
+                blueprint_id=blueprint_id,
+            )
+            db.add(row)
+            db.flush()
+            created += 1
+        else:
+            updated += 1
+        st = dict(row.structured or {})
+        hard = dict(st.get("hard_facts") or {})
+        for k, v in facts.items():
+            if k not in hard:
+                hard[k] = v
+        locked_existing = list(st.get("locked_details") or [])
+        for line in locked:
+            if line not in locked_existing:
+                locked_existing.append(line)
+        st["hard_facts"] = hard
+        st["locked_details"] = locked_existing
+        row.structured = st
+
+    # 机构档案 notes 解析（第二层：从「机构档案·」条目落机构卡档案 + 老板自动建卡）
+    created, updated = _seed_from_org_archive_notes(db, novel_id, bp, created, updated)
+    db.commit()
+    return {"action": "seeded", "created": created, "updated": updated}
+
+
+def _seed_from_org_archive_notes(
+    db: Session, novel_id: uuid.UUID, bp, created: int, updated: int
+) -> tuple[int, int]:
+    """解析蓝图 notes 中的「机构档案·」条目 → 机构卡 hard_facts/locked_details + 老板自动建卡。
+
+    格式约定（blueprint_architect 生成）：机构档案·江城人才信息服务部：成立时间=2000年；负责人=秦胜利；
+    人员规模=3人；业务范围=职业介绍、招工代理；位置布局=汉正街临街一楼门面；时代特征=信息差红利期
+    ——键值对用全角分号「；」分隔，年份/数量型维度落 hard_facts（可字面核对），
+    散文型维度落 locked_details（锁定展示），「负责人/老板」单独识别为角色卡并关联机构。
+    """
+    import re as _re
+
+    notes = (bp.content or {}).get("notes") or []
+    if not notes:
+        return created, updated
+    for line in notes:
+        line = str(line).strip()
+        if not line.startswith("机构档案·"):
+            continue
+        head, sep, body = line.partition("：")
+        if not sep or not body:
+            continue
+        org = head[len("机构档案·"):].strip()
+        if not org:
+            continue
+        facts: dict[str, str] = {}
+        locked: list[str] = []
+        boss = ""
+        for seg in _re.split(r"[；;]", body):
+            seg = seg.strip()
+            if not seg:
+                continue
+            if "=" in seg:
+                k, _, v = seg.partition("=")
+            elif "：" in seg:
+                k, _, v = seg.partition("：")
+            else:
+                locked.append(seg)
+                continue
+            k = k.strip()
+            v = v.strip()
+            if not k or not v or v == "待定":
+                continue
+            if "负责人" in k or "老板" in k:
+                boss = v
+                locked.append(f"负责人={v}")
+                continue
+            # 年份/数量型 → hard_facts（可核对）；散文型 → locked_details（锁定展示）
+            if _re.search(r"(1[89]\d{2}|20\d{2})", v) or _re.search(r"\d{1,4}\s*(名|人|家|间|位|个|所|处|台|套|辆|层)", v):
+                facts[k] = v
+            else:
+                locked.append(f"{k}={v}")
+        if not facts and not locked and not boss:
+            continue
+        row = _find_entity_setting(db, novel_id, org)
+        if row is None:
+            desc = locked[0] if locked else f"{org}（蓝图机构档案）"
+            row = Setting(
+                novel_id=novel_id,
+                type="faction",
+                name=org,
+                description=desc,
+                structured={"constitution_text": desc, "dynamic_text": ""},
+                is_pinned=True,
+                source="blueprint",
+                blueprint_id=bp.id,
+            )
+            db.add(row)
+            db.flush()
+            created += 1
+        else:
+            updated += 1
+        st = dict(row.structured or {})
+        hard = dict(st.get("hard_facts") or {})
+        for k, v in facts.items():
+            if k not in hard:
+                hard[k] = v
+        locked_existing = list(st.get("locked_details") or [])
+        for item in locked:
+            if item not in locked_existing:
+                locked_existing.append(item)
+        st["hard_facts"] = hard
+        st["locked_details"] = locked_existing
+        row.structured = st
+        # 老板自动建卡（character），locked_details 关联机构
+        if boss:
+            created, updated = _ensure_boss_card(db, novel_id, boss, org, bp.id, created, updated)
+    return created, updated
+
+
+def _ensure_boss_card(
+    db: Session, novel_id: uuid.UUID, boss: str, org: str, blueprint_id: uuid.UUID,
+    created: int, updated: int,
+) -> tuple[int, int]:
+    """为机构负责人建/补 character 卡（首次提及即建卡，锁定「是《机构》的负责人」关联）。"""
+    boss = str(boss).strip()
+    if not boss:
+        return created, updated
+    aff = f"是《{org}》的负责人"
+    row = _find_entity_setting(db, novel_id, boss)
+    if row is None:
+        desc = f"{boss}：{aff}"
+        row = Setting(
+            novel_id=novel_id,
+            type="character",
+            name=boss,
+            description=desc,
+            structured={
+                "constitution_text": desc,
+                "dynamic_text": "",
+                "locked_details": [aff],
+            },
+            is_pinned=True,
+            source="blueprint",
+            blueprint_id=blueprint_id,
+        )
+        db.add(row)
+        db.flush()
+        created += 1
+    else:
+        updated += 1
+        st = dict(row.structured or {})
+        locked = list(st.get("locked_details") or [])
+        if aff not in locked:
+            locked.append(aff)
+        st["locked_details"] = locked
+        row.structured = st
+    return created, updated
+
+
+def _timeline_label(e: dict) -> str:
+    """timeline 事件的时间标签：period 优先，其次 year。"""
+    label = str(e.get("period") or "").strip()
+    if not label and isinstance(e.get("year"), int):
+        label = f"{e['year']}年"
+    return label
+
+
+def _infer_entity_type(name: str, arcs: dict) -> str:
+    """从实体名推断设定类型：命中人物弧 → character；机构类词 → faction；地点类词 → location。"""
+    if name in arcs:
+        return "character"
+    if any(k in name for k in (
+        "公司", "集团", "服务部", "事务所", "工作室", "中介", "机构", "餐厅",
+        "银行", "学校", "医院", "厂", "店", "局", "中心", "部门", "单位",
+    )):
+        return "faction"
+    if any(k in name for k in (
+        "城", "市", "镇", "街", "区", "楼", "巷", "河", "山", "湖", "岛", "苑", "村", "大厦",
+    )):
+        return "location"
+    return "concept"
 
 
 async def _extract_settings_from_import(
@@ -619,6 +879,8 @@ def _persist(
         return _persist_concept(db, novel_id, parsed)
     if agent_name == "memory_keeper":
         return _persist_memory_keeper(db, novel_id, params, parsed)
+    if agent_name == "era_researcher":
+        return _persist_era_research(db, novel_id, parsed)
     return {"action": "deferred", "detail": f"agent={agent_name} 的入库逻辑未启用"}
 
 
@@ -850,6 +1112,44 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
     # 实现「删除最新递进关系即回退到上一状态」：多副本删一个不回退、多层递进逐层回退。
     restored = _reconcile_superseded(db, novel_id)
 
+    # 实体细节回写（首次提及即冻结）：正文写死的实体硬事实回写设定卡。
+    # 冻结语义：hard_facts 已有键不被覆盖——后来者不得推翻最早确立的说法；
+    # 之后章节会被 entity_checker 用冻结值确定性核对，正文若矛盾即告警（要求先改设定）。
+    freeze_updated = 0
+    if parsed.entity_detail_updates:
+        for upd in parsed.entity_detail_updates:
+            ent = (upd.entity or "").strip()
+            if not ent:
+                continue
+            facts = upd.facts or {}
+            if not isinstance(facts, dict) or not any(v not in (None, "") for v in facts.values()):
+                continue
+            row = _find_entity_setting(db, novel_id, ent)
+            if row is None:
+                continue  # 不在设定库的实体不自动建卡（防同名/变体污染），只回写已有卡
+            st = dict(row.structured or {})
+            hard = dict(st.get("hard_facts") or {})
+            locked = list(st.get("locked_details") or [])
+            changed = False
+            evidence = (upd.source or "").strip()
+            for k, v in facts.items():
+                key = str(k).strip()
+                val = str(v).strip()
+                if not key or not val or key in hard:
+                    continue  # 冻结：已有定档值不被覆盖
+                hard[key] = val
+                changed = True
+            if evidence and evidence not in locked:
+                locked.append(evidence)
+                changed = True
+            if changed:
+                st["hard_facts"] = hard
+                st["locked_details"] = locked
+                row.structured = st
+                freeze_updated += 1
+    if freeze_updated:
+        db.commit()
+
     # 根部编辑检测：本次重提取清掉了「被取代过的链条中间环」（如第1章的 师徒），
     # 顺取代链下行收集受影响的后续章节（师徒→叛出师门(2)→死敌(3) → 影响 [2,3]），
     # 返回给前端提示「这些章的递进前提已变更，是否重新提取对齐」。只提示，不改数据。
@@ -892,8 +1192,32 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
         "relations_added": added,
         "relations_archived": archived_superseded,
         "relations_restored": restored,
+        "entity_facts_frozen": freeze_updated,
         "downstream_affected": affected_chapters,
     }
+
+
+def _find_entity_setting(db: Session, novel_id: uuid.UUID, ent: str) -> Optional[Setting]:
+    """定位实体卡：先精确（name/aliases），再模糊（双向子串，取最长匹配）兜底。
+
+    找不到返回 None（提取师回写只在已有设定卡上发生，不自动建卡）。
+    """
+    rows = list(
+        db.execute(
+            select(Setting).where(Setting.novel_id == novel_id, Setting.deleted_at.is_(None))
+        ).scalars()
+    )
+    for r in rows:
+        if r.name == ent:
+            return r
+        if ent in [str(a) for a in (r.aliases or [])]:
+            return r
+    best = None
+    for r in rows:
+        if ent in r.name or r.name in ent:
+            if best is None or len(r.name) > len(best.name):
+                best = r
+    return best
 
 
 def _persist_novelist(
@@ -990,10 +1314,10 @@ def _persist_novelist(
 
 
 def _check_setting_gaps(db: Session, novel_id: uuid.UUID, content: str) -> list[dict]:
-    """写后确定性自检：正文是否漏写了「必现清单」里的成员。
+    """写后确定性自检：正文是否漏写了「必现清单」里的成员、是否与实体硬事实冲突。
 
-    与评审阶段用的是同一套核对器（app.services.setting_checker）：那一侧拦的是
-    "评不出来"，这一侧拦的是"写的时候就没写"。
+    与评审阶段用的是同一套核对器（app.services.setting_checker / entity_checker）：
+    那一侧拦的是"评不出来"，这一侧拦的是"写的时候就没写/写错了"。
     """
     try:
         from app.agents.context import (
@@ -1007,7 +1331,21 @@ def _check_setting_gaps(db: Session, novel_id: uuid.UUID, content: str) -> list[
         blueprint = get_active_blueprint(db, novel_id)
         bp_content = blueprint.content if hasattr(blueprint, "content") else blueprint
         all_settings = get_settings_snapshot(db, novel_id)
-        return check_chapter(db, novel_id, content or "", bp_content, all_settings)
+        items = check_chapter(db, novel_id, content or "", bp_content, all_settings)
+        # 实体硬事实核对（机构成立时间/量级等，与必现清单共用同一条 setting_warning 通道）
+        try:
+            from app.services.entity_checker import (
+                check_entity_facts,
+                check_org_archive_gaps,
+                extract_entity_facts,
+            )
+
+            items = items + check_entity_facts(content or "", extract_entity_facts(all_settings))
+            # 机构档案维度核对：正文出现的机构若档案缺负责人/规模/业务/位置等，提示补齐
+            items = items + check_org_archive_gaps(content or "", all_settings)
+        except Exception:
+            logger.exception("实体硬事实写后自检失败（不影响成文）")
+        return items
     except Exception:
         logger.exception("设定写后自检失败（不影响成文）")
         return []
@@ -1068,6 +1406,77 @@ def _persist_outliner(
     new_id = str(row.id)
     db.commit()
     return {"action": "persisted", "table": "outlines", "chapter_no": chapter_no, "version_no": version_no, "id": new_id}
+
+
+def persist_chapter_plan(
+    db: Session,
+    novel_id: uuid.UUID,
+    chapter_no: int,
+    plan: dict,
+) -> uuid.UUID:
+    """正文前置规划确认后落库：把「本章规划」存为 approved 大纲（轻量版）。
+
+    规划即大纲（合并方案）：规划只含 novelist 真正依赖的结构信息（标题/目标/节奏功能/
+    视角/节拍/结尾钩子），作者在弹窗确认后直接落库为 approved outline，下游
+    （critic 评价对照、记忆层、outlineHasChapter 检查、账本）无需改动即可复用。
+
+    版本语义：与 _persist_outliner 一致，同一章可存多个版本，规划确认插入新版本
+    （version_no=max+1）；同章其他 approved 版降回 draft（批准版是下游唯一依据）。
+    节拍存成 outline.beats（content 字段），供 _summarize_outline 对照评价。
+    账本不在此登记：规划不含伏笔动作，正文写完后由提取师维护账本。
+    """
+    from app.db.models import Outline
+
+    max_ver = (
+        db.query(func.max(Outline.version_no))
+        .filter(Outline.novel_id == novel_id, Outline.chapter_no == chapter_no)
+        .scalar()
+    )
+    version_no = (max_ver or 0) + 1
+    beats = [
+        {
+            "beat_no": i + 1,
+            "type": "scene",
+            "pov": plan.get("pov", ""),
+            "content": b,
+            "length_hint": "",
+            "emotion": "",
+        }
+        for i, b in enumerate(plan.get("beats") or [])
+        if isinstance(b, str) and b.strip()
+    ]
+    row = Outline(
+        novel_id=novel_id,
+        chapter_no=chapter_no,
+        version_no=version_no,
+        title=plan.get("title"),
+        content={
+            "goal": plan.get("goal", ""),
+            "chapter_function": plan.get("chapter_function", "progression"),
+            "pov": plan.get("pov", ""),
+            "beats": beats,
+            "ending_hook": plan.get("ending_hook", ""),
+            "characters": [],
+            "locations": [],
+            "conflicts": [],
+            "plant_foreshadowing": [],
+            "resolve_foreshadowing": [],
+            "thread_updates": [],
+        },
+        status="approved",
+    )
+    # 同章其他 approved 降回 draft（批准版唯一）
+    db.query(Outline).filter(
+        Outline.novel_id == novel_id,
+        Outline.chapter_no == chapter_no,
+        Outline.id != row.id,
+        Outline.status == "approved",
+    ).update({"status": "draft"})
+    db.add(row)
+    db.flush()
+    new_id = row.id
+    db.commit()
+    return new_id
 
 
 def sync_ledger_from_outline(
@@ -1387,6 +1796,260 @@ def _persist_memory_keeper(db: Session, novel_id: uuid.UUID, params: dict, parse
         ))
     db.commit()
     return {"action": "persisted", "table": "novel_memories", "up_to_chapter": up_to, "version": (row.version if row else 1)}
+
+
+def _persist_era_research(db: Session, novel_id: uuid.UUID, parsed: BaseModel) -> dict:
+    """时代行业研究员落库：覆盖写入 novel.era_research（作者可改，换书自动重研究）。"""
+    from app.schemas.agents import EraResearch
+
+    assert isinstance(parsed, EraResearch)
+    novel = db.get(Novel, novel_id)
+    if novel is None:
+        raise ValueError(f"小说不存在：{novel_id}")
+    novel.era_research = parsed.model_dump(mode="json")
+    db.commit()
+    return {"action": "persisted", "table": "novels", "field": "era_research", "era": parsed.era, "industry": parsed.industry}
+
+
+# ---------- 作者确认机制（生成流程内暂停点） ----------
+
+# 等待作者确认时的轮询间隔（秒）
+AUTHOR_CONFIRM_POLL_SECONDS = 2.0
+# 单次确认等待上限（秒）：作者超过该时长未答复则自动 dismissed，生成任务用默认方向继续（不卡死）
+AUTHOR_CONFIRM_TIMEOUT_SECONDS = 900
+
+# 等待作者确认的时间不计入任务生成预算（见 stream.py 的 _ConfirmAwareTimeout）：
+# 后台任务在生成前把「顺延 deadline 的回调」放进这里，request_author_confirmation 在
+# 每次确认等待开始前把任务绝对超时 deadline 顺延（覆盖本轮等待上限 + 缓冲），等待结束后
+# 按实际等待时长精确回退——确认等待相当于暂停了生成计时器。
+# 否则确认等待会占用生成预算（era 确认等满 15 分钟自动跳过后，剩余预算不足以跑完
+# 预检 + 蓝图师 → 20 分钟整被超时终止、蓝图无数据落库）。
+_confirm_wait_extender: contextvars.ContextVar = contextvars.ContextVar(
+    "_confirm_wait_extender", default=None
+)
+
+
+def set_confirm_wait_extender(extend) -> contextvars.Token:
+    """注册「确认等待时顺延任务超时 deadline」的回调（后台任务层调用），返回恢复用 Token。"""
+    return _confirm_wait_extender.set(extend)
+
+
+def reset_confirm_wait_extender(token: contextvars.Token) -> None:
+    """恢复上一个顺延回调（与 set_confirm_wait_extender 成对使用）。"""
+    _confirm_wait_extender.reset(token)
+
+
+def _confirm_to_dict(row, novel_titles: Optional[dict] = None) -> dict:
+    """AuthorConfirm 行 → 前端可展示的确认对象（novel_titles 传 id→标题映射时附带小说名）。"""
+    return {
+        "id": str(row.id),
+        "novel_id": str(row.novel_id),
+        "novel_title": (novel_titles or {}).get(str(row.novel_id)),
+        "agent": row.agent,
+        "task_id": str(row.task_id) if row.task_id else None,
+        "confirm_key": row.confirm_key,
+        "status": row.status,
+        "question": row.question,
+        "options": row.options or [],
+        "allow_custom": bool(row.allow_custom),
+        "answer": row.answer,
+        "answer_meta": row.answer_meta,
+        "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+    }
+
+
+def _novel_titles_map(db: Session, rows) -> dict:
+    """批量取这些确认所属小说的标题（id→title），供跨小说通知展示书名。"""
+    from app.db.models import Novel
+
+    ids = {r.novel_id for r in rows if r.novel_id is not None}
+    if not ids:
+        return {}
+    return {
+        str(n.id): n.title
+        for n in db.execute(select(Novel).where(Novel.id.in_(ids))).scalars()
+    }
+
+
+def get_pending_confirms(
+    db: Session, novel_id: Optional[uuid.UUID] = None, agent: Optional[str] = None
+) -> list[dict]:
+    """查询 pending 状态的作者确认请求（前端弹窗/刷新恢复/跨小说通知用）。
+
+    novel_id 缺省时返回所有小说的待确认项（全局确认提醒中心轮询用）；
+    agent 传入时精确到角色（如前端只在大纲页/设置页展示对应确认点）。
+    """
+    from app.db.models import AuthorConfirm
+
+    q = select(AuthorConfirm).where(AuthorConfirm.status == "pending")
+    if novel_id is not None:
+        q = q.where(AuthorConfirm.novel_id == novel_id)
+    rows = [
+        r
+        for r in db.execute(q.order_by(AuthorConfirm.created_at)).scalars()
+        if agent is None or r.agent == agent
+    ]
+    titles = _novel_titles_map(db, rows)
+    return [_confirm_to_dict(r, titles) for r in rows]
+
+
+def answer_author_confirm(
+    db: Session, confirm_id: uuid.UUID, answer: str, note: Optional[str] = None
+) -> dict:
+    """作者提交确认答案：把 pending 置为 answered（生成任务轮询到后恢复）。
+
+    选项命中时 answer 为选项 id，answer_meta 记录选中选项的 label + 作者补充说明；
+    自定义输入时 answer 为作者原文。
+    """
+    from datetime import datetime, timezone
+
+    from app.db.models import AuthorConfirm
+
+    row = db.get(AuthorConfirm, confirm_id)
+    if row is None:
+        raise ValueError("确认请求不存在")
+    if row.status != "pending":
+        raise ValueError(f"确认请求已处理（{row.status}），不可重复提交")
+    option = next((o for o in (row.options or []) if isinstance(o, dict) and o.get("id") == answer), None)
+    row.status = "answered"
+    row.answer = answer
+    row.answer_meta = {
+        "label": option.get("label") if option else None,
+        "note": note or "",
+    }
+    row.answered_at = datetime.now(timezone.utc)
+    db.commit()
+    return _confirm_to_dict(row)
+
+
+def dismiss_author_confirm(db: Session, confirm_id: uuid.UUID) -> dict:
+    """作者主动跳过确认点：pending → dismissed（生成任务轮询到后按默认方向继续）。
+
+    区别于超时：作者明确关闭弹窗=不想选择，任务立刻恢复，不占用完整等待窗口。
+    """
+    from app.db.models import AuthorConfirm
+
+    row = db.get(AuthorConfirm, confirm_id)
+    if row is None:
+        raise ValueError("确认请求不存在")
+    if row.status != "pending":
+        raise ValueError(f"确认请求已处理（{row.status}），不可重复提交")
+    row.status = "dismissed"
+    row.answer = "__skip__"
+    row.answer_meta = {"label": None, "note": "作者主动跳过"}
+    db.commit()
+    return _confirm_to_dict(row)
+
+
+async def request_author_confirmation(
+    db: Session,
+    *,
+    novel_id: uuid.UUID,
+    task_id: Optional[uuid.UUID],
+    agent: str,
+    confirm_key: str,
+    question: str,
+    options: Optional[list[dict]] = None,
+    allow_custom: bool = True,
+    on_pending=None,
+) -> dict:
+    """请求作者确认并等待答复（阻塞轮询 DB，供生成任务在确认点暂停后恢复）。
+
+    - 幂等：同 (novel_id, agent, confirm_key) 已有 pending → 不重复创建，直接等它；
+      已 answered → 直接返回答案（同一确认点不会重复弹窗）。
+    - on_pending(row_dict)：确认请求落库后同步回调。调用方用它把 SSE author_confirm
+      事件塞进转发队列，让在线前端实时弹窗；刷新/断线用户靠 get_pending_confirms 轮询恢复。
+    - 返回 {"status": "answered"|"dismissed"|"timeout",
+             "answer": str|None, "option": dict|None, "note": str|None}
+    """
+    from app.db.models import AuthorConfirm
+
+    # 幂等：同确认点已有记录，直接复用（防止同一任务重复创建确认请求/重复弹窗）
+    row = db.execute(
+        select(AuthorConfirm)
+        .where(
+            AuthorConfirm.novel_id == novel_id,
+            AuthorConfirm.agent == agent,
+            AuthorConfirm.confirm_key == confirm_key,
+        )
+        .order_by(AuthorConfirm.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        row = AuthorConfirm(
+            novel_id=novel_id,
+            agent=agent,
+            task_id=task_id,
+            confirm_key=confirm_key,
+            status="pending",
+            question=question,
+            options=options or [],
+            allow_custom=allow_custom,
+        )
+        db.add(row)
+        db.commit()
+        if on_pending is not None:
+            try:
+                on_pending(_confirm_to_dict(row))
+            except Exception:
+                logger.exception("作者确认 on_pending 回调失败（不影响等待）")
+
+    if row.status == "answered":
+        return _confirm_result(row)
+    if row.status == "dismissed":
+        return {"status": "dismissed", "answer": row.answer, "option": None, "note": (row.answer_meta or {}).get("note")}
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + AUTHOR_CONFIRM_TIMEOUT_SECONDS
+    # 等作者确认的时间不计入任务生成预算：等待开始前顺延任务绝对超时 deadline
+    #（覆盖本轮等待上限 + 缓冲），结束后按实际等待时长精确回退，见 _confirm_wait_extender。
+    extend = _confirm_wait_extender.get()
+    wait_started = loop.time()
+    if extend is not None:
+        try:
+            extend(AUTHOR_CONFIRM_TIMEOUT_SECONDS + 60)
+        except Exception:
+            logger.exception("novel_id=%s agent=%s confirm_key=%s 确认等待 deadline 顺延失败（不影响等待）", novel_id, agent, confirm_key)
+            extend = None  # 顺延失败则不再回退，保持原行为
+    try:
+        while True:
+            # 强制从 DB 重新加载：POST /confirm 用的是另一个 session，identity map 会缓存旧状态
+            try:
+                db.refresh(row)
+            except Exception:
+                db.rollback()
+                return {"status": "dismissed", "answer": None, "option": None, "note": None}
+            if row.status == "answered":
+                return _confirm_result(row)
+            if row.status == "dismissed":
+                return {"status": "dismissed", "answer": row.answer, "option": None, "note": (row.answer_meta or {}).get("note")}
+            if loop.time() >= deadline:
+                # 作者长时间未答复：自动 dismissed，任务用默认方向继续（不卡死后台任务）
+                row.status = "dismissed"
+                db.commit()
+                logger.info("novel_id=%s agent=%s confirm_key=%s 作者确认等待超时，自动跳过", novel_id, agent, confirm_key)
+                return {"status": "timeout", "answer": None, "option": None, "note": None}
+            await asyncio.sleep(AUTHOR_CONFIRM_POLL_SECONDS)
+    finally:
+        if extend is not None:
+            try:
+                # 精确回退：deadline 最终只推进「实际等待作者」的时长（= 确认等待不占用生成预算）
+                extend(-(AUTHOR_CONFIRM_TIMEOUT_SECONDS + 60 - (loop.time() - wait_started)))
+            except Exception:
+                logger.exception("novel_id=%s agent=%s confirm_key=%s 确认等待 deadline 回退失败（不影响结果）", novel_id, agent, confirm_key)
+
+
+def _confirm_result(row) -> dict:
+    """从已答复的确认行构造返回结果（供生成任务恢复后读取作者选择）。"""
+    option = None
+    if row.options:
+        option = next((o for o in row.options if isinstance(o, dict) and o.get("id") == row.answer), None)
+    return {
+        "status": "answered",
+        "answer": row.answer,
+        "option": option,
+        "note": (row.answer_meta or {}).get("note"),
+    }
 
 
 def commit_agent_output(

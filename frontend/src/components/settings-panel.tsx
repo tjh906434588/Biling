@@ -6,13 +6,17 @@ import {
   createSetting,
   deleteSetting,
   getActiveBlueprint,
+  getNovel,
   listChapters,
   listSettings,
+  updateNovel,
   updateSetting,
   type Blueprint,
+  type Novel,
   type Setting,
   type SettingType,
 } from "@/lib/api";
+import { BackgroundTypePicker, GenrePicker, BACKGROUND_TYPES } from "@/components/novel-meta";
 import InfoTip from "./info-tip";
 import ConfirmDialog from "./confirm-dialog";
 import Modal from "./modal";
@@ -723,6 +727,43 @@ function copyText(text: string): Promise<void> {
   return fallback();
 }
 
+/** 时代行业研究：单张「清单卡」。四色点缀（朱砂/靛青/竹青/赭石），嵌套卡用底色区分、不描边。 */
+function EraListCard({
+  title,
+  items,
+  tone,
+  warning,
+}: {
+  title: string;
+  items: unknown;
+  tone: "jade" | "dai" | "ochre" | "seal";
+  warning?: boolean;
+}) {
+  const list = Array.isArray(items) ? (items as string[]).map((x) => String(x)).filter(Boolean) : [];
+  if (list.length === 0) return null;
+  const titleCls: Record<"jade" | "dai" | "ochre" | "seal", string> = {
+    jade: "text-jade",
+    dai: "text-dai",
+    ochre: "text-ochre",
+    seal: "text-seal",
+  };
+  return (
+    <div className={`rounded-lg bg-sunken/40 px-3 py-2.5 ${warning ? "border-l-2 border-seal" : ""}`}>
+      <p className={`mb-1 text-[11px] font-semibold ${titleCls[tone]}`}>{title}</p>
+      <ul className="flex flex-col gap-0.5">
+        {list.map((x, i) => (
+          <li
+            key={i}
+            className={`text-[12px] leading-5 ${warning ? "text-seal/90 dark:text-seal/80" : "text-zinc-600 dark:text-zinc-300"}`}
+          >
+            · {x}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function SettingsPanel({ novelId }: Props) {
   const [settings, setSettings] = useState<Setting[]>([]);
   const [typeFilter, setTypeFilter] = useState<string>("");
@@ -745,9 +786,21 @@ export default function SettingsPanel({ novelId }: Props) {
   const [showImport, setShowImport] = useState(false);
   // 数据加载中：遮罩过渡，加载完成后解除
   const [loading, setLoading] = useState(true);
+  // 时代行业研究（蓝图生成时自动研究，作者可查看/修改）：null=未加载，undefined=无研究
+  const [eraResearch, setEraResearch] = useState<Record<string, unknown> | null | undefined>(undefined);
+  const [eraText, setEraText] = useState("");
+  const [eraEditing, setEraEditing] = useState(false);
+  const [eraBusy, setEraBusy] = useState(false);
+  // 世界背景类型与题材：创建时可留空，导入蓝图时由 AI 推断引导确认，这里可直接修改
+  const [bgType, setBgType] = useState<Novel["background_type"]>(undefined);
+  const [genres, setGenres] = useState<string[]>([]);
+  const [metaBusy, setMetaBusy] = useState(false);
 
   // 只展示「手动/批量」设定 + 「当前生效蓝图」导入的设定；其余蓝图版本的导入设定隐藏
   const visibleSettings = settings.filter((s) => s.source !== "blueprint" || s.blueprint_id === activeBp?.id);
+
+  // 时代行业研究：仅非纯架空（现实年代 / 半架空）展示；纯架空不触发研究，整段隐藏
+  const showEraResearch = bgType !== "pure_fantasy";
 
   const loadStagePlan = useCallback(async () => {
     try {
@@ -764,7 +817,14 @@ export default function SettingsPanel({ novelId }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setSettings(await listSettings(novelId, typeFilter || undefined, q || undefined));
+      const [items, novel] = await Promise.all([listSettings(novelId, typeFilter || undefined, q || undefined), getNovel(novelId)]);
+      setSettings(items);
+      // 时代行业研究：同步加载最新值（作者在别处改过也要反映出来）
+      const er = novel.era_research ?? null;
+      setEraResearch(er);
+      setEraText(er ? JSON.stringify(er, null, 2) : "");
+      setBgType(novel.background_type ?? undefined);
+      setGenres(novel.genres ?? []);
     } catch (e) {
       message.error((e as Error).message);
     } finally {
@@ -902,6 +962,44 @@ export default function SettingsPanel({ novelId }: Props) {
     }
   }
 
+  async function handleSaveEra() {
+    setEraBusy(true);
+    try {
+      const trimmed = eraText.trim();
+      if (trimmed) {
+        const obj = JSON.parse(trimmed);
+        if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+          message.error("需保存为一个 JSON 对象");
+          return;
+        }
+        await updateNovel(novelId, { era_research: obj });
+        setEraResearch(obj);
+      } else {
+        await updateNovel(novelId, { era_research: null });
+        setEraResearch(null);
+      }
+      setEraEditing(false);
+      message.success("时代行业研究已保存");
+    } catch (e) {
+      message.error(`保存失败：${(e as Error).message}`);
+    } finally {
+      setEraBusy(false);
+    }
+  }
+
+  async function handleSaveMeta() {
+    setMetaBusy(true);
+    try {
+      // 传 null 表示清除（暂不选择），genres 为空数组表示无题材
+      await updateNovel(novelId, { background_type: bgType ?? null, genres });
+      message.success("世界背景类型与题材已保存");
+    } catch (e) {
+      message.error(`保存失败：${(e as Error).message}`);
+    } finally {
+      setMetaBusy(false);
+    }
+  }
+
   async function handleImport() {
     if (!parsed || parsed.length === 0) return;
     setImportBusy(true);
@@ -947,8 +1045,171 @@ export default function SettingsPanel({ novelId }: Props) {
 
   return (
     <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col gap-5">
-        {/* 设定列表 */}
+      <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:gap-5">
+        {/* 左侧参考栏：世界背景/题材 + 时代行业研究（只读参考信息），窄栏竖排，内容多时独立滚动；主区留给设定列表 */}
+        <div className="flex min-h-0 flex-col gap-4 lg:w-[400px] lg:shrink-0 lg:overflow-y-auto lg:pr-1">
+        {/* 世界背景类型与题材：创建时可留空，导入蓝图时 AI 按素材推断、弹窗引导作者确认；这里可直接修改 */}
+        <section className="panel flex shrink-0 flex-col gap-2.5">
+          <div className="panel-head !mb-2">
+            <div className="flex items-center gap-1.5">
+              <h3 className="panel-title">世界背景类型与题材</h3>
+              <InfoTip width="w-80" side="bottom">
+                <p>
+                  <span className="font-medium text-zinc-800 dark:text-zinc-100">这本书属于哪个世界背景、什么题材。</span>
+                  背景类型决定签约核查口径（现实对照时代 / 半架空 / 纯架空），题材是软性写作方向。
+                  不确定可以先不选，导入蓝图时 AI 会按素材推断、弹出弹窗请你确认后自动落库，你也可以在这里直接改。
+                </p>
+              </InfoTip>
+            </div>
+          </div>
+          <p className="-mt-1 mb-1 panel-hint">
+            {bgType || genres.length ? (
+              <>
+                当前：{bgType ? BACKGROUND_TYPES.find((t) => t.value === bgType)?.label ?? bgType : "未选背景"}
+                {genres.length > 0 ? ` · ${genres.join("、")}` : " · 未选题材"}
+              </>
+            ) : (
+              "暂未选择（导入蓝图时由 AI 推断确认）"
+            )}
+          </p>
+          <div className="grid gap-3">
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[12px] font-medium text-zinc-500">世界背景类型</p>
+              <BackgroundTypePicker value={bgType} onChange={setBgType} />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[12px] font-medium text-zinc-500">题材（可多选）</p>
+              <GenrePicker value={genres} onChange={setGenres} />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              disabled={metaBusy}
+              className="btn btn-primary px-3 py-1.5 text-xs"
+              onClick={handleSaveMeta}
+            >
+              {metaBusy ? "保存中…" : "保存"}
+            </button>
+          </div>
+        </section>
+
+        {/* 时代行业研究：仅非纯架空（现实年代 / 半架空）展示；蓝图生成时自动研究，作者可查看/修改 */}
+        {showEraResearch && (
+        <section className="panel flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
+          <div className="panel-head !mb-0">
+            <div className="flex items-center gap-1.5">
+              <h3 className="panel-title">时代行业研究</h3>
+              <InfoTip width="w-80" side="bottom">
+                <p>
+                  <span className="font-medium text-zinc-800 dark:text-zinc-100">这本书所处的年代×行业长什么样。</span>
+                  生成蓝图时自动研究一次（运行时按需生成，不依赖开发加知识包），
+                  蓝图/设定/评价都会参考它，避免机构、老板、业务写得不符当时情况。
+                  换一本小说会自动重新研究。你可以在这里直接查看和修改。
+                </p>
+              </InfoTip>
+            </div>
+            {eraResearch ? (
+              <div className="flex items-center gap-2">
+                <span className="panel-hint">生成蓝图时自动研究</span>
+                {!eraEditing && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost px-3 py-1.5 text-xs"
+                    onClick={() => setEraEditing(true)}
+                  >
+                    编辑
+                  </button>
+                )}
+              </div>
+            ) : (
+              <span className="panel-hint">尚未研究（生成蓝图时自动研究）</span>
+            )}
+          </div>
+
+          {eraResearch ? (
+            eraEditing ? (
+              <div className="flex flex-col gap-2">
+                <textarea
+                  className="h-48 w-full resize-y rounded-lg border border-zinc-300 bg-sunken/40 p-2.5 font-mono text-xs outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  spellCheck={false}
+                  value={eraText}
+                  onChange={(e) => setEraText(e.target.value)}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={eraBusy}
+                    className="btn btn-primary px-3 py-1.5 text-xs"
+                    onClick={handleSaveEra}
+                  >
+                    {eraBusy ? "保存中…" : "保存修改"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost px-3 py-1.5 text-xs"
+                    onClick={() => {
+                      setEraEditing(false);
+                      setEraText(eraResearch ? JSON.stringify(eraResearch, null, 2) : "");
+                    }}
+                  >
+                    取消
+                  </button>
+                  <span className="text-[11px] text-zinc-400">JSON 字段：开局年份 / 时代定位 / 行业 / 判定依据 / 老板画像 / 机构形态 / 业务范围 / 地域分布 / 阶段演进时间轴 / 时代错位雷点</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5 text-[12.5px]">
+                  <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">开局年份</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.story_start_year ?? "（未判定）")}</span></span>
+                  <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">时代定位</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.era ?? "（未明确）")}</span></span>
+                  <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">行业</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.industry ?? "（未明确）")}</span></span>
+                  <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">判定</span><span className="text-zinc-500">{String(eraResearch.note ?? "—")}</span></span>
+                </div>
+                {Boolean(eraResearch.boss_portrait) && (
+                  <p className="rounded-lg bg-sunken/40 px-3 py-2 text-[12.5px] leading-5 text-zinc-600 dark:text-zinc-300">
+                    <span className="mr-2 align-middle text-[11px] font-medium text-zinc-500">老板 / 负责人画像</span>
+                    {String(eraResearch.boss_portrait)}
+                  </p>
+                )}
+                {Boolean(eraResearch.location_pattern) && (
+                  <p className="rounded-lg bg-sunken/40 px-3 py-2 text-[12.5px] leading-5 text-zinc-600 dark:text-zinc-300">
+                    <span className="mr-2 align-middle text-[11px] font-medium text-zinc-500">地域分布特征</span>
+                    {String(eraResearch.location_pattern)}
+                  </p>
+                )}
+                {(Array.isArray(eraResearch.organization_forms) && eraResearch.organization_forms.length > 0) ||
+                 (Array.isArray(eraResearch.business_list) && eraResearch.business_list.length > 0) ||
+                 (Array.isArray(eraResearch.evolution) && eraResearch.evolution.length > 0) ||
+                 (Array.isArray(eraResearch.era_mismatch_red_flags) && eraResearch.era_mismatch_red_flags.length > 0) ? (
+                  <div className="grid gap-2.5 sm:grid-cols-2">
+                    {Array.isArray(eraResearch.organization_forms) && eraResearch.organization_forms.length > 0 && (
+                      <EraListCard title="机构典型形态" tone="jade" items={eraResearch.organization_forms} />
+                    )}
+                    {Array.isArray(eraResearch.business_list) && eraResearch.business_list.length > 0 && (
+                      <EraListCard title="业务范围" tone="dai" items={eraResearch.business_list} />
+                    )}
+                    {Array.isArray(eraResearch.evolution) && eraResearch.evolution.length > 0 && (
+                      <EraListCard title="行业阶段演进" tone="ochre" items={eraResearch.evolution} />
+                    )}
+                    {Array.isArray(eraResearch.era_mismatch_red_flags) && eraResearch.era_mismatch_red_flags.length > 0 && (
+                      <EraListCard title="时代错位雷点" tone="seal" items={eraResearch.era_mismatch_red_flags} warning />
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            )
+          ) : (
+            <p className="rounded-lg border border-dashed border-zinc-300 p-3 text-[12.5px] leading-5 text-zinc-400 dark:border-zinc-700">
+              现实题材下，点击「蓝图 → 生成蓝图」会自动研究这本书的年代×行业（机构形态、老板画像、业务范围等），
+              之后设定与评价都会参考它；纯架空小说不触发研究。
+            </p>
+          )}
+        </section>
+        )}
+        </div>
+
+        {/* 设定列表：主工作区，占满剩余高度与宽度，内容多时仅此区滚动 */}
       <section className="panel flex min-h-0 flex-1 flex-col gap-3.5">
         <div className="panel-head !mb-0">
           <div className="flex items-center gap-1.5">
@@ -967,14 +1228,14 @@ export default function SettingsPanel({ novelId }: Props) {
             </span>
             <button
               type="button"
-              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="btn btn-ghost px-3 py-1.5 text-xs"
               onClick={openImportModal}
             >
               批量导入
             </button>
             <button
               type="button"
-              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+              className="btn btn-primary px-3 py-1.5 text-xs"
               onClick={openFormModal}
             >
               新增设定
@@ -1031,14 +1292,14 @@ export default function SettingsPanel({ novelId }: Props) {
             </div>
           )
         ) : (
-          <ul className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
+          <ul className="grid min-h-0 flex-1 grid-cols-1 gap-2.5 overflow-y-auto xl:grid-cols-2">
             {visibleSettings.map((s) => {
               const { con, dyn } = splitSetting(s);
               const meta = settingMeta(s);
               return (
               <li
                 key={s.id}
-                className="rounded-lg border border-zinc-200 p-3.5 dark:border-zinc-800"
+                className="rounded-lg bg-sunken/40 p-3.5 dark:bg-sunken/30"
               >
                 <div className="flex items-center gap-2">
                   <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
@@ -1087,13 +1348,13 @@ export default function SettingsPanel({ novelId }: Props) {
                     })()}
                   <div className="ml-auto flex items-center gap-1">
                     <button
-                      className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      className="btn btn-ghost px-2 py-1 text-xs"
                       onClick={() => startEdit(s)}
                     >
                       编辑
                     </button>
                     <button
-                      className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
+                      className="btn btn-ghost px-2 py-1 text-xs text-red-500"
                       onClick={() => handleDelete(s)}
                     >
                       删除
@@ -1142,7 +1403,7 @@ export default function SettingsPanel({ novelId }: Props) {
           <>
             <button
               type="button"
-              className="rounded-lg border border-zinc-300 px-4 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="btn btn-ghost px-4 py-1.5 text-sm"
               onClick={() => {
                 setShowForm(false);
                 setEditing(null);
@@ -1152,7 +1413,7 @@ export default function SettingsPanel({ novelId }: Props) {
             </button>
             <button
               type="button"
-              className="rounded-lg bg-zinc-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+              className="btn btn-primary px-4 py-1.5 text-sm"
               onClick={handleSave}
               disabled={busy}
             >
@@ -1265,7 +1526,7 @@ export default function SettingsPanel({ novelId }: Props) {
       >
         <div className="flex min-h-0 flex-1 flex-col gap-2">
           <button
-            className="w-full shrink-0 rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="btn btn-ghost w-full shrink-0 px-3 py-1.5 text-xs"
             onClick={copyInstruction}
           >
             复制导入指令
@@ -1278,7 +1539,7 @@ export default function SettingsPanel({ novelId }: Props) {
             onChange={(e) => setImportText(e.target.value)}
           />
           <button
-            className="w-full shrink-0 rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="btn btn-ghost w-full shrink-0 px-3 py-1.5 text-xs"
             onClick={handleParse}
             disabled={!importText.trim()}
           >
@@ -1330,7 +1591,7 @@ export default function SettingsPanel({ novelId }: Props) {
                 ))}
               </ul>
               <button
-                className="shrink-0 rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+                className="btn btn-primary shrink-0 px-3 py-2 text-xs"
                 onClick={handleImport}
                 disabled={importBusy}
               >

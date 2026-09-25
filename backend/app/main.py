@@ -25,7 +25,7 @@ from app.api import (
 )
 from app.config import get_settings
 from app.db.base import Base
-from app.db.migrate import ensure_columns, ensure_prompts_schema
+from app.db.migrate import ensure_columns, ensure_novel_background_type_nullable, ensure_prompts_schema
 from app.db.session import engine
 
 settings = get_settings()
@@ -39,6 +39,8 @@ async def lifespan(app: FastAPI):
     ensure_columns(engine)
     # M4 尾巴：prompts 表 key 单列唯一 -> key+scope 联合唯一（写作指令按小说独立）
     ensure_prompts_schema(engine)
+    # M5 尾巴：novels.background_type 改可空（旧库 NOT NULL 无法表示「未选择」）——重建该表
+    ensure_novel_background_type_nullable(engine)
     # 启动时预导入 litellm：把其首次 import 的开销（本地模型成本表加载等）放到启动阶段，
     # 避免第一个流式请求被 import 阻塞。
     try:
