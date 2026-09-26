@@ -385,6 +385,24 @@ class EntityDetailUpdate(BaseModel):
     confidence: str = "high"
 
 
+class NewCharacter(BaseModel):
+    """提取师从正文识别出的新登场人物（设定库里没有）→ 沉淀为 character 设定卡。
+
+    只记录「值得长期沿用」的人物：有身份/来历/性格/剧情作用，后续章节需要保持一致；
+    一句话带过、无长期戏份的龙套不建卡。背景信息进设定卡作为「一致性依据」，
+    正文不需要把全套背景写出来（正文只写当下情节需要的部分）。
+    """
+    name: str  # 人物名（须与正文一致；设定库已有名单里的人不算新人物，不建卡）
+    aliases: list[str] = []  # 别名/称呼（正文里叫他的其他名字）
+    role_rank: str = "minor"  # major（重要配角）/ minor（次要配角）/ extra（龙套但有戏份）
+    description: str = ""  # 一段完整、可直接作为该人物设定描述的话（身份/来历/当前处境）
+    personality: list[str] = []  # 性格特征（正文明确体现的才写，不脑补）
+    appearance: str = ""  # 外貌（正文写过才写，没写留空）
+    role_in_story: str = ""  # 在本章及后续的故事作用
+    relations_to_main: str = ""  # 与主角/已有角色的关系（正文明确提到的）
+    source_quote: str = ""  # 正文原文摘录（证据，尽量短）
+
+
 class StoryStateExtract(BaseModel):
     summary: str
     key_events: list[KeyEvent] = []
@@ -397,6 +415,8 @@ class StoryStateExtract(BaseModel):
     superseded_relations: list[SupersededRelation] = []  # 被取代的旧关系（如 师徒→叛出师门）
     # 实体细节回写（首次提及即冻结）：正文确立的实体硬事实回写设定卡
     entity_detail_updates: list[EntityDetailUpdate] = []
+    # 新登场人物（设定库没有、值得长期沿用）：沉淀为 character 设定卡
+    new_characters: list[NewCharacter] = []
     next_chapter_implications: list[str] = []
 
 
@@ -518,29 +538,77 @@ class DirectionProposal(BaseModel):
 # ---------- 章节规划师（写正文前咨询作者「本章规划」，合并大纲环节） ----------
 
 
-class ChapterPlanOption(BaseModel):
-    """一套可选的「本章规划」：作者确认后直接落库为大纲（approved）并据此写正文。
+class ChapterPlanDimensionOption(BaseModel):
+    """单个候选选项：展示文本 + 该选项携带的结构化取值。
 
-    比大纲更轻量：只保留 novelist 真正依赖的结构信息（目标/节奏功能/视角/节拍/结尾钩子），
-    不再逐章产出完整大纲——实际写作没人逐章写大纲，且 AI 大纲质量不稳定、调完也不保证
-    正文符合作者想法。改为写正文前弹窗定规划，作者确认即写。
+    作者在当前维度选其一（或自定义输入），取值并入执行方案；比"整体打包几套方案"更细：
+    作者可对任意维度单独换选，不必整套推翻。""" 
+
+    id: str  # 稳定短 id（如 "goal_1"），作者选中时回传
+    text: str  # 候选文本（前端展示；作者选中后作为该维度取值）
+    # —— 该选项携带的结构化信息（作者选中后合并进执行方案）——
+    chapter_function: Optional[str] = None  # goal 维度：节奏功能（progression/climax/…）
+    beats: Optional[list[str]] = None  # beats 维度：该套节拍序列（3-4 个，每个一句话）
+
+
+class ChapterPlanDimension(BaseModel):
+    """一个可独立选择的维度：恰好 5 个候选选项，作者选其一或自定义输入。"""
+
+    key: str  # goal/pov/beats/ending_hook/entry/tone/protagonist_arc/core_conflict/satisfaction
+    label: str  # 维度名（如 "本章目标/节奏"、"视角"）
+    hint: str = ""  # 一句话说明该维度要定什么
+    options: list[ChapterPlanDimensionOption] = Field(..., min_length=5, max_length=5)
+
+
+class ChapterPlanDimensionProposal(BaseModel):
+    """章节规划师单次输出：只产出一个维度的候选选项。
+
+    逐维度流式生成：每次只让作者面对一个维度（5 个固定不重复选项 + 1 个自定义输入），
+    作者选定/输入后，规划师带着前面已定维度再生成下一个维度——而非一次性预生成全部。
     """
 
-    id: str  # 稳定短 id（如 "a" / "b" / "c"），作者选择时回传
-    label: str  # 规划名（6 字以内短标题，如 "正面推进主线"）
-    desc: str  # 一句话说明：这一章怎么走、会引出什么、为什么这样走
-    title: str  # 本章标题（小说家沿用）
-    goal: str  # 本章目标（novelist 注入【本章目标】+ L3 心态）
-    chapter_function: str  # 节奏功能（progression/buildup/turning/climax/…）
-    pov: str  # 本章视角角色
-    beats: list[str] = Field(..., min_length=3, max_length=4)  # 3-4 个节拍，每个一句话
-    ending_hook: str  # 结尾钩子（勾住读者看下一章）
+    dimension: ChapterPlanDimension
 
 
-class ChapterPlanProposal(BaseModel):
-    """章节规划师产出：给作者的「本章规划」候选（3 套）。"""
+# ---------- 场景规划师（10 维度定稿后，把本章拆成 3-5 个场景逐字段确认） ----------
 
-    plans: list[ChapterPlanOption] = Field(..., min_length=3, max_length=3)
+
+class SceneFieldChoices(BaseModel):
+    """场景卡片中的一个字段：恰好 5 个候选选项（+ 前端 1 个自定义输入）。
+
+    一个场景 = 五个字段（地点/出场人物/目标/冲突/结果），作者在卡片内逐字段单选或自定义，
+    全部字段确认后拼进「场景执行清单」注入小说家作为硬约束。"""
+
+    field: str  # location | participants | goal | conflict | outcome
+    label: str  # 字段中文名（地点 / 出场人物 / 目标 / 冲突 / 结果）
+    hint: str = ""  # 一句话说明该字段要定什么
+    options: list[ChapterPlanDimensionOption] = Field(..., min_length=5, max_length=5)
+
+
+class SceneCandidateProposal(BaseModel):
+    """场景规划师产出的一个场景：五字段的候选选项（每字段恰好 5 个）。"""
+
+    scene_index: int  # 第几个场景（1 起）
+    fields: list[SceneFieldChoices] = Field(..., min_length=5, max_length=5)
+
+
+class ScenePlanProposal(BaseModel):
+    """场景规划师（plan 模式）单次输出：本章 3-5 个场景的骨架候选。
+
+    基于作者已确认的 10 个维度（核心事件/节奏开场/视角/节拍/结尾钩子/进入触发/基调/主角弧/核心冲突/爽点），
+    把这一章拆成 3-5 个可演的场景，每个场景五字段都给 5 个固定不重复候选。"""
+
+    scenes: list[SceneCandidateProposal] = Field(..., min_length=3, max_length=5)
+
+
+class SceneProposalsProposal(BaseModel):
+    """场景规划师（proposal 模式）单次输出：某个场景的 5 个写法提案。
+
+    每个提案约 100 字梗概，讲清该场景"怎么演"（起→冲突→收）；作者六选一（5 提案 + 自定义），
+    选定后由小说家按该提案扩写成正文。"""
+
+    scene_index: int
+    proposals: list[ChapterPlanDimensionOption] = Field(..., min_length=5, max_length=5)
 
 
 # ---------- 作者确认机制（生成流程内暂停点） ----------
@@ -554,7 +622,10 @@ class AuthorConfirmSubmitRequest(BaseModel):
     """
 
     confirm_id: uuid.UUID
-    # 命中选项时存选项 id；自定义输入时存作者原文；均非空
-    answer: str = Field(..., min_length=1, description="选项 id 或作者自定义方向文本")
+    # 命中选项时存选项 id；自定义输入时存作者原文；"都不满意，重新生成"传 __regenerate__；
+    # 场景卡片确认传 __fields__（具体取值在 field_answers 里）
+    answer: str = Field(..., min_length=1, description="选项 id / 作者自定义文本 / __regenerate__ / __fields__")
     # 作者补充说明（可选，如"往第 3 个方向走，但要更轻松一些"）
     note: Optional[str] = None
+    # 场景卡片确认：字段（location/participants/goal/conflict/outcome）→ 作者选定文本（选项 text 或自定义原文）
+    field_answers: Optional[dict[str, str]] = None

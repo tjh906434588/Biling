@@ -1242,9 +1242,8 @@ export default function WritingPanel({ novelId }: Props) {
       // 评价优化（reviser）单独传 parent_version_id=被优化版本，挂为子节点
       // 来源标记：重新生成正文落 source="regenerate"（版本名「再稿」），与新增「初稿」区分
       regenerate: regenerateNo != null ? true : undefined,
-      // 重写标记：重新生成章节方向已定（作者已在弹窗表达意愿），跳过写前「本章规划」咨询；
-      // 新增章节不传 → 后端 novelist 前置钩子先弹规划确认再写正文
-      rewrite: regenerateNo != null ? true : undefined,
+      // 重新生成=新增，与新增同权：不传 rewrite，后端 novelist 前置钩子照常弹「本章规划」
+      // 方向咨询（作者重新定夺）；仅批量自动重写（handleRerunAffected）传 rewrite+auto_rewrite 跳过
     };
     if (Object.keys(infoControl).length > 0) params.info_control = infoControl;
 
@@ -1564,8 +1563,10 @@ export default function WritingPanel({ novelId }: Props) {
               outline: o ? summarizeOutline(o) : undefined,
               outline_id: o?.id ?? undefined, // 正文-大纲版本关联
               writing_mode: o ? "outline_guided" : "draft_free",
-              // 自动重写流程方向已定：跳过写前「本章规划」咨询，避免打断批量自动化
+              // 自动重写流程方向已定（批量自动化无人工确认环节）：跳过写前「本章规划」咨询，
+              // 避免打断批量自动化（手动重新生成不传此标记，照常咨询方向）
               rewrite: true,
+              auto_rewrite: true,
             },
             (ev) => {
               // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
@@ -2743,9 +2744,10 @@ function ReviewCard({
       {matchesActive ? (
         <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           <p className="mb-1.5 text-[11px] text-zinc-500">
-            作者批注（可选）
+            作者批注（可选，会记下来）
             <span className="text-zinc-400">
               ——评价里没提到、但你自己发现的问题（设定/关系/时间线不一致等），或想按自己的方式改，写在这里，修订师会照此修改。
+              这条意见会保存到本章，之后重新生成/规划本章都会自动遵守，不会再说一次还照写。
               若想让某条评价建议保持原文，用问题右侧的「有异议」。
             </span>
           </p>

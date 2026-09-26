@@ -27,14 +27,17 @@ from app.agents.context import (
     format_memory_prompt,
     derive_stage,
     filter_settings_for_chapter,
+    get_chapter_author_directives,
     STAGE_LABELS,
 )
 from app.agents.l1 import L1_ANTI_AI_CONSTRAINTS
 from app.agents.platform_rules import (
     PLATFORM_SIGNING_HEADER,
     PLATFORM_SIGNING_NOVEL,
+    PLATFORM_ANTI_CLICHE,
     get_background_generation_scope,
     format_genres_direction,
+    format_genre_storytelling_rules,
 )
 from app.schemas.agents import NovelChapter
 from app.services.detector import detect
@@ -48,14 +51,22 @@ SYSTEM_PROMPT = f"""你是「小说家」，一部小说的写作者。
 - 正文就是正文本身，不要把 JSON 解释写进正文。
 
 写作铁律（追加）：
+- 【作者定向·本章写法要点】当【本章大纲】含"写法要点（作者定向）"时，其中进入/触发方式、风格基调、主角反应弧、核心冲突落点、爽点类型是**作者选定的执行要求，不可替换演法**——正文必须逐项照此演：触发方式照写、风格基调贯穿全章、主角反应按"从什么到什么"的弧线推进、核心冲突落在指定场面、爽点给足指定类型；只允许在语言呈现层面自由发挥，不允许在"演什么、怎么演"层面自行换成另一种演法。若确因素材冲突必须微调，只能在保持该演法精神的前提下调整具体细节。
 - 【角色-场景合理性】每个登场角色必须与其身份/关系/立场相符，只能出现在合理的场合：
   - 与某组织/地点没有关系边的角色（如非该公司员工），**不得凭空安排其出现在该组织场景**（公司办公室、员工活动等）；
   - 若该角色与前文已确立的信息源/人物关系不符（如与老板无交集却反复进出公司），应删除该出场或改由合理角色承担；
   - 已在设定库/前文确立的"非公司员工""与某人无往来"等边界设定必须严格遵守，不得擅自让角色越界登场。
+- 【设定节制·不铺陈背景】设定库/蓝图/记忆里的背景信息（人物身世、组织历史、世界规则、人物完整外貌等）只作为"一致性依据"注入——正文只写**当下情节需要呈现的部分**，按剧情进展自然流露（一句话点破、一个动作带过、一段对话暗示），禁止把某个人物/组织的完整背景一次性写成大段说明文字，也禁止同一章内连续堆叠多条设定说明；设定细节是"数据库"，不是"说明书"。
+- 【数字具体化】凡涉及金额、数量、时长、尺寸、参数等可量化的信息，必须落到**具体数字**上（如"8976 元""8 颗毛坯""良率 80%""348 小时"），不得用"一些/不少/很多/很快"等模糊词蒙混；数字要贴合角色处境与行业常理（刚入职的人攒不下八位数），并前后保持一致、可复核。
+- 【结尾指向下一章】章节结尾必须落在「下一章要解决的问题/悬念」上：可以是一个新问题、一个未完成的动作、一个被切断的对话或一个悬而未决的场面，让读者有动力点开下一章；不必每章都是强冲突钩子（弱收尾也可以），但结尾要留出"接下来怎么办"的推进指向，不允许正文在完成本件事后就戛然而止没有下文牵引。
+- 【反雷同·原创性】借鉴同类题材的**结构与节奏**可以，但具体情节、桥段、名场面、人物、台词必须原创：不得连细节带结果复刻任何已出版小说/影视中可辨识的具体桥段与名场面（雷同即抄袭）；也不得把现实中某位知名人物的具体事件、语录、数据安到虚构主角身上——主角的行业成长脉络可以借鉴真实行业的普遍路径（如从顾问做到机构、从线下到线上爆火），但主角身份、机构名、具体数字与经历必须原创。
+- 【写后自检·身份一致性】完稿后**逐角色**对照其设定身份（职业/年龄/生活环境/成长背景），重读一遍自己的正文，核对每个角色的外貌、穿着、手部、习惯、行为细节：凡与该身份生活经验/身体特征相矛盾的细节**必须当场改写**——以身份为标尺，不依赖任何禁词清单，无论是什么模板的套话都算不合格。note 字段必须写明自检结论："身份自检：已逐角色核对 <N> 个登场角色的细节，无身份不符/套话描写"（若改写过则如实说明改了哪处）。
 
 {PLATFORM_SIGNING_HEADER}
 
 {PLATFORM_SIGNING_NOVEL}
+
+{PLATFORM_ANTI_CLICHE}
 
 {L1_ANTI_AI_CONSTRAINTS}
 """
@@ -78,6 +89,14 @@ class NovelistAgent(Agent[NovelChapter]):
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
         novel = get_novel(self.db, novel_id)
         style = get_latest_style_profile(self.db, novel_id)
+
+        # 题材特化规则（条件注入）：仅现实事业流生效（realistic + 都市/职场/教育等标签）；
+        # 架空/玄幻/全民神祗等其它类型返回空串，不注入任何特化规则，避免跨题材冲突。
+        genre_block = format_genre_storytelling_rules(
+            getattr(novel, "background_type", None) if novel else None,
+            (novel.genres if novel else None) or [],
+        )
+        system_prompt = SYSTEM_PROMPT + (("\n\n" + genre_block) if genre_block else "")
 
         # 设定：M0 骨架全量截断给（M1 起由 RAG + POV 裁剪精确装配）
         # 按写作进度过滤：隐藏的不给、未到生效章范围的不给、阶段不命中的不给，避免后期设定提前出现
@@ -298,13 +317,58 @@ class NovelistAgent(Agent[NovelChapter]):
                     PRIORITY_SETTING,
                 )
             )
+        # 作者对本章的历史修改意见（意见持久化）：作者在之前版本优化/批注时指出过的问题，
+        # 本次重新生成/续写必须规避或修正。放在最靠近"开始写"的位置，硬约束不埋在中间。
+        author_directives = get_chapter_author_directives(self.db, novel_id, chapter_no)
+        if author_directives:
+            directives_text = "\n".join(f"- {d['text']}" for d in author_directives)
+            components.append(
+                ComponentBlock(
+                    "author_directives",
+                    "【作者对本章的历史修改意见（作者在之前版本明确指出过的问题，本次生成必须遵守；"
+                    "与【本章大纲】/【本章目标】冲突时以本意见为准）】\n"
+                    f"{directives_text}",
+                    PRIORITY_REQUIRED,
+                )
+            )
+        # 场景执行清单（作者逐字段确认的场景骨架 + 每个场景选定的写法提案）：
+        # 硬约束——本章正文必须严格按场景清单写，不得增删场景、不得改变每场景的
+        # 「目标→冲突→结果」；每个场景按作者选定的写法提案扩写。
+        scene_plan = params.get("scene_plan") or []
+        if isinstance(scene_plan, list) and scene_plan:
+            scene_lines = []
+            for s in scene_plan:
+                if not isinstance(s, dict):
+                    continue
+                line = (
+                    f"场景{s.get('scene_index', '?')}：\n"
+                    f"  地点：{s.get('location') or '（未定）'}\n"
+                    f"  人物：{s.get('participants') or '（未定）'}\n"
+                    f"  目标：{s.get('goal') or '（未定）'}\n"
+                    f"  冲突：{s.get('conflict') or '（未定）'}\n"
+                    f"  结果：{s.get('outcome') or '（未定）'}"
+                )
+                if (s.get("proposal") or "").strip():
+                    line += f"\n  写法（作者选定的提案，按此扩写）：{s['proposal']}"
+                scene_lines.append(line)
+            if scene_lines:
+                components.append(
+                    ComponentBlock(
+                        "scene_plan",
+                        "【场景执行清单（硬约束，优先级高于文笔要求；与【本章大纲】冲突时以本清单为准）】\n"
+                        "你必须严格按以下场景清单写作：不得增删场景，不得改变每个场景的「目标→冲突→结果」，"
+                        "并按各场景选定的「写法」扩写：\n"
+                        + "\n".join(scene_lines),
+                        PRIORITY_REQUIRED,
+                    )
+                )
         user_content = "\n\n".join(c.content for c in components)
         return ContextPack(
             novel_id=novel_id,
             agent="novelist",
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
             components=components,

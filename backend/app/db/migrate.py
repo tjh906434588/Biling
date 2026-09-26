@@ -39,6 +39,9 @@ _ADD_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("parent_version_id", "CHAR(36)"),  # 版本树父节点：评价优化产物挂到被优化版本下（多级树）
         ("signing_blocked", "BOOLEAN NOT NULL DEFAULT 0"),  # 签约未过签标记：最新评价含高危红线 issue 时为 1，定稿默认拒绝
     ],
+    "chapters": [
+        ("author_directives", "TEXT"),  # 作者对本章的历史修改意见（JSON list[{text,version_no,created_at}]），后续生成自动注入
+    ],
     "story_state": [
         ("since_chapter", "INTEGER"),
         ("invalidated_at_chapter", "INTEGER"),
@@ -46,6 +49,10 @@ _ADD_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "blueprints": [
         ("source_doc", "TEXT"),
         ("doc_name", "TEXT"),
+    ],
+    "author_confirms": [
+        ("fields", "JSON"),  # 场景卡片确认：fields=[{field,label,hint,options}]（场景规划逐字段单选）
+        ("regenerable", "BOOLEAN NOT NULL DEFAULT 0"),  # 场景写法提案确认：前端提供「都不满意，重新生成」按钮
     ],
     "entity_relations": [
         ("archived", "BOOLEAN NOT NULL DEFAULT 0"),

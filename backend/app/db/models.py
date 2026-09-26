@@ -78,7 +78,12 @@ class AuthorConfirm(Base):
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|answered|dismissed
     question: Mapped[str] = mapped_column(Text)  # 咨询问题（展示给作者）
     options: Mapped[Optional[list]] = mapped_column(JSON)  # [{id, label, desc}] AI 提案选项（如 3 个故事方向）
+    # 场景卡片确认（场景规划）：fields = [{field, label, hint, options: 5 个候选}]，一个场景 5 个字段；
+    # 存在时前端按「场景卡片」渲染（逐字段单选+自定义），答案回传 field_answers
+    fields: Mapped[Optional[list]] = mapped_column(JSON)
     allow_custom: Mapped[bool] = mapped_column(Boolean, default=True)  # 是否允许作者自定义输入
+    # 场景写法提案确认（scene_proposal）为 True：前端额外提供「都不满意，重新生成」按钮（回传 __regenerate__）
+    regenerable: Mapped[bool] = mapped_column(Boolean, default=False)
     # 作者提交的答案：命中选项存选项 id；自定义输入存原文；dismissed 存 NULL
     answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     answer_meta: Mapped[Optional[dict]] = mapped_column(JSON)  # {label, note} 选中的选项 label + 作者补充说明
@@ -94,7 +99,7 @@ class Setting(Base):
     novel_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("novels.id"), index=True)
     type: Mapped[str] = mapped_column(String(32), index=True)  # character|location|faction|world_rule|item|concept
     name: Mapped[str] = mapped_column(String(255))
-    # 数据来源（隐藏字段，不展示界面）：blueprint（蓝图导入，按版本存储）| batch（设定页批量新增）| manual（单个新增/其他）| outline（大纲批准时注入，随批准版本切换显示/隐藏）
+    # 数据来源（隐藏字段，不展示界面）：blueprint（蓝图导入，按版本存储）| batch（设定页批量新增）| manual（单个新增/其他）| outline（大纲批准时注入，随批准版本切换显示/隐藏）| extraction（正文提取，首次登场即建档）
     source: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     # 所属蓝图版本：source="blueprint" 的设定记录导入它的蓝图；激活哪个蓝图就显示哪个蓝图的设定，其余版本隐藏保留（可切回）
     blueprint_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -218,6 +223,9 @@ class Chapter(Base):
     content: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|complete
     word_count: Mapped[Optional[int]] = mapped_column(Integer)
+    # 作者对本章的历史修改意见（意见持久化）：评价优化时提交的 author_note 落库，
+    # 后续重新生成/规划/续写本章时自动注入给 AI，防止"说过突兀还照写"。list[{text, version_no, created_at}]
+    author_directives: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

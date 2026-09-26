@@ -19,6 +19,7 @@ SYSTEM_PROMPT = """你是「提取师」，把成稿章节压缩为结构化记�
  "relations": [{"source":"实体A","relation":"关系标签","target":"实体B","confidence":"high|medium|low"}],
  "superseded_relations": [{"source":"实体A","relation":"旧关系","target":"实体B","superseded_by":"取代它的新关系名"}],
  "entity_detail_updates": [{"entity":"实体名","facts":{"成立时间":"1998年","人员规模":"3人"},"source":"正文原文摘录","confidence":"high"}],
+ "new_characters": [{"name":"人物名","aliases":["别名"],"role_rank":"major|minor|extra","description":"身份/来历/当前处境","personality":["性格"],"appearance":"外貌","role_in_story":"故事作用","relations_to_main":"与主角/已有角色的关系","source_quote":"正文原文摘录"}],
  "next_chapter_implications": ["下一章的自然走向"]}
 
 铁律：
@@ -34,6 +35,13 @@ SYSTEM_PROMPT = """你是「提取师」，把成稿章节压缩为结构化记�
   ② 实体名沿用【已有实体名单】；【当前已定档硬事实】里已存在的键，正文没有明确推翻就不再重复输出（冻结语义）；
   ③ facts 的键用含义清晰的中文（成立时间/人员规模/地点/身份等），值用正文原文的数字/年份/表述，不要转述加工；
   ④ source 填正文原文片段（尽量短）作证据；没有明确写死的硬事实就输出空数组 []。
+- new_characters（新登场人物沉淀设定库·首次登场即建档）：正文本章【新出现】、且【不在已有实体名单】的人物，输出其背景卡，供后续章节沿用其设定保持一致。规则：
+  ① 只有「值得长期沿用」的人才建卡——有明确身份/来历/性格，或后续剧情会继续出场、需要保持人设一致；纯一句带过、纯背景板、不会再出场的小角色不建卡（宁可少建）；
+  ② 已在【已有实体名单】里的人物（含别名命中）不算新人物，不得输出；
+  ③ description 必须是一段完整、可直接作为设定卡描述的话（身份+来历+当前处境），这是卡片的核心；其余字段正文有明确信息才写，没有就留空或空数组，不要脑补；
+  ④ personality 只写正文明确体现的性格；relations_to_main 只写正文明确提到与主角/已有角色的关系（如"主角在面馆打工的老板"），正文没提就留空；
+  ⑤ source_quote 填正文原文摘录（尽量短）作证据。
+  ⑥ appearance 只摘录正文中与角色身份相符的细节；若正文对该人物的外貌描写明显是套模板的刻板外貌（如把"常年摸机油/满手老茧/指甲剪得秃"套到学生身上、与身份不符），appearance 留空，不把套话沉淀进设定库。
 """
 
 
@@ -51,6 +59,7 @@ class ExtractorAgent(Agent[StoryStateExtract]):
         "relations": [{"source": "主角", "relation": "追查", "target": "旧档案馆", "confidence": "high"}],
         "superseded_relations": [],
         "entity_detail_updates": [{"entity": "旧档案馆", "facts": {"地点": "旧王城西区"}, "source": "旧档案馆位于旧王城西区", "confidence": "high"}],
+        "new_characters": [{"name": "老掌柜", "aliases": ["掌柜"], "role_rank": "minor", "description": "旧王城西区一家旧书店的掌柜，帮主角辨认旧档案上的字迹", "personality": ["谨慎"], "appearance": "", "role_in_story": "为主角提供查证线索", "relations_to_main": "与主角初识，因档案查证结缘", "source_quote": "柜台后的老掌柜眯着眼看了半天"}],
         "next_chapter_implications": ["主角将潜入旧档案馆"],
     }
 

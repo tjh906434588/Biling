@@ -19,6 +19,7 @@ import {
   fetchPendingConfirms,
   submitAuthorConfirm,
   type AuthorConfirm,
+  type AuthorConfirmField,
 } from "@/lib/api";
 
 /** 角色名 → 展示名（确认弹窗标题用）。 */
@@ -28,6 +29,7 @@ const AGENT_LABELS: Record<string, string> = {
   blueprint_architect: "蓝图师",
   blueprint_prechecker: "蓝图质检师",
   chapter_planner: "章节规划师",
+  scene_planner: "场景规划师",
   novelist: "小说家",
 };
 
@@ -46,6 +48,11 @@ type ConfirmEntry = AuthorConfirm;
 
 const listeners = new Set<() => void>();
 let queue: ConfirmEntry[] = [];
+
+/** 已随「生成过程弹窗」内嵌展示过的确认 id：这些确认不再作为独立全局弹窗弹出。
+ * 同一确认只打扰作者一次——生成弹窗关闭后（流结束/超时/作者关弹窗）它若仍未答复，
+ * 按「作者忽略」处理，后端确认点超时自动 dismissed，下次恢复/切换小说时从队列清掉。 */
+const inlineShownIds = new Set<string>();
 
 /** SSR 服务端快照：恒为空，且必须引用稳定（否则 "getServerSnapshot should be cached" 无限循环警告） */
 const EMPTY_CONFIRM_SNAPSHOT: ConfirmEntry[] = [];
@@ -77,13 +84,19 @@ function upsert(confirm: AuthorConfirm) {
   emit();
 }
 
-/** SSE author_confirm 事件推入（生成流程实时弹窗）。 */
+/** SSE author_confirm 事件推入（生成流程实时弹窗）。
+ * 推入时若该小说已有生成弹窗在运行（内嵌宿主活跃），确认将随弹窗内嵌展示，
+ * 打上「已内嵌展示」标记，全局弹窗宿主随后跳过它——避免同一确认内嵌+独立弹窗重复弹。 */
 export function pushAuthorConfirm(confirm: AuthorConfirm) {
+  if ((inlineHostCount.get(confirm.novel_id) ?? 0) > 0) {
+    inlineShownIds.add(confirm.id);
+  }
   upsert(confirm);
 }
 
 function removeConfirm(id: string) {
   queue = queue.filter((c) => c.id !== id);
+  inlineShownIds.delete(id);
   emit();
 }
 /** 供生成过程弹窗等内嵌宿主移除已答复的确认。 */
@@ -124,7 +137,12 @@ export async function restoreAuthorConfirms(novelId: string): Promise<void> {
     const items = await fetchPendingConfirms(novelId);
     const ids = new Set(items.map((i) => i.id));
     queue = queue.filter((c) => c.novel_id !== novelId || ids.has(c.id));
-    for (const it of items) upsert(it);
+    for (const it of items) {
+      // 重新恢复 = 新上下文（进入/切回时通常没有生成弹窗打开）：清掉「已内嵌展示」标记，
+      // 允许全局弹窗宿主或内嵌宿主重新向作者展示
+      inlineShownIds.delete(it.id);
+      upsert(it);
+    }
     emit();
   } catch {
     // 查询失败静默（后端未就绪 / 网络抖动），下次进入再试
@@ -150,8 +168,9 @@ export default function AuthorConfirmHost({ novelId }: AuthorConfirmHostProps) {
   // 当前小说有生成过程弹窗正在运行：确认由弹窗内联展示，全局弹窗让位
   if ((inlineCount.get(novelId) ?? 0) > 0) return null;
 
-  // 同一时间只展示最早的确认请求；作者答复后出队，顺延展示下一条
-  const confirm = queue[0];
+  // 同一时间只展示最早的确认请求；已随生成弹窗内嵌展示过的跳过（不再单独弹，避免重复打扰），
+  // 作者答复后出队，顺延展示下一条
+  const confirm = queue.find((c) => !inlineShownIds.has(c.id)) ?? null;
   return (
     <ConfirmDialog key={confirm?.id ?? "none"} confirm={confirm ?? null} onSettled={(id) => removeConfirm(id)} />
   );
@@ -189,8 +208,15 @@ interface ConfirmPanelProps {
 }
 
 /** 作者确认面板：问题 + 候选选项（单选）+ 自定义输入 + 补充说明 + 操作按钮。
+ * 章节规划为「逐维度流式咨询」：每次确认只展示一个维度的 5 个选项（+ 1 个自定义输入），
+ * 选定后后端带着前面的选择再生成下一个维度——一次只面对一个问题。
  * 既可作为全局确认弹窗的内容，也可内嵌进生成过程弹窗（embedded）随生成过程一起展示。 */
 export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPanelProps) {
+  // 场景卡片确认（场景规划）：一张卡 = 一个场景的五字段，逐字段单选/自定义
+  if ((confirm.fields?.length ?? 0) > 0) {
+    return <SceneCardPanel confirm={confirm} onSettled={onSettled} embedded={embedded} />;
+  }
+
   const [selected, setSelected] = useState<string | null>(null);
   const [custom, setCustom] = useState("");
   const [note, setNote] = useState("");
@@ -241,6 +267,19 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
     }
   }
 
+  /** 场景写法提案「都不满意，重新生成」：后端重新生成 5 个提案后以新确认点再弹。 */
+  async function regenerate() {
+    setBusy(true);
+    try {
+      await submitAuthorConfirm(confirm.id, "__regenerate__");
+    } catch {
+      setGone(true);
+    } finally {
+      setBusy(false);
+      onSettled(confirm.id);
+    }
+  }
+
   return (
     <div
       className={
@@ -281,7 +320,7 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
               </span>
               <span className="min-w-0">
                 <span className="block text-[13.5px] font-medium text-zinc-900 dark:text-zinc-100">
-                  {opt.label}
+                  {opt.label ?? opt.text}
                 </span>
                 {opt.desc ? (
                   <span className="mt-0.5 block text-xs leading-5 text-zinc-500 dark:text-zinc-400">
@@ -334,6 +373,38 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
                       <span className="block">
                         <span className="font-medium text-zinc-500">结尾钩子：</span>
                         {opt.ending_hook}
+                      </span>
+                    ) : null}
+                    {opt.entry || opt.tone || opt.protagonist_arc || opt.core_conflict || opt.satisfaction ? (
+                      <span className="mt-1 block border-t border-zinc-200 pt-1.5 dark:border-zinc-700">
+                        <span className="font-medium text-zinc-500">写法要点：</span>
+                        <span className="mt-0.5 block pl-4 text-zinc-600 dark:text-zinc-300">
+                          {opt.entry ? (
+                            <span className="block">
+                              进入/触发：{opt.entry}
+                            </span>
+                          ) : null}
+                          {opt.tone ? (
+                            <span className="block">
+                              风格基调：{opt.tone}
+                            </span>
+                          ) : null}
+                          {opt.protagonist_arc ? (
+                            <span className="block">
+                              主角反应弧：{opt.protagonist_arc}
+                            </span>
+                          ) : null}
+                          {opt.core_conflict ? (
+                            <span className="block">
+                              核心冲突：{opt.core_conflict}
+                            </span>
+                          ) : null}
+                          {opt.satisfaction ? (
+                            <span className="block">
+                              爽点类型：{opt.satisfaction}
+                            </span>
+                          ) : null}
+                        </span>
                       </span>
                     ) : null}
                   </span>
@@ -390,6 +461,16 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
       </div>
 
       <div className="flex items-center justify-end gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+        {confirm.regenerable && (
+          <button
+            type="button"
+            onClick={regenerate}
+            disabled={busy}
+            className="mr-auto rounded-md px-3 py-1.5 text-[13px] text-seal transition-colors hover:bg-seal/10 disabled:opacity-50"
+          >
+            都不满意，重新生成
+          </button>
+        )}
         <button
           type="button"
           onClick={skip}
@@ -405,6 +486,190 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
           className="rounded-md bg-seal px-4 py-1.5 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {busy ? "提交中…" : "确认此方向"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 场景卡片确认面板（场景规划）：一张卡 = 一个场景的五字段（地点/出场人物/目标/冲突/结果）。
+ * 每个字段 5 个候选单选 + 1 个自定义输入，全部字段填完后提交；
+ * 后端把每字段选定的文本拼进「场景执行清单」，注入小说家作为硬约束。 */
+function SceneCardPanel({ confirm, onSettled, embedded = false }: ConfirmPanelProps) {
+  const fields = confirm.fields ?? [];
+  const [fieldSel, setFieldSel] = useState<Record<string, string>>({});
+  const [fieldCustom, setFieldCustom] = useState<Record<string, string>>({});
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [gone, setGone] = useState(false);
+
+  // 每条确认打开时重置表单
+  useEffect(() => {
+    setFieldSel({});
+    setFieldCustom({});
+    setNote("");
+    setBusy(false);
+    setGone(false);
+  }, [confirm.id]);
+
+  if (gone) return null;
+
+  // 字段最终取值：选中候选取选项 text；未选中但填了自定义则取自定义文本
+  function fieldValue(f: AuthorConfirmField): string {
+    const selId = fieldSel[f.field];
+    if (selId) {
+      const opt = f.options.find((o) => o.id === selId);
+      if (opt) return opt.text ?? opt.label ?? "";
+    }
+    return (fieldCustom[f.field] ?? "").trim();
+  }
+
+  const allFilled = fields.length > 0 && fields.every((f) => fieldValue(f).length > 0);
+
+  async function submit() {
+    if (!allFilled || busy) return;
+    setBusy(true);
+    const answers: Record<string, string> = {};
+    for (const f of fields) answers[f.field] = fieldValue(f);
+    try {
+      await submitAuthorConfirm(confirm.id, "__fields__", note.trim() || undefined, answers);
+      onSettled(confirm.id);
+    } catch {
+      setGone(true);
+      onSettled(confirm.id);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function skip() {
+    setBusy(true);
+    try {
+      await dismissAuthorConfirm(confirm.id);
+    } catch {
+      // 已处理/不存在：同样视为已跳过
+    } finally {
+      setBusy(false);
+      onSettled(confirm.id);
+    }
+  }
+
+  return (
+    <div
+      className={
+        embedded
+          ? "flex shrink-0 flex-col gap-3 rounded-lg border border-zinc-300 bg-zinc-100/80 p-3.5 dark:border-zinc-600 dark:bg-zinc-800/80"
+          : "flex flex-col gap-4"
+      }
+    >
+      <p className="text-sm leading-6 text-zinc-700 dark:text-zinc-300">{confirm.question}</p>
+
+      <div className="space-y-4">
+        {fields.map((f, fi) => {
+          const selectedId = fieldSel[f.field] ?? null;
+          const custom = fieldCustom[f.field] ?? "";
+          return (
+            <div key={f.field} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+              <div className="mb-2 flex items-baseline gap-2">
+                <span className="text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
+                  {fi + 1}. {f.label}
+                </span>
+                {f.hint ? (
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">{f.hint}</span>
+                ) : null}
+              </div>
+              <div className="space-y-1.5">
+                {f.options.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selectedId === opt.id}
+                    onClick={() => {
+                      setFieldSel((s) => ({ ...s, [f.field]: opt.id }));
+                      setFieldCustom((s) => ({ ...s, [f.field]: "" }));
+                    }}
+                    className={`flex w-full items-start gap-2.5 rounded-md border px-2.5 py-2 text-left transition-colors ${
+                      selectedId === opt.id
+                        ? "border-seal bg-seal/5"
+                        : "border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:border-zinc-600 dark:hover:bg-zinc-800/60"
+                    }`}
+                  >
+                    <span
+                      aria-hidden
+                      className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
+                        selectedId === opt.id ? "border-seal" : "border-zinc-300 dark:border-zinc-600"
+                      }`}
+                    >
+                      {selectedId === opt.id && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-seal" />}
+                    </span>
+                    <span className="text-[13px] leading-5 text-zinc-800 dark:text-zinc-200">
+                      {opt.text ?? opt.label}
+                    </span>
+                  </button>
+                ))}
+                <div
+                  className={`mt-1.5 flex items-start gap-2.5 rounded-md border px-2.5 py-2 transition-colors ${
+                    custom.trim() ? "border-seal bg-seal/5" : "border-zinc-200 dark:border-zinc-700"
+                  }`}
+                >
+                  <span
+                    aria-hidden
+                    className={`mt-1.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
+                      custom.trim() ? "border-seal" : "border-zinc-300 dark:border-zinc-600"
+                    }`}
+                  >
+                    {custom.trim() && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-seal" />}
+                  </span>
+                  <input
+                    type="text"
+                    value={custom}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setFieldCustom((s) => ({ ...s, [f.field]: v }));
+                      if (v.trim() && selectedId) {
+                        setFieldSel((s) => ({ ...s, [f.field]: "" }));
+                      }
+                    }}
+                    placeholder={`自定义「${f.label}」…`}
+                    className="w-full rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[13px] text-zinc-900 outline-none transition-colors placeholder:text-zinc-400 focus:border-seal dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
+          补充说明（可选）
+        </label>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          placeholder="想给 AI 更具体的指示，可写在这里…"
+          className="w-full resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-[13px] text-zinc-900 outline-none transition-colors focus:border-seal dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+        />
+      </div>
+
+      <div className="flex items-center justify-end gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+        <button
+          type="button"
+          onClick={skip}
+          disabled={busy}
+          className="rounded-md px-3 py-1.5 text-[13px] text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        >
+          跳过，由 AI 自行把握
+        </button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={!allFilled || busy}
+          className="rounded-md bg-seal px-4 py-1.5 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {busy ? "提交中…" : "确认此场景"}
         </button>
       </div>
     </div>

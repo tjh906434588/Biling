@@ -1277,6 +1277,60 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
     if freeze_updated:
         db.commit()
 
+    # 新登场人物沉淀设定库（首次登场即建档）：正文提取出的、设定库里没有的人物 →
+    # 直接建 character 卡（source="extraction"），作者在设定库可见、可编辑、可删除。
+    # 幂等：按 name/aliases 命中已有卡（含软删，尊重作者删除意图）则跳过，不重复建。
+    new_chars_created = 0
+    if parsed.new_characters:
+        # 含软删的全量人物卡（判重用）：作者删过的卡不被重新提取重建
+        char_rows = list(
+            db.execute(
+                select(Setting).where(Setting.novel_id == novel_id, Setting.type == "character")
+            ).scalars()
+        )
+
+        def _char_exists(name: str, aliases: list[str]) -> bool:
+            for r in char_rows:
+                names = {r.name, *(str(a) for a in (r.aliases or []))}
+                if name in names or any(a in names for a in aliases if a):
+                    return True
+            return False
+
+        for nc in parsed.new_characters:
+            name = (nc.name or "").strip()
+            if not name:
+                continue
+            desc = (nc.description or "").strip()
+            if not desc:
+                continue  # 没有核心描述不建档（防空卡污染设定库）
+            aliases = [str(a).strip() for a in (nc.aliases or []) if str(a).strip()]
+            if _char_exists(name, aliases):
+                continue
+            st = {
+                "role_rank": (nc.role_rank or "minor").strip() or "minor",
+                "personality": [str(p).strip() for p in (nc.personality or []) if str(p).strip()],
+                "appearance": (nc.appearance or "").strip(),
+                "role_in_story": (nc.role_in_story or "").strip(),
+                "relations_to_main": (nc.relations_to_main or "").strip(),
+                "first_appear_chapter": chapter_no,
+                "source_quote": (nc.source_quote or "").strip(),
+            }
+            st = {k: v for k, v in st.items() if v is not None and (not isinstance(v, (list, dict)) or v)}
+            db.add(
+                Setting(
+                    novel_id=novel_id,
+                    type="character",
+                    name=name,
+                    source="extraction",
+                    aliases=aliases or None,
+                    description=desc,
+                    structured=st or None,
+                )
+            )
+            new_chars_created += 1
+    if new_chars_created:
+        db.commit()
+
     # 根部编辑检测：本次重提取清掉了「被取代过的链条中间环」（如第1章的 师徒），
     # 顺取代链下行收集受影响的后续章节（师徒→叛出师门(2)→死敌(3) → 影响 [2,3]），
     # 返回给前端提示「这些章的递进前提已变更，是否重新提取对齐」。只提示，不改数据。
@@ -1320,6 +1374,7 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
         "relations_archived": archived_superseded,
         "relations_restored": restored,
         "entity_facts_frozen": freeze_updated,
+        "new_characters_created": new_chars_created,
         "downstream_affected": affected_chapters,
     }
 
@@ -1385,6 +1440,7 @@ def _persist_novelist(
     last_ver = db.execute(
         select(func.max(ChapterVersion.version_no)).where(ChapterVersion.chapter_id == chapter.id)
     ).scalar() or 0
+    ver_no = last_ver + 1
 
     # 草稿追加：新版本 is_active=False，不动其他版本激活状态、不动章级正文/状态。
     # 标题与大纲版本关联精确到版本：生成时记到版本行，定稿时由 select_version 同步回章。
@@ -1432,7 +1488,7 @@ def _persist_novelist(
             title = chapter.title
     db.add(ChapterVersion(
         chapter_id=chapter.id,
-        version_no=last_ver + 1,
+        version_no=ver_no,
         source=ver_source,
         title=title,
         content=parsed.content,
@@ -1441,6 +1497,20 @@ def _persist_novelist(
         parent_version_id=uuid.UUID(str(parent_version_id)) if parent_version_id is not None else None,
         is_active=False,
     ))
+    # 意见持久化：作者在「评价优化」时提交的批注（review.author_note）落库到本章指令，
+    # 后续重新生成/规划/续写本章时由 novelist/chapter_planner 注入（防止"说过突兀还照写"）。
+    # 只持久化 author_note（通用修改要求）；disagreements 针对当次评价的建议，一次性不落库。
+    review = params.get("review") or {}
+    author_note = (review.get("author_note") or "").strip() if isinstance(review, dict) else ""
+    if author_note and source == "reviser":
+        directives = [d for d in (chapter.author_directives or []) if isinstance(d, dict)]
+        if not any(str(d.get("text") or "").strip() == author_note for d in directives):
+            directives.append({
+                "text": author_note,
+                "version_no": ver_no,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            chapter.author_directives = directives
     db.commit()
     # 账本不在成稿时登记：伏笔动作改由「大纲批准」时进入账本（draft 不生效，与设定同语义）
     return {
@@ -1557,12 +1627,13 @@ def persist_chapter_plan(
     """正文前置规划确认后落库：把「本章规划」存为 approved 大纲（轻量版）。
 
     规划即大纲（合并方案）：规划只含 novelist 真正依赖的结构信息（标题/目标/节奏功能/
-    视角/节拍/结尾钩子），作者在弹窗确认后直接落库为 approved outline，下游
+    视角/节拍/结尾钩子 + 写法要点），作者在弹窗确认后直接落库为 approved outline，下游
     （critic 评价对照、记忆层、outlineHasChapter 检查、账本）无需改动即可复用。
 
     版本语义：与 _persist_outliner 一致，同一章可存多个版本，规划确认插入新版本
     （version_no=max+1）；同章其他 approved 版降回 draft（批准版是下游唯一依据）。
     节拍存成 outline.beats（content 字段），供 _summarize_outline 对照评价。
+    写法要点存成 outline.content.writing_treatment（作者定向的执行细节，评价师对照用）。
     账本不在此登记：规划不含伏笔动作，正文写完后由提取师维护账本。
     """
     from app.db.models import Outline
@@ -1596,6 +1667,14 @@ def persist_chapter_plan(
             "pov": plan.get("pov", ""),
             "beats": beats,
             "ending_hook": plan.get("ending_hook", ""),
+            "writing_treatment": {
+                "pace": plan.get("pace", ""),
+                "entry": plan.get("entry", ""),
+                "tone": plan.get("tone", ""),
+                "protagonist_arc": plan.get("protagonist_arc", ""),
+                "core_conflict": plan.get("core_conflict", ""),
+                "satisfaction": plan.get("satisfaction", ""),
+            },
             "characters": [],
             "locations": [],
             "conflicts": [],
@@ -1991,6 +2070,8 @@ def _confirm_to_dict(row, novel_titles: Optional[dict] = None) -> dict:
         "status": row.status,
         "question": row.question,
         "options": row.options or [],
+        "fields": row.fields or [],
+        "regenerable": bool(row.regenerable),
         "allow_custom": bool(row.allow_custom),
         "answer": row.answer,
         "answer_meta": row.answer_meta,
@@ -2034,12 +2115,18 @@ def get_pending_confirms(
 
 
 def answer_author_confirm(
-    db: Session, confirm_id: uuid.UUID, answer: str, note: Optional[str] = None
+    db: Session,
+    confirm_id: uuid.UUID,
+    answer: str,
+    note: Optional[str] = None,
+    field_answers: Optional[dict] = None,
 ) -> dict:
     """作者提交确认答案：把 pending 置为 answered（生成任务轮询到后恢复）。
 
     选项命中时 answer 为选项 id，answer_meta 记录选中选项的 label + 作者补充说明；
-    自定义输入时 answer 为作者原文。
+    自定义输入时 answer 为作者原文；
+    场景写法提案「都不满意，重新生成」时 answer 为 __regenerate__（调用方重新生成再弹）；
+    场景卡片确认（多字段）时 answer 为 __fields__，各字段取值在 field_answers（字段→选定文本）。
     """
     from datetime import datetime, timezone
 
@@ -2056,6 +2143,8 @@ def answer_author_confirm(
     row.answer_meta = {
         "label": option.get("label") if option else None,
         "note": note or "",
+        "regenerate": answer == "__regenerate__",
+        "fields": field_answers or None,  # 场景卡片确认的字段答案（字段→选定文本）
     }
     row.answered_at = datetime.now(timezone.utc)
     db.commit()
@@ -2090,6 +2179,8 @@ async def request_author_confirmation(
     confirm_key: str,
     question: str,
     options: Optional[list[dict]] = None,
+    fields: Optional[list[dict]] = None,
+    regenerable: bool = False,
     allow_custom: bool = True,
     on_pending=None,
 ) -> dict:
@@ -2097,10 +2188,15 @@ async def request_author_confirmation(
 
     - 幂等：同 (novel_id, agent, confirm_key) 已有 pending → 不重复创建，直接等它；
       已 answered → 直接返回答案（同一确认点不会重复弹窗）。
+    - fields：场景卡片确认（一个场景 5 个字段，每字段 5 个候选）；存在时前端按卡片渲染，
+      作者逐字段单选/自定义，答案在 answer_meta["fields"]（字段→选定文本）。
+    - regenerable：场景写法提案确认；前端额外提供「都不满意，重新生成」按钮（回传 __regenerate__，
+      调用方检测后重新生成提案、以新 confirm_key 再弹）。
     - on_pending(row_dict)：确认请求落库后同步回调。调用方用它把 SSE author_confirm
       事件塞进转发队列，让在线前端实时弹窗；刷新/断线用户靠 get_pending_confirms 轮询恢复。
     - 返回 {"status": "answered"|"dismissed"|"timeout",
-             "answer": str|None, "option": dict|None, "note": str|None}
+             "answer": str|None, "option": dict|None, "note": str|None,
+             "regenerate": bool, "fields": dict|None}
     """
     from app.db.models import AuthorConfirm
 
@@ -2124,6 +2220,8 @@ async def request_author_confirmation(
             status="pending",
             question=question,
             options=options or [],
+            fields=fields,
+            regenerable=regenerable,
             allow_custom=allow_custom,
         )
         db.add(row)
@@ -2184,11 +2282,14 @@ def _confirm_result(row) -> dict:
     option = None
     if row.options:
         option = next((o for o in row.options if isinstance(o, dict) and o.get("id") == row.answer), None)
+    meta = row.answer_meta or {}
     return {
         "status": "answered",
         "answer": row.answer,
         "option": option,
-        "note": (row.answer_meta or {}).get("note"),
+        "note": meta.get("note"),
+        "regenerate": bool(meta.get("regenerate")),
+        "fields": meta.get("fields") or None,
     }
 
 

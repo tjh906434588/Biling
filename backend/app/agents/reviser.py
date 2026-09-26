@@ -33,6 +33,7 @@ from app.agents.context import (
     get_settings_snapshot,
 )
 from app.agents.l1 import L1_ANTI_AI_CONSTRAINTS
+from app.agents.platform_rules import PLATFORM_ANTI_CLICHE
 from app.db.models import ChapterVersion
 from app.schemas.agents import NovelChapter
 from app.services.detector import detect
@@ -80,6 +81,8 @@ SYSTEM_PROMPT = f"""你是「修订师」，一位手稳的老编辑。你的任
 - 上一段正文的检测指标（句长变异系数 / 极短句占比 / 连接词密度）就是你的量化目标，
   修订后应当明显改善；尤其注意把"整段句长都在 15–30 字"的地方打断。
 - 禁止模板式开头（"那是一个……的日子"）；结尾停在具体画面或动作上。
+
+{PLATFORM_ANTI_CLICHE}
 
 {L1_ANTI_AI_CONSTRAINTS}
 """

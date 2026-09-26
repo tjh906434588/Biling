@@ -96,8 +96,8 @@ export const SETTING_TYPES = [
 
 export type SettingType = (typeof SETTING_TYPES)[number];
 
-/** 设定数据来源：blueprint 蓝图导入（按版本存储，仅当前生效蓝图的导入设定可见）| outline 大纲批准时注入（按来源版本切换显示/隐藏）| batch 批量新增 | manual 单个新增 */
-export type SettingSource = "blueprint" | "batch" | "manual" | "outline";
+/** 设定数据来源：blueprint 蓝图导入（按版本存储，仅当前生效蓝图的导入设定可见）| outline 大纲批准时注入（按来源版本切换显示/隐藏）| batch 批量新增 | manual 单个新增 | extraction 正文提取（首次登场即建档） */
+export type SettingSource = "blueprint" | "batch" | "manual" | "outline" | "extraction";
 
 export interface Setting {
   id: string;
@@ -1033,18 +1033,37 @@ export interface StreamEventData {
   data: unknown;
 }
 
-/** 作者确认请求里的一个候选选项（radio 卡片）。 */
+/** 作者确认请求里的一个候选选项（radio 卡片）。
+ * 章节规划采用「逐维度流式咨询」：每次确认只带一个维度的 5 个选项，
+ * 选项用 text 展示（选中后作为该维度取值）；作者也可自定义输入该维度。 */
 export interface AuthorConfirmOption {
   id: string;
-  label: string;
+  label?: string;
   desc?: string;
-  /** 章节规划（novelist 写正文前咨询「本章规划」）：标题/目标/节奏功能/视角/节拍/结尾钩子 */
+  /** 选项展示文本（章节规划逐维度选项用 text 字段；兼容其它确认的 label 展示） */
+  text?: string;
+  /** 章节规划（novelist 写正文前咨询「本章规划」）：标题/目标/节奏功能/视角/节拍/结尾钩子 + 写法要点 */
   title?: string;
   goal?: string;
   chapter_function?: string;
   pov?: string;
   beats?: string[];
   ending_hook?: string;
+  /** 写法要点（作者选定的"关键场景怎么演"，novelist 照此定向写）： */
+  entry?: string; // 核心事件如何进入/点燃
+  tone?: string; // 本章风格基调
+  protagonist_arc?: string; // 主角态度弧线
+  core_conflict?: string; // 核心冲突具体形态
+  satisfaction?: string; // 爽点/阅读回报类型
+}
+
+/** 场景卡片确认里的一个字段（场景规划）：label + 5 个候选选项，作者逐字段单选/自定义。 */
+export interface AuthorConfirmField {
+  /** location | participants | goal | conflict | outcome */
+  field: string;
+  label: string;
+  hint?: string;
+  options: AuthorConfirmOption[];
 }
 
 /** 生成流程内作者确认请求（SSE author_confirm / GET confirm 轮询恢复）。 */
@@ -1061,6 +1080,10 @@ export interface AuthorConfirm {
   status: string;
   question: string;
   options: AuthorConfirmOption[];
+  /** 场景卡片确认（场景规划）：非空时按「场景卡片」渲染（逐字段单选+自定义） */
+  fields?: AuthorConfirmField[];
+  /** 场景写法提案确认：前端额外提供「都不满意，重新生成」按钮（回传 __regenerate__） */
+  regenerable?: boolean;
   /** 是否允许作者自定义输入（大纲方向咨询时开启） */
   allow_custom: boolean;
   answer?: string | null;
@@ -1084,16 +1107,25 @@ export async function fetchPendingConfirms(novelId?: string, agent?: string): Pr
   return (data.items ?? []) as AuthorConfirm[];
 }
 
-/** 提交作者确认：answer 为选项 id 或自定义输入文本；note 为可选补充说明。 */
+/**
+ * 提交作者确认：answer 为选项 id / 自定义文本 / __regenerate__ / __fields__；
+ * note 为可选补充说明；fieldAnswers 为场景卡片确认的字段答案（字段 → 选定文本）。
+ */
 export async function submitAuthorConfirm(
   confirmId: string,
   answer: string,
   note?: string,
+  fieldAnswers?: Record<string, string>,
 ): Promise<AuthorConfirm> {
   const res = await fetch(`${BASE}/stream/agents/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirm_id: confirmId, answer, note: note || undefined }),
+    body: JSON.stringify({
+      confirm_id: confirmId,
+      answer,
+      note: note || undefined,
+      field_answers: fieldAnswers && Object.keys(fieldAnswers).length > 0 ? fieldAnswers : undefined,
+    }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

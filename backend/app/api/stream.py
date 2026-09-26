@@ -99,6 +99,20 @@ def _summarize_outline(o: Outline) -> str:
     beats = [b.get("content") for b in (c.get("beats") or []) if b.get("content")]
     if beats:
         parts.append(f"节拍：{'；'.join(beats)[:400]}")
+    wt = c.get("writing_treatment") or {}
+    wparts = []
+    if wt.get("entry"):
+        wparts.append(f"进入/触发：{wt['entry']}")
+    if wt.get("tone"):
+        wparts.append(f"风格基调：{wt['tone']}")
+    if wt.get("protagonist_arc"):
+        wparts.append(f"主角反应弧：{wt['protagonist_arc']}")
+    if wt.get("core_conflict"):
+        wparts.append(f"核心冲突：{wt['core_conflict']}")
+    if wt.get("satisfaction"):
+        wparts.append(f"爽点类型：{wt['satisfaction']}")
+    if wparts:
+        parts.append("写法要点（作者定向）：" + "；".join(wparts))
     pf = [p.get("desc") for p in (c.get("plant_foreshadowing") or []) if p.get("desc")]
     if pf:
         parts.append("埋设：" + "、".join(pf))
@@ -639,8 +653,9 @@ async def _propose_outline_direction(
 def _plan_to_outline_text(plan: dict) -> str:
     """把作者确认的「本章规划」压成大纲文本，注入 novelist 的【本章大纲】组件。
 
-    规划字段（title/goal/chapter_function/pov/beats/ending_hook）与 novelist 读取的
-    大纲结构一致：chapter_function 派生 L3 节奏、goal 注入【本章目标】、节拍给正文骨架。
+    规划字段（title/goal/chapter_function/pov/beats/ending_hook + 写法要点）与 novelist
+    读取的大纲结构一致：chapter_function 派生 L3 节奏、goal 注入【本章目标】、节拍给正文
+    骨架。写法要点是作者定向——novelist 必须照此演，不自由发挥。
     """
     parts = [
         f"标题：{plan.get('title') or ''}",
@@ -648,11 +663,26 @@ def _plan_to_outline_text(plan: dict) -> str:
         f"节奏功能：{plan.get('chapter_function') or 'progression'}",
         f"视角：{plan.get('pov') or ''}",
     ]
+    if plan.get("pace"):
+        parts.append(f"节奏/开场：{plan['pace']}")
     beats = [b for b in (plan.get("beats") or []) if isinstance(b, str) and b.strip()]
     if beats:
         parts.append(f"节拍：{'；'.join(beats)}")
     if plan.get("ending_hook"):
         parts.append(f"结尾钩子：{plan.get('ending_hook')}")
+    wt = []
+    if plan.get("entry"):
+        wt.append(f"进入/触发：{plan['entry']}")
+    if plan.get("tone"):
+        wt.append(f"风格基调：{plan['tone']}")
+    if plan.get("protagonist_arc"):
+        wt.append(f"主角反应弧：{plan['protagonist_arc']}")
+    if plan.get("core_conflict"):
+        wt.append(f"核心冲突：{plan['core_conflict']}")
+    if plan.get("satisfaction"):
+        wt.append(f"爽点类型：{plan['satisfaction']}")
+    if wt:
+        parts.append("写法要点（作者定向，不得替换演法）：" + "；".join(wt))
     return "\n".join(p for p in parts if p)
 
 
@@ -664,14 +694,17 @@ async def _propose_chapter_plan(
     on_pending=None,
     on_stream=None,
 ) -> dict | None:
-    """正文生成前置：章节规划师产出 3 套「本章规划」→ 作者确认（或自定义输入）→ 返回确认的规划。
+    """正文生成前置：逐维度咨询作者「本章规划」（大纲+章节合并方案）。
 
-    大纲+章节合并方案的核心钩子：写正文前弹窗给本章规划（标题/目标/节奏功能/视角/
-    3-4 节拍/结尾钩子），作者选择或自定义后返回完整规划 dict，由调用方落库为
-    approved 大纲（轻量版）并注入 novelist 参数据此写正文。
-    作者忽略/超时/提案失败返回 None（novelist 按既有方式续写，不阻断生成）。
-    confirm_key 带 task_id：每次生成任务独立咨询（换方向重生成时会重新咨询）。
+    章节规划师把本章规划拆成 10 个固定维度（核心事件/节奏开场/视角/节拍/结尾钩子/进入触发/
+    风格基调/主角反应弧/核心冲突/爽点类型）。**一次只生成一个维度**的 5 个固定不重复候选选项
+    （+ 前端 1 个自定义输入），作者选定/输入后，把前面的选择作为上下文再生成下一个维度，
+    共 10 轮。作者任一轮跳过/超时 → 中断咨询返回 None（novelist 按既有方式续写，不阻断）。
+    全部定完后组合成完整 plan dict（title/goal/chapter_function/pov/beats/ending_hook +
+    写法要点），由调用方落库为 approved 大纲（轻量版）并注入 novelist 参数据此写正文。
+    confirm_key 带 task_id + 维度 key：每次生成任务独立咨询（换方向重生成时会重新咨询）。
     """
+    from app.agents.chapter_planner import PLAN_DIMENSIONS, options_overlap
     from app.services.pipeline import request_author_confirmation
 
     # 章节号先确定：planner 上下文（时间线/阶段）与落库（persist_chapter_plan）都要用
@@ -683,70 +716,342 @@ async def _propose_chapter_plan(
         chapter_no = (last or 0) + 1
         params["chapter_no"] = chapter_no
 
-    proposal: dict | None = None
-    try:
-        async for sse in run_agent_stream(db, "chapter_planner", novel_id, params, dry_run=True):
-            ev = _parse_sse_event(sse)
-            if on_stream and ev and ev["name"] == "thinking_delta":
-                on_stream(sse)  # 规划思考实时转发，生成弹窗里滚动展示
-            if ev and ev["name"] == "stored" and ev["data"].get("action") == "dry_run":
-                proposal = ev["data"].get("data") or {}
-    except Exception:
-        logger.exception("novel_id=%s 本章规划提案生成失败（不阻断正文生成）", novel_id)
-        return None
-    if not proposal:
-        return None
-    plans = [
-        p for p in (proposal.get("plans") or [])
-        if isinstance(p, dict) and p.get("id") and p.get("title")
-    ]
-    if len(plans) < 3:
-        logger.warning("novel_id=%s 本章规划提案不足 3 套（%s），跳过咨询", novel_id, len(plans))
-        return None
     if on_pending is None:
         return None  # 无弹窗通道则跳过咨询（理论不出现，兜底）
 
+    # 执行方案骨架（与 _plan_to_outline_text / persist_chapter_plan 读取的 key 一致）
+    plan: dict = {
+        "label": "",
+        "title": "",
+        "goal": "",
+        "pace": "",
+        "chapter_function": "progression",
+        "pov": "",
+        "beats": [],
+        "ending_hook": "",
+        "entry": "",
+        "tone": "",
+        "protagonist_arc": "",
+        "core_conflict": "",
+        "satisfaction": "",
+    }
+    selections: dict[str, str] = {}  # 维度key → 取值（选项 text 或作者自定义文本）
+    note = ""
+
+    for idx, dim in enumerate(PLAN_DIMENSIONS):
+        key = dim["key"]
+        # 1) 生成当前维度的候选选项：带上前面已定维度（plan_selections）作为上下文
+        params["plan_dimension_key"] = key
+        params["plan_selections"] = dict(selections)
+        proposal: dict | None = None
+        try:
+            async for sse in run_agent_stream(db, "chapter_planner", novel_id, params, dry_run=True):
+                ev = _parse_sse_event(sse)
+                if on_stream and ev and ev["name"] == "thinking_delta":
+                    on_stream(sse)  # 规划思考实时转发，生成弹窗里滚动展示
+                if ev and ev["name"] == "stored" and ev["data"].get("action") == "dry_run":
+                    proposal = ev["data"].get("data") or {}
+        except Exception:
+            logger.exception(
+                "novel_id=%s 第 %s 个维度（%s）提案生成失败，中断逐维度咨询（不阻断正文生成）",
+                novel_id, idx + 1, key,
+            )
+            return None
+        if not proposal:
+            return None
+        dim_data = proposal.get("dimension") or {}
+        options = [
+            o for o in (dim_data.get("options") or [])
+            if isinstance(o, dict) and o.get("id") and str(o.get("text", "")).strip()
+        ]
+        if len(options) != 5:
+            logger.warning(
+                "novel_id=%s 第 %s 个维度（%s）候选数不是 5（%s），中断逐维度咨询",
+                novel_id, idx + 1, key, len(options),
+            )
+            return None
+
+        # 2.5) 相似度校验：同一维度内出现雷同选项（同一桥段换措辞凑数）则自动重新生成一次
+        overlap = options_overlap(options)
+        if overlap:
+            logger.warning(
+                "novel_id=%s 第 %s 个维度（%s）候选雷同：%s，自动重试一次",
+                novel_id, idx + 1, key, overlap,
+            )
+            params["_dim_retry"] = {"key": key, "reason": overlap}
+            try:
+                async for sse in run_agent_stream(db, "chapter_planner", novel_id, params, dry_run=True):
+                    ev = _parse_sse_event(sse)
+                    if on_stream and ev and ev["name"] == "thinking_delta":
+                        on_stream(sse)
+                    if ev and ev["name"] == "stored" and ev["data"].get("action") == "dry_run":
+                        proposal = ev["data"].get("data") or {}
+            except Exception:
+                logger.exception("novel_id=%s 第 %s 个维度（%s）雷同重试失败，沿用上一轮选项", novel_id, idx + 1, key)
+                proposal = None
+            finally:
+                params.pop("_dim_retry", None)
+            if proposal:
+                dim_data = proposal.get("dimension") or {}
+                retry_options = [
+                    o for o in (dim_data.get("options") or [])
+                    if isinstance(o, dict) and o.get("id") and str(o.get("text", "")).strip()
+                ]
+                if len(retry_options) == 5:
+                    options = retry_options
+                    overlap2 = options_overlap(options)
+                    if overlap2:
+                        logger.warning(
+                            "novel_id=%s 第 %s 个维度（%s）重试后仍雷同（%s），按原样提供给作者（作者可自定义）",
+                            novel_id, idx + 1, key, overlap2,
+                        )
+                else:
+                    logger.warning(
+                        "novel_id=%s 第 %s 个维度（%s）重试候选数不是 5（%s），沿用上一轮选项",
+                        novel_id, idx + 1, key, len(retry_options),
+                    )
+
+        # 3) 请作者在当前维度选择或自定义
+        done_lines = [
+            f"{d['label']}={selections[d['key']]}"
+            for d in PLAN_DIMENSIONS[:idx]
+            if d["key"] in selections and selections[d["key"]]
+        ]
+        prev_txt = "；".join(done_lines) if done_lines else "（无，这是本章第一个维度）"
+        try:
+            decision = await request_author_confirmation(
+                db,
+                novel_id=novel_id,
+                task_id=task_id,
+                agent="novelist",
+                confirm_key=f"chapter_plan_{task_id}_{key}",
+                question=(
+                    f"即将写作第 {chapter_no} 章正文。第 {idx + 1}/{len(PLAN_DIMENSIONS)} 维度「{dim['label']}」"
+                    f"——{dim['hint']}。\n"
+                    f"前序已定：{prev_txt}。\n"
+                    f"选一个方向，或输入你自己的："
+                ),
+                options=options,
+                allow_custom=True,
+                on_pending=on_pending,
+            )
+        except Exception:
+            logger.exception("novel_id=%s 本章规划第 %s 维度确认流程异常（不阻断正文生成）", novel_id, idx + 1)
+            return None
+        if decision.get("status") != "answered":
+            return None  # 作者跳过/超时：中断逐维度咨询，novelist 按既有方式续写
+        answer = decision.get("answer")
+        if not answer:
+            return None
+        if (decision.get("note") or "").strip():
+            note = decision["note"].strip()
+
+        # 3) 取值并入执行方案：命中选项取其 text + 结构化信息；未命中（自定义）用作者原文
+        opt = next((o for o in options if o["id"] == answer), None)
+        if opt:
+            value = opt["text"]
+            if key == "pace" and opt.get("chapter_function"):
+                plan["chapter_function"] = opt["chapter_function"]
+            if key == "beats" and opt.get("beats"):
+                plan["beats"] = [b for b in opt["beats"] if isinstance(b, str) and b.strip()]
+        else:
+            value = answer
+        plan[key] = value
+        selections[key] = value
+
+    if note:
+        plan["note"] = note
+    return plan
+
+
+async def _propose_scene_plan(
+    db: Session,
+    novel_id: uuid.UUID,
+    params: dict,
+    task_id: uuid.UUID,
+    plan: dict,
+    on_pending=None,
+    on_stream=None,
+) -> list[dict] | None:
+    """正文生成前置（第 2 阶段）：10 维度定稿后，把本章拆成 3-5 个场景逐字段确认。
+
+    场景规划师基于作者已确认的 10 个维度（params["chapter_plan"]）+ 同一套素材，
+    一次生成 3-5 个场景的骨架（每场景五字段：地点/出场人物/目标/冲突/结果，每字段恰好
+    5 个固定不重复候选 + 前端 1 个自定义）。作者在「场景卡片」内逐字段单选/自定义，
+    一张卡一个场景；全部场景确认后，再对每个场景生成 5 个约 100 字的写法提案，
+    作者六选一（5 提案 + 自定义，或「都不满意，重新生成」）。最终拼成场景执行清单
+    [{scene_index, location, participants, goal, conflict, outcome, proposal}]，
+    注入 params["scene_plan"] 供 novelist 作为硬约束写作。
+
+    作者在任一确认点跳过/超时 → 中断场景规划返回 None（novelist 按 10 维度方案续写，不阻断）。
+    """
+    from app.agents.scene_planner import SCENE_FIELDS
+    from app.services.pipeline import request_author_confirmation
+
+    chapter_no = params.get("chapter_no")
+    if on_pending is None:
+        return None  # 无弹窗通道则跳过场景规划（兜底）
+
+    # ---- 阶段 1：生成 3-5 个场景骨架（一次产出全部场景，每字段 5 候选） ----
+    params["scene_task"] = "plan"
+    params["chapter_plan"] = plan
+    proposal: dict | None = None
     try:
-        decision = await request_author_confirmation(
-            db,
-            novel_id=novel_id,
-            task_id=task_id,
-            agent="novelist",
-            confirm_key=f"chapter_plan_{task_id}",
-            question=(
-                f"即将写作第 {chapter_no} 章正文。蓝图只是大方向，这一章具体怎么走"
-                "（目标/节奏/视角/节拍/结尾钩子）由你定夺（可选一套规划，或自己写一套）："
-            ),
-            options=plans,
-            allow_custom=True,
-            on_pending=on_pending,
-        )
+        async for sse in run_agent_stream(db, "scene_planner", novel_id, params, dry_run=True):
+            ev = _parse_sse_event(sse)
+            if on_stream and ev and ev["name"] == "thinking_delta":
+                on_stream(sse)  # 场景规划思考实时转发
+            if ev and ev["name"] == "stored" and ev["data"].get("action") == "dry_run":
+                versions = ev["data"].get("versions") or []
+                if versions and versions[0].get("data"):
+                    proposal = versions[0]["data"] or {}
     except Exception:
-        logger.exception("novel_id=%s 本章规划确认流程异常（不阻断正文生成）", novel_id)
+        logger.exception("novel_id=%s 场景骨架生成失败，中断场景规划（不阻断正文生成）", novel_id)
         return None
-    if decision.get("status") != "answered":
-        return None  # dismissed / timeout：novelist 按既有方式续写
-    answer = decision.get("answer")
-    option = decision.get("option")
-    note = (decision.get("note") or "").strip()
-    if option:
-        plan = dict(option)
-        if note:
-            plan["note"] = note
-        return plan
-    if answer:
-        # 自定义规划：作者只给方向，无完整结构，按「目标=作者输入」落库，novelist 自由发挥
-        return {
-            "label": answer,
-            "title": "",
-            "goal": answer,
-            "chapter_function": "progression",
-            "pov": "",
-            "beats": [],
-            "ending_hook": "",
-            "note": note,
+    if not proposal:
+        return None
+
+    # 规范化：按 scene_index 排序、按 SCENE_FIELDS 固定顺序重排字段、校验每字段恰 5 选项
+    scenes: list[dict] = []
+    for s in proposal.get("scenes") or []:
+        raw_fields = {
+            (f.get("field") or ""): f
+            for f in (s.get("fields") or [])
+            if isinstance(f, dict) and f.get("field")
         }
-    return None
+        field_payloads: list[dict] = []
+        ok = True
+        for spec in SCENE_FIELDS:
+            f = raw_fields.get(spec["field"])
+            if not f:
+                ok = False
+                break
+            options = [
+                o for o in (f.get("options") or [])
+                if isinstance(o, dict) and o.get("id") and str(o.get("text", "")).strip()
+            ]
+            if len(options) != 5:
+                ok = False
+                break
+            field_payloads.append({
+                "field": spec["field"],
+                "label": spec["label"],
+                "hint": spec["hint"],
+                "options": options,
+            })
+        if not ok:
+            logger.warning("novel_id=%s 场景骨架字段/选项数异常，中断场景规划", novel_id)
+            return None
+        scenes.append({
+            "scene_index": int(s.get("scene_index") or 0),
+            "fields": field_payloads,
+        })
+    scenes.sort(key=lambda x: x["scene_index"])
+    for i, sc in enumerate(scenes):
+        sc["scene_index"] = i + 1  # 重排为 1..N，与确认顺序一致
+    if not (3 <= len(scenes) <= 5):
+        logger.warning("novel_id=%s 场景数不是 3-5（%s），中断场景规划", novel_id, len(scenes))
+        return None
+
+    # ---- 阶段 2：逐场景卡片确认（每张卡 = 一个场景的五字段，逐字段单选/自定义） ----
+    scene_candidates: list[dict] = []
+    for i, sc in enumerate(scenes):
+        fields_payload = sc["fields"]
+        try:
+            decision = await request_author_confirmation(
+                db,
+                novel_id=novel_id,
+                task_id=task_id,
+                agent="scene_planner",
+                confirm_key=f"scene_plan_{task_id}_{i}",
+                question=(
+                    f"第 {chapter_no} 章 · 场景 {i + 1}/{len(scenes)}。"
+                    f"下面五个要素各给 5 个候选，逐项选择或输入你自己的；全部确认后进入下一张卡片。\n"
+                    f"（作者已确认的本章规划会作为上下文生成这些候选）"
+                ),
+                fields=fields_payload,
+                allow_custom=True,
+                on_pending=on_pending,
+            )
+        except Exception:
+            logger.exception("novel_id=%s 场景 %s 卡片确认流程异常（中断场景规划）", novel_id, i + 1)
+            return None
+        if decision.get("status") != "answered":
+            return None  # 作者跳过/超时：放弃场景规划
+        field_answers = decision.get("fields") or {}
+        if not isinstance(field_answers, dict):
+            return None
+        cand: dict = {"scene_index": i + 1}
+        for spec in SCENE_FIELDS:
+            val = str(field_answers.get(spec["field"]) or "").strip()
+            if not val:
+                logger.warning("novel_id=%s 场景 %s 字段「%s」未填写，中断场景规划", novel_id, i + 1, spec["label"])
+                return None
+            cand[spec["field"]] = val
+        scene_candidates.append(cand)
+
+    # ---- 阶段 3：逐场景写法提案确认（5 提案 + 自定义，六选一；可重新生成） ----
+    scene_plan: list[dict] = []
+    for i, cand in enumerate(scene_candidates):
+        params["scene_task"] = "proposal"
+        params["scene_index"] = i + 1
+        params["scene_candidate"] = cand
+        selected: str = ""
+        for round_no in range(3):  # 「重新生成」最多 3 轮，防死循环
+            prop_out: list[dict] = []
+            try:
+                async for sse in run_agent_stream(db, "scene_planner", novel_id, params, dry_run=True):
+                    ev = _parse_sse_event(sse)
+                    if on_stream and ev and ev["name"] == "thinking_delta":
+                        on_stream(sse)
+                    if ev and ev["name"] == "stored" and ev["data"].get("action") == "dry_run":
+                        versions = ev["data"].get("versions") or []
+                        if versions and versions[0].get("data"):
+                            pdata = versions[0]["data"] or {}
+                            prop_out = [
+                                o for o in (pdata.get("proposals") or [])
+                                if isinstance(o, dict) and o.get("id") and str(o.get("text", "")).strip()
+                            ]
+            except Exception:
+                logger.exception("novel_id=%s 场景 %s 写法提案生成失败（跳过提案）", novel_id, i + 1)
+                break
+            if len(prop_out) != 5:
+                logger.warning("novel_id=%s 场景 %s 写法提案数不是 5（%s），跳过提案", novel_id, i + 1, len(prop_out))
+                break
+            try:
+                decision = await request_author_confirmation(
+                    db,
+                    novel_id=novel_id,
+                    task_id=task_id,
+                    agent="scene_planner",
+                    confirm_key=f"scene_proposal_{task_id}_{i}_r{round_no}",
+                    question=(
+                        f"第 {chapter_no} 章 · 场景 {i + 1}/{len(scene_candidates)} 的写法提案。\n"
+                        f"该场景：{cand['location']}｜{cand['participants']}｜目标={cand['goal']}｜"
+                        f"冲突={cand['conflict']}｜结果={cand['outcome']}\n"
+                        f"5 个提案是 5 种不同的写法（约 100 字梗概），选一个；都不满意可输入自己的，或选「重新生成」。"
+                    ),
+                    options=prop_out,
+                    regenerable=True,
+                    allow_custom=True,
+                    on_pending=on_pending,
+                )
+            except Exception:
+                logger.exception("novel_id=%s 场景 %s 写法提案确认异常（跳过提案）", novel_id, i + 1)
+                break
+            if decision.get("status") != "answered":
+                break  # 作者跳过/超时：该场景无提案，场景清单保留
+            if decision.get("regenerate"):
+                continue  # 重新生成提案再弹
+            answer = decision.get("answer")
+            if not answer:
+                break
+            opt = next((o for o in prop_out if o["id"] == answer), None)
+            selected = opt["text"] if opt else answer
+            break
+        scene_plan.append({**cand, "proposal": selected})
+
+    return scene_plan
 
 
 def _iso_utc(dt) -> str | None:
@@ -929,7 +1234,9 @@ def submit_author_confirm(payload: AuthorConfirmSubmitRequest, db: Session = Dep
     已答复/不存在的确认请求返回 409/404。
     """
     try:
-        return answer_author_confirm(db, payload.confirm_id, payload.answer, payload.note)
+        return answer_author_confirm(
+            db, payload.confirm_id, payload.answer, payload.note, field_answers=payload.field_answers
+        )
     except ValueError as e:
         # 区分 404（不存在）与 409（已处理）：已答复的重复提交不是错误，幂等返回即可，
         # 前端可能因网络抖动重发；这里统一按 404 处理，前端遇到即关弹窗刷新。
@@ -1039,11 +1346,13 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
                 logger.exception("novel_id=%s 大纲方向提案异常（不阻断生成）", payload.novel_id)
 
         # 正文生成前置：咨询作者「本章规划」（大纲+章节合并方案）。
-        # 章节规划师基于与大纲师同一套素材产出 3 套完整规划（标题/目标/节奏功能/视角/
-        # 节拍/结尾钩子），作者选择或自定义后，确认的规划落库为 approved 大纲（轻量版）
-        # 并注入 novelist 参数据此写正文；重写（rewrite）方向已定、不咨询；
+        # 章节规划师基于与大纲师同一套素材把本章规划拆成 10 个独立维度（核心事件/节奏开场/
+        # 视角/节拍/结尾钩子/进入触发/风格基调/主角反应弧/核心冲突/爽点类型），作者逐项选择或自定义，
+        # 组合的方案落库为 approved 大纲（轻量版）并注入 novelist 参数据此写正文；
+        # 重新生成=新增，照常咨询（方向由作者重新定夺）；
+        # 仅批量自动重写（auto_rewrite，无人工确认环节）跳过咨询，避免打断批量自动化；
         # 作者忽略/超时则不注入（novelist 按既有方式续写）。
-        if agent == "novelist" and not payload.dry_run and not (payload.params or {}).get("rewrite"):
+        if agent == "novelist" and not payload.dry_run and not (payload.params or {}).get("auto_rewrite"):
             try:
                 plan = await _propose_chapter_plan(
                     task_db, payload.novel_id, payload.params, task.id,
@@ -1062,6 +1371,16 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
                     if plan.get("title"):
                         payload.params["title"] = plan.get("title")
                     payload.params["writing_mode"] = "outline_guided"
+
+                    # 正文生成前置（第 2 阶段）：10 维度定稿后把本章拆成 3-5 个场景逐字段确认，
+                    # 再对每个场景生成 5 个写法提案六选一；作者任一确认点跳过/超时则放弃场景
+                    # 规划（novelist 按 10 维度方案续写，不阻断生成）。
+                    scene_plan = await _propose_scene_plan(
+                        task_db, payload.novel_id, payload.params, task.id, plan,
+                        on_pending=_emit_author_confirm, on_stream=_emit_stream,
+                    )
+                    if scene_plan:
+                        payload.params["scene_plan"] = scene_plan
             except Exception:
                 logger.exception("novel_id=%s 本章规划前置异常（不阻断生成）", payload.novel_id)
 

@@ -15,6 +15,7 @@ from app.agents.novelist import NovelistAgent
 from app.agents.outline_checker import OutlineCheckerAgent
 from app.agents.outliner import OutlinerAgent
 from app.agents.reviser import ReviserAgent
+from app.agents.scene_planner import ScenePlannerAgent
 from app.agents.setting_extractor import SettingExtractorAgent
 from app.agents.style_extractor import StyleExtractorAgent
 
@@ -34,6 +35,7 @@ REGISTRY: dict[str, type[Agent]] = {
     "era_researcher": EraResearcherAgent,  # 时代行业研究员（生成蓝图前自动研究，落库 novel.era_research）
     "direction_proposer": DirectionProposerAgent,  # 大纲方向提案师（生成大纲前咨询作者下一步发展脉络，产出 3 个方向候选）
     "chapter_planner": ChapterPlannerAgent,  # 章节规划师（写正文前咨询作者「本章规划」，产出 3 套完整规划候选）
+    "scene_planner": ScenePlannerAgent,  # 场景规划师（10 维度定稿后把本章拆成 3-5 个场景逐字段确认；每场景扩写前生成 5 个写法提案）
 }
 
 AGENT_NAMES = list(REGISTRY.keys())

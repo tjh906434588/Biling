@@ -31,6 +31,30 @@ def get_novel(db: Session, novel_id: uuid.UUID) -> Optional[Novel]:
     return db.get(Novel, novel_id)
 
 
+def get_chapter_author_directives(db: Session, novel_id: uuid.UUID, chapter_no) -> list[dict]:
+    """作者对本章的历史修改意见（意见持久化，M 增强）。
+
+    评价优化时提交的 author_note 会落库到 chapters.author_directives；重新生成/规划/
+    续写本章时，novelist / chapter_planner 读取并注入，防止作者指出过的问题再次出现。
+    返回 list[{text, version_no, created_at}]（按记录先后）。
+    """
+    if not chapter_no:
+        return []
+    try:
+        chapter_no = int(chapter_no)
+    except (TypeError, ValueError):
+        return []
+    if chapter_no <= 0:
+        return []
+    chapter = db.execute(
+        select(Chapter).where(Chapter.novel_id == novel_id, Chapter.chapter_no == chapter_no)
+    ).scalar_one_or_none()
+    if chapter is None:
+        return []
+    directives = [d for d in (chapter.author_directives or []) if isinstance(d, dict)]
+    return [d for d in directives if str(d.get("text") or "").strip()]
+
+
 def get_approved_outline_ids(db: Session, novel_id: uuid.UUID) -> set[str]:
     """各章当前批准版大纲 id（字符串集合）；大纲注入的设定/账本据此判断可见性。"""
     from app.db.models import Outline
