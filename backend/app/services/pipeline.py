@@ -1663,6 +1663,7 @@ def persist_chapter_plan(
         title=plan.get("title"),
         content={
             "goal": plan.get("goal", ""),
+            "time_slice": plan.get("time_slice", ""),
             "chapter_function": plan.get("chapter_function", "progression"),
             "pov": plan.get("pov", ""),
             "beats": beats,

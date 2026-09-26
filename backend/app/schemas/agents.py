@@ -107,6 +107,18 @@ class TimelineEvent(BaseModel):
     status: str = "established"
 
 
+class OpeningAnchor(BaseModel):
+    """开篇锚点（蓝图级硬决策）：第 1 章落在哪个时间切片、金手指/系统第几章揭示。
+
+    把「第 1 章就亮系统 / 慢热铺垫」这类节奏决策从各角色各自解读，升级为蓝图级
+    确定性声明——大纲师/章节规划师/小说家一律以此为据，作者在蓝图阶段已拍板。
+    """
+    # 第 1 章的时间切片（如写实事业流"入职第一天"；无明确锚点留空）
+    first_chapter_slice: str = ""
+    # 金手指/系统首次揭示的章节号（无金手指填 0）
+    golden_finger_reveal_chapter: int = 0
+
+
 class Blueprint(BaseModel):
     title: str
     logline: str
@@ -129,6 +141,8 @@ class Blueprint(BaseModel):
     # 时间线硬事实：带明确时间的事实逐条收录（成立/入职/离职/创业/搬迁/重大事件），
     # 写作/评价时作为确定性核对依据（entity_checker），防止散文时间线被各角色各自解读
     timeline: list[TimelineEvent] = []
+    # 开篇锚点：第 1 章时间切片 + 金手指揭示章（蓝图级硬决策，下游一律以此为据）
+    opening_anchor: Optional[OpeningAnchor] = None
     # 导入模式专用：文档 vs 设定库的不一致记录；设定库为空或无冲突时为空数组
     blueprint_conflicts: list[BlueprintConflict] = []
 
@@ -547,8 +561,9 @@ class ChapterPlanDimensionOption(BaseModel):
     id: str  # 稳定短 id（如 "goal_1"），作者选中时回传
     text: str  # 候选文本（前端展示；作者选中后作为该维度取值）
     # —— 该选项携带的结构化信息（作者选中后合并进执行方案）——
-    chapter_function: Optional[str] = None  # goal 维度：节奏功能（progression/climax/…）
+    chapter_function: Optional[str] = None  # pace 维度：本章节奏功能（progression/climax/…）
     beats: Optional[list[str]] = None  # beats 维度：该套节拍序列（3-4 个，每个一句话）
+    time_slice: Optional[str] = None  # goal 维度：该选项所处的时间切片（如「入职第一天」）
 
 
 class ChapterPlanDimension(BaseModel):

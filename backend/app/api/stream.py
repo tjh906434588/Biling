@@ -663,6 +663,8 @@ def _plan_to_outline_text(plan: dict) -> str:
         f"节奏功能：{plan.get('chapter_function') or 'progression'}",
         f"视角：{plan.get('pov') or ''}",
     ]
+    if plan.get("time_slice"):
+        parts.append(f"时间切片：{plan['time_slice']}")
     if plan.get("pace"):
         parts.append(f"节奏/开场：{plan['pace']}")
     beats = [b for b in (plan.get("beats") or []) if isinstance(b, str) and b.strip()]
@@ -704,7 +706,13 @@ async def _propose_chapter_plan(
     写法要点），由调用方落库为 approved 大纲（轻量版）并注入 novelist 参数据此写正文。
     confirm_key 带 task_id + 维度 key：每次生成任务独立咨询（换方向重生成时会重新咨询）。
     """
-    from app.agents.chapter_planner import PLAN_DIMENSIONS, options_overlap
+    from app.agents.chapter_planner import (
+        PLAN_DIMENSIONS,
+        dimension_compliance_check,
+        goal_extra_check,
+        options_overlap,
+    )
+    from app.agents.context import get_active_blueprint
     from app.services.pipeline import request_author_confirmation
 
     # 章节号先确定：planner 上下文（时间线/阶段）与落库（persist_chapter_plan）都要用
@@ -716,6 +724,11 @@ async def _propose_chapter_plan(
         chapter_no = (last or 0) + 1
         params["chapter_no"] = chapter_no
 
+    # goal 维度金手指锚定/强打脸拦截所需的蓝图上下文：仅开篇章（第 1 章）生效
+    goal_blueprint = get_active_blueprint(db, novel_id)
+    if not isinstance(goal_blueprint, dict):
+        goal_blueprint = None
+
     if on_pending is None:
         return None  # 无弹窗通道则跳过咨询（理论不出现，兜底）
 
@@ -724,6 +737,7 @@ async def _propose_chapter_plan(
         "label": "",
         "title": "",
         "goal": "",
+        "time_slice": "",
         "pace": "",
         "chapter_function": "progression",
         "pov": "",
@@ -771,14 +785,19 @@ async def _propose_chapter_plan(
             )
             return None
 
-        # 2.5) 相似度校验：同一维度内出现雷同选项（同一桥段换措辞凑数）则自动重新生成一次
+        # 2.5) 候选质量校验：①同一维度内雷同（同一桥段换措辞凑数）②内容偏离维度定义
+        # （如把具体事件/系统激活塞进 pace 节奏描述，跨层混搭）③goal 开篇金手指锚定/
+        # 同一时间切片/弱小时期强打脸拦截 → 自动重新生成一次
         overlap = options_overlap(options)
-        if overlap:
+        compliance = dimension_compliance_check(key, options)
+        extra = goal_extra_check(goal_blueprint, chapter_no, options) if key == "goal" else None
+        if overlap or compliance or extra:
+            reason = extra or compliance or overlap
             logger.warning(
-                "novel_id=%s 第 %s 个维度（%s）候选雷同：%s，自动重试一次",
-                novel_id, idx + 1, key, overlap,
+                "novel_id=%s 第 %s 个维度（%s）候选不合规：%s，自动重试一次",
+                novel_id, idx + 1, key, reason,
             )
-            params["_dim_retry"] = {"key": key, "reason": overlap}
+            params["_dim_retry"] = {"key": key, "reason": reason}
             try:
                 async for sse in run_agent_stream(db, "chapter_planner", novel_id, params, dry_run=True):
                     ev = _parse_sse_event(sse)
@@ -800,10 +819,12 @@ async def _propose_chapter_plan(
                 if len(retry_options) == 5:
                     options = retry_options
                     overlap2 = options_overlap(options)
-                    if overlap2:
+                    compliance2 = dimension_compliance_check(key, options)
+                    extra2 = goal_extra_check(goal_blueprint, chapter_no, options) if key == "goal" else None
+                    if overlap2 or compliance2 or extra2:
                         logger.warning(
-                            "novel_id=%s 第 %s 个维度（%s）重试后仍雷同（%s），按原样提供给作者（作者可自定义）",
-                            novel_id, idx + 1, key, overlap2,
+                            "novel_id=%s 第 %s 个维度（%s）重试后仍不合规（%s），按原样提供给作者（作者可自定义）",
+                            novel_id, idx + 1, key, extra2 or compliance2 or overlap2,
                         )
                 else:
                     logger.warning(
@@ -818,6 +839,18 @@ async def _propose_chapter_plan(
             if d["key"] in selections and selections[d["key"]]
         ]
         prev_txt = "；".join(done_lines) if done_lines else "（无，这是本章第一个维度）"
+        # goal 维度把候选声明的时间切片展示给作者（作者可据此判断是否锚定一致/是否想换切片）
+        slice_note = ""
+        if key == "goal":
+            sl = [str(o.get("time_slice") or "").strip() for o in options]
+            sl = [s for s in sl if s]
+            if sl:
+                uniq = sorted(set(sl))
+                slice_note = (
+                    f"。5 个候选锚定时间切片：{' / '.join(uniq)}（可选一致，也可在自定义框改切片）"
+                    if len(uniq) == 1
+                    else f"。注意：候选声明了不同时间切片：{' / '.join(uniq)}，请按同一切片比较"
+                )
         try:
             decision = await request_author_confirmation(
                 db,
@@ -827,7 +860,7 @@ async def _propose_chapter_plan(
                 confirm_key=f"chapter_plan_{task_id}_{key}",
                 question=(
                     f"即将写作第 {chapter_no} 章正文。第 {idx + 1}/{len(PLAN_DIMENSIONS)} 维度「{dim['label']}」"
-                    f"——{dim['hint']}。\n"
+                    f"——{dim['hint']}。{slice_note}\n"
                     f"前序已定：{prev_txt}。\n"
                     f"选一个方向，或输入你自己的："
                 ),
@@ -850,6 +883,8 @@ async def _propose_chapter_plan(
         opt = next((o for o in options if o["id"] == answer), None)
         if opt:
             value = opt["text"]
+            if key == "goal" and opt.get("time_slice"):
+                plan["time_slice"] = str(opt["time_slice"]).strip()
             if key == "pace" and opt.get("chapter_function"):
                 plan["chapter_function"] = opt["chapter_function"]
             if key == "beats" and opt.get("beats"):

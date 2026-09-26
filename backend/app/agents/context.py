@@ -410,6 +410,16 @@ def format_blueprint_for_prompt(content: dict | None) -> str:
         f"主题：{content.get('theme')}",
         f"核心冲突：{content.get('core_conflict')}",
     ]
+    anchor = content.get("opening_anchor")
+    if isinstance(anchor, dict):
+        anchor_bits = []
+        if str(anchor.get("first_chapter_slice") or "").strip():
+            anchor_bits.append(f"第1章时间切片：{anchor['first_chapter_slice']}")
+        reveal = anchor.get("golden_finger_reveal_chapter")
+        if reveal:
+            anchor_bits.append(f"金手指揭示章：第{reveal}章")
+        if anchor_bits:
+            parts.append("开篇锚点（作者已拍板，规划/写作必须遵守）：" + "；".join(anchor_bits))
     if content.get("total_word_count"):
         parts.append(f"全书体量：{content.get('total_word_count')}")
     if content.get("total_chapters"):

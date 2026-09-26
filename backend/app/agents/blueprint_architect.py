@@ -29,6 +29,7 @@ SYSTEM_PROMPT = """你是「蓝图师」，把作者的设定与脑洞整理成�
   "world_rules": [{"name": "规则名", "detail": "规则细节", "constraints": ["约束1", "约束2"]}],
   "character_arcs": [{"character": "角色名", "personality": "性格/特质", "start": "起点状态", "end": "终点状态", "turning_points": ["转折1"]}],
   "volumes": [{"no": 1, "name": "卷名", "focus": "本卷重点", "chapters_range": "1-20", "word_count": "25万字", "chapter_count": "85章"}],
+  "opening_anchor": {"first_chapter_slice": "第1章时间切片（如：入职第一天）", "golden_finger_reveal_chapter": 数字章号},
   "foreshadowing_plan": [{"plant_chapter": 5, "payoff_chapter": 38, "desc": "伏笔内容"}],
   "subplots": ["长线支线1（贯穿多卷的持续剧情线）"],
   "timeline": [{"period": "2000年—2010年", "year": 2000, "entity": "涉及的人物/机构/地点", "event": "发生了什么事", "status": "established"}],
@@ -50,6 +51,7 @@ SYSTEM_PROMPT = """你是「蓝图师」，把作者的设定与脑洞整理成�
   - status：established（确立，该时间段内此状态成立）/ changed（演变，状态发生改变）/ ended（终结）。
   timeline 的作用是让"2000年开始打工、2010年自主创业"这类散文时间线变成**可核对的数据**，后续写作/评价不得与它矛盾。材料没有明确时间的，不写进 timeline（宁可少收，不可捏造时间）。
 - notes（通用保留区，最重要）：输入材料中**凡是无法干净归入 title/logline/theme/core_conflict/world_rules/character_arcs/volumes/foreshadowing_plan/subplots/timeline 任何一个字段的重要信息**——包括但不限于风格取向、文风基调、对标作品、创作参考、叙事节奏、题材标签、特殊约束、时间线规则等，无论它在材料里叫什么名字——**必须逐条原文（或尽量保留原意）收录进 notes，一条不落**；没有则留空数组。这是防丢失的兜底字段，宁可多收不可漏收。
+- opening_anchor（开篇锚点，蓝图级硬决策）：根据本书类型与作者要求，明确第 1 章落在哪个时间切片（first_chapter_slice，如写实事业流"入职第一天"、快节奏爽文"穿越当天"）与金手指/系统首次揭示的章节号（golden_finger_reveal_chapter，数字；本书无金手指填 0）。材料里已有明确安排原样保留；没有时按题材惯例与节奏规则给出。此声明是下游所有角色（大纲师/章节规划师/小说家）开篇节奏的唯一依据，必须给出一个确定的切片与章号，不得留空。
 - 机构档案（新增）：输入材料中出现机构/组织/单位等实体（faction）时，**必须把它展开成完整档案**，以 notes 条目写出，格式：
   `机构档案·{机构名}：成立时间={值}；负责人={值}；人员规模={值}；业务范围={值}；位置布局={值}；时代特征={值}`
   各维度用全角分号「；」分隔、键值用「=」连接；材料未给出的维度写「待定」，不得捏造。
@@ -110,6 +112,7 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
         "world_rules": [{"name": "魔法消耗寿命", "detail": "每次施法扣减寿命", "constraints": ["无法逆转"]}],
         "character_arcs": [{"character": "岚", "personality": "冷漠坚韧", "start": "冷漠的占卜师", "end": "为守护而自我牺牲", "turning_points": ["第2卷发现身世"]}],
         "volumes": [{"no": 1, "name": "灰烬", "focus": "结识与背叛", "chapters_range": "1-20", "word_count": "25万字", "chapter_count": "85章"}],
+        "opening_anchor": {"first_chapter_slice": "穿越次日", "golden_finger_reveal_chapter": 1},
         "foreshadowing_plan": [{"plant_chapter": 5, "payoff_chapter": 38, "desc": "主角左手的印记"}],
         "subplots": ["秘史组织沿主线暗中追踪主角"],
         "timeline": [
