@@ -37,6 +37,7 @@ from app.agents.platform_rules import (
     PLATFORM_ANTI_CLICHE,
     get_background_generation_scope,
     format_genres_direction,
+    format_blueprint_rhythm_rules,
     format_genre_storytelling_rules,
 )
 from app.schemas.agents import NovelChapter
@@ -90,13 +91,21 @@ class NovelistAgent(Agent[NovelChapter]):
         novel = get_novel(self.db, novel_id)
         style = get_latest_style_profile(self.db, novel_id)
 
-        # 题材特化规则（条件注入）：仅现实事业流生效（realistic + 都市/职场/教育等标签）；
+        # 题材特化规则（条件注入）：仅已校准题材族（现实事业流/悬疑推理流）生效；
         # 架空/玄幻/全民神祗等其它类型返回空串，不注入任何特化规则，避免跨题材冲突。
         genre_block = format_genre_storytelling_rules(
             getattr(novel, "background_type", None) if novel else None,
             (novel.genres if novel else None) or [],
         )
-        system_prompt = SYSTEM_PROMPT + (("\n\n" + genre_block) if genre_block else "")
+        rhythm_block = format_blueprint_rhythm_rules(
+            getattr(novel, "background_type", None) if novel else None,
+            (novel.genres if novel else None) or [],
+        )
+        system_prompt = (
+            SYSTEM_PROMPT
+            + (("\n\n" + genre_block) if genre_block else "")
+            + (("\n\n" + rhythm_block) if rhythm_block else "")
+        )
 
         # 设定：M0 骨架全量截断给（M1 起由 RAG + POV 裁剪精确装配）
         # 按写作进度过滤：隐藏的不给、未到生效章范围的不给、阶段不命中的不给，避免后期设定提前出现

@@ -8,6 +8,7 @@ from app.agents.platform_rules import (
     PLATFORM_SIGNING_HEADER,
     PLATFORM_SIGNING_BLUEPRINT,
     format_blueprint_rhythm_rules,
+    format_genre_storytelling_rules,
     get_background_generation_scope,
     format_genres_direction,
 )
@@ -130,6 +131,13 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
             getattr(novel, "background_type", None) if novel else None,
             getattr(novel, "genres", None) if novel else None,
         )
+        # 题材特化结构性叙事约束（条件注入）：仅已校准题材族（现实事业流/悬疑推理流）生效；
+        # 与通用平台条款冲突时（开篇方式/金手指兑现节奏/事件结构）以特化段为准。
+        storytelling_block = format_genre_storytelling_rules(
+            getattr(novel, "background_type", None) if novel else None,
+            getattr(novel, "genres", None) if novel else None,
+        )
+        storytelling_block = ("\n\n" + storytelling_block) if storytelling_block else ""
         # 导入模式：以用户上传的大纲文档为主材料；默认参照设定库核对一致性，
         # 若 use_settings=False（全新开始）则忽略设定库，仅用本文档（适合换一本新小说）。
         import_source = (params.get("import_source") or "").strip()
@@ -142,10 +150,10 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
                 settings_block = "【全新开始模式】本次忽略既有设定库，仅以上传的大纲文档为准，blueprint_conflicts 置空数组。\n\n"
                 note = IMPORT_SYSTEM_NOTE_FRESH
             material = settings_block + f"导入的大纲文档（作者从外部生成）：\n{import_source}"
-            system_prompt = SYSTEM_PROMPT + rhythm + note
+            system_prompt = SYSTEM_PROMPT + rhythm + storytelling_block + note
         else:
             material = format_settings_for_prompt(settings_snapshot)
-            system_prompt = SYSTEM_PROMPT + rhythm
+            system_prompt = SYSTEM_PROMPT + rhythm + storytelling_block
         user_content = (
             f"项目：《{novel.title if novel else novel_id}》\n"
             f"项目前提：{novel.premise if novel and novel.premise else '（未填）'}\n"

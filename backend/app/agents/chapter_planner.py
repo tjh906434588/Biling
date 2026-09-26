@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.agents.base import Agent, ContextPack
 from app.agents.context import get_chapter_author_directives, get_novel
 from app.agents.outliner import OutlinerAgent
-from app.agents.platform_rules import format_genre_storytelling_rules
+from app.agents.platform_rules import format_blueprint_rhythm_rules, format_genre_storytelling_rules
 from app.schemas.agents import ChapterPlanDimensionProposal
 
 # 10 个维度的固定顺序与说明（stream.py 逐维度编排与 build_context 注入共用）。
@@ -156,7 +156,15 @@ class ChapterPlannerAgent(Agent[ChapterPlanDimensionProposal]):
             getattr(novel, "background_type", None) if novel else None,
             getattr(novel, "genres", None) if novel else None,
         )
-        system_prompt = SYSTEM_PROMPT + (("\n\n" + genre_block) if genre_block else "")
+        rhythm_block = format_blueprint_rhythm_rules(
+            getattr(novel, "background_type", None) if novel else None,
+            getattr(novel, "genres", None) if novel else None,
+        )
+        system_prompt = (
+            SYSTEM_PROMPT
+            + (("\n\n" + genre_block) if genre_block else "")
+            + (("\n\n" + rhythm_block) if rhythm_block else "")
+        )
 
         key = params.get("plan_dimension_key")
         idx = next((i for i, d in enumerate(PLAN_DIMENSIONS) if d["key"] == key), 0)

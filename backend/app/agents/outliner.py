@@ -32,6 +32,7 @@ from app.agents.platform_rules import (
     PLATFORM_SIGNING_OUTLINE,
     get_background_generation_scope,
     format_genres_direction,
+    format_blueprint_rhythm_rules,
     format_genre_storytelling_rules,
 )
 from app.schemas.agents import ChapterOutline
@@ -258,13 +259,21 @@ class OutlinerAgent(Agent[ChapterOutline]):
             ),
         ]
         user_content = "\n\n".join(c.content for c in components)
-        # 题材特化规则（条件注入）：仅现实事业流生效（realistic + 都市/职场/教育等标签）；
+        # 题材特化规则（条件注入）：仅已校准题材族（现实事业流/悬疑推理流）生效；
         # 与通用平台条款冲突时（开篇方式/金手指兑现节奏/事件结构）以特化段为准。
         genre_block = format_genre_storytelling_rules(
             getattr(novel, "background_type", None) if novel else None,
             (novel.genres if novel else None) or [],
         )
-        system_prompt = SYSTEM_PROMPT + (("\n\n" + genre_block) if genre_block else "")
+        rhythm_block = format_blueprint_rhythm_rules(
+            getattr(novel, "background_type", None) if novel else None,
+            (novel.genres if novel else None) or [],
+        )
+        system_prompt = (
+            SYSTEM_PROMPT
+            + (("\n\n" + genre_block) if genre_block else "")
+            + (("\n\n" + rhythm_block) if rhythm_block else "")
+        )
         return ContextPack(
             novel_id=novel_id,
             agent="outliner",

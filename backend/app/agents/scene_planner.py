@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.agents.base import Agent, ContextPack
 from app.agents.context import get_chapter_author_directives, get_novel
 from app.agents.outliner import OutlinerAgent
-from app.agents.platform_rules import format_genre_storytelling_rules
+from app.agents.platform_rules import format_blueprint_rhythm_rules, format_genre_storytelling_rules
 from app.schemas.agents import ScenePlanProposal, SceneProposalsProposal
 
 # 场景五字段的固定顺序与说明（LLM 输出、stream.py 组装、前端卡片展示共用）
@@ -136,8 +136,13 @@ class ScenePlannerAgent(Agent[ScenePlanProposal]):
             getattr(novel, "background_type", None) if novel else None,
             getattr(novel, "genres", None) if novel else None,
         )
+        rhythm_block = format_blueprint_rhythm_rules(
+            getattr(novel, "background_type", None) if novel else None,
+            getattr(novel, "genres", None) if novel else None,
+        )
         if genre_block:
             genre_block = "\n\n" + genre_block
+        rhythm_block = ("\n\n" + rhythm_block) if rhythm_block else ""
 
         scene_task = params.get("scene_task") or "plan"
 
@@ -168,7 +173,7 @@ class ScenePlannerAgent(Agent[ScenePlanProposal]):
                     ("satisfaction", "爽点类型"),
                 )
             )
-            system_prompt = SCENE_PLAN_PROMPT + genre_block
+            system_prompt = SCENE_PLAN_PROMPT + genre_block + rhythm_block
             task_instruction = f"""
 【本次任务】
 作者已确认的「本章规划」（10 个维度）：
@@ -191,7 +196,7 @@ class ScenePlannerAgent(Agent[ScenePlanProposal]):
                 )
             )
             plan = params.get("chapter_plan") or {}
-            system_prompt = SCENE_PROPOSAL_PROMPT + genre_block
+            system_prompt = SCENE_PROPOSAL_PROMPT + genre_block + rhythm_block
             task_instruction = f"""
 【本次任务】
 目标场景：第 {params.get('scene_index', '?')} 场。该场景的骨架（作者已确认）：
