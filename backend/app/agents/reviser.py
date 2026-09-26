@@ -33,7 +33,10 @@ from app.agents.context import (
     get_settings_snapshot,
 )
 from app.agents.l1 import L1_ANTI_AI_CONSTRAINTS
-from app.agents.platform_rules import PLATFORM_ANTI_CLICHE
+from app.agents.platform_rules import (
+    PLATFORM_ANTI_CLICHE,
+    format_genre_storytelling_rules,
+)
 from app.db.models import ChapterVersion
 from app.schemas.agents import NovelChapter
 from app.services.detector import detect
@@ -349,12 +352,18 @@ class ReviserAgent(Agent[NovelChapter]):
             )
         )
         user_content = "\n\n".join(c.content for c in components)
+        # 题材特化规则（条件注入）：仅现实事业流生效；与通用平台条款冲突时以特化段为准。
+        genre_block = format_genre_storytelling_rules(
+            getattr(novel, "background_type", None) if novel else None,
+            (novel.genres if novel else None) or [],
+        )
+        system_prompt = SYSTEM_PROMPT + (("\n\n" + genre_block) if genre_block else "")
         return ContextPack(
             novel_id=novel_id,
             agent="reviser",
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
             components=components,

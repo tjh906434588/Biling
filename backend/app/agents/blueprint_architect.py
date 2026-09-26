@@ -7,6 +7,7 @@ from app.agents.context import get_novel, get_settings_snapshot, format_settings
 from app.agents.platform_rules import (
     PLATFORM_SIGNING_HEADER,
     PLATFORM_SIGNING_BLUEPRINT,
+    format_blueprint_rhythm_rules,
     get_background_generation_scope,
     format_genres_direction,
 )
@@ -124,6 +125,11 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
         novel = get_novel(self.db, novel_id)
         settings_snapshot = get_settings_snapshot(self.db, novel_id)
+        # 开篇与金手指兑现节奏：按本书背景类型 × 题材条件注入（写实事业流→克制兑现；其余→通用平台节奏）
+        rhythm = format_blueprint_rhythm_rules(
+            getattr(novel, "background_type", None) if novel else None,
+            getattr(novel, "genres", None) if novel else None,
+        )
         # 导入模式：以用户上传的大纲文档为主材料；默认参照设定库核对一致性，
         # 若 use_settings=False（全新开始）则忽略设定库，仅用本文档（适合换一本新小说）。
         import_source = (params.get("import_source") or "").strip()
@@ -136,10 +142,10 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
                 settings_block = "【全新开始模式】本次忽略既有设定库，仅以上传的大纲文档为准，blueprint_conflicts 置空数组。\n\n"
                 note = IMPORT_SYSTEM_NOTE_FRESH
             material = settings_block + f"导入的大纲文档（作者从外部生成）：\n{import_source}"
-            system_prompt = SYSTEM_PROMPT + note
+            system_prompt = SYSTEM_PROMPT + rhythm + note
         else:
             material = format_settings_for_prompt(settings_snapshot)
-            system_prompt = SYSTEM_PROMPT
+            system_prompt = SYSTEM_PROMPT + rhythm
         user_content = (
             f"项目：《{novel.title if novel else novel_id}》\n"
             f"项目前提：{novel.premise if novel and novel.premise else '（未填）'}\n"
