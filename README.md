@@ -94,4 +94,8 @@ npm run dev
 
 ## License
 
-MIT
+[AGPL-3.0](LICENSE) — GNU Affero General Public License v3.0
+
+本项目为开源软件。你可以自由使用、修改与分发，但**任何基于本项目的衍生作品**（包括以网络服务形式对外提供）必须同样以 AGPL-3.0 开源并公开源代码。
+
+设计思想借鉴声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
