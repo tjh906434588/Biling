@@ -5,6 +5,7 @@ import {
   activateBlueprint,
   checkOutlineSkeleton,
   deleteBlueprint,
+  friendlyTaskError,
   getBlueprintActivationStatus,
   importBlueprintFile,
   listBlueprints,
@@ -161,7 +162,7 @@ export default function BlueprintPanel({ novelId }: Props) {
           const t = r.task;
           if (t && t.status === "error") {
             setActivatingId(null);
-            message.error(`蓝图激活失败：${t.error ?? "请稍后重试"}`);
+            message.error(`蓝图激活失败：${friendlyTaskError(t.error, "请稍后重试")}`);
           } else if (t && t.blueprint_id) {
             setActivatingId(null);
             message.success(t.msg ?? "已设为生效中，设定与文风已跟随切换。");
@@ -279,7 +280,7 @@ export default function BlueprintPanel({ novelId }: Props) {
         /* 忽略存储异常 */
       }
     } else if (own && prev === "running" && run.status === "error") {
-      message.error(`蓝图生成失败：${run.errMsg ?? "请稍后重试"}`);
+      message.error(`蓝图生成失败：${friendlyTaskError(run.errMsg, "请稍后重试")}`);
     }
     prevRunStatus.current = run.status;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -549,7 +550,7 @@ export default function BlueprintPanel({ novelId }: Props) {
               <div className="flex flex-wrap items-center gap-2">
                 {selected.status !== "active" && (
                   <button
-                    className="rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="btn btn-approve"
                     onClick={() => handleActivateClick(selected)}
                     disabled={activatingId !== null}
                   >
@@ -558,7 +559,7 @@ export default function BlueprintPanel({ novelId }: Props) {
                 )}
                 {selected.status !== "active" && (
                   <button
-                    className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+                    className="btn btn-danger"
                     onClick={() => handleDelete(selected)}
                     disabled={activatingId !== null}
                   >
@@ -709,7 +710,7 @@ export default function BlueprintPanel({ novelId }: Props) {
       <ConfirmDialog
         open={activateTarget !== null}
         title={activateTarget ? `将 v${activateTarget.version} 设为生效中？` : "设为生效中？"}
-        message={`确认后将把 v${activateTarget ? activateTarget.version : ""} 设为生效中：若该版本为导入生成（有原文），会同步抽取设定与文风并注入设定库、全局文风，注入完成按钮的「激活中」才会结束；若为手工创建（无导入原文），激活后**不会**自动注入设定/文风，仅切换生效状态。当前生效蓝图导入的内容将被隐藏（不会删除，可随时切回）、改用新蓝图的内容。\n\n若后续的正文、大纲已基于旧蓝图生成，切换后可能导致设定不一致、影响写作连贯性。已生成的大纲和文章不会被修改。\n\n确定切换吗？`}
+        message={`确认后将把 v${activateTarget ? activateTarget.version : ""} 设为生效中：若该版本为导入生成（有原文），会同步抽取设定与文风并注入设定库、全局文风，注入完成按钮的「激活中」才会结束；若为手工创建（无导入原文），激活后不会自动注入设定/文风，仅切换生效状态。当前生效蓝图导入的内容将被隐藏（不会删除，可随时切回）、改用新蓝图的内容。\n\n若后续的正文、大纲已基于旧蓝图生成，切换后可能导致设定不一致、影响写作连贯性。已生成的大纲和文章不会被修改。\n\n确定切换吗？`}
         confirmText="确定切换"
         tone="primary"
         onConfirm={confirmActivate}
@@ -764,7 +765,7 @@ export default function BlueprintPanel({ novelId }: Props) {
             {/* 生成期间按钮不隐藏、仅禁止点击（等蓝图生成完毕解除） */}
             <button
               type="button"
-              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="btn btn-ghost px-3 py-1.5 text-sm"
               onClick={() => fileRef.current?.click()}
               disabled={importing || running || outlineCheck?.status === "pending"}
             >
@@ -773,7 +774,7 @@ export default function BlueprintPanel({ novelId }: Props) {
             {importName && (
               <button
                 type="button"
-                className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className="btn btn-ghost px-3 py-1.5 text-sm"
                 onClick={() => {
                   checkAbortRef.current?.abort();
                   checkAbortRef.current = null;
@@ -790,7 +791,7 @@ export default function BlueprintPanel({ novelId }: Props) {
             <div className="ml-auto">
               <button
                 type="button"
-                className="flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className="btn btn-ghost px-3 py-1.5 text-sm"
                 onClick={handleCopyOutlineTemplate}
               >
                 {copied ? "已复制" : "复制大纲模板"}

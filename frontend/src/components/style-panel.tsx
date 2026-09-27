@@ -98,7 +98,7 @@ export default function StylePanel({ novelId }: Props) {
           </div>
           <div className="grid min-h-0 flex-1 gap-4 sm:grid-cols-2 [grid-template-rows:minmax(0,1fr)]">
             {/* 左：蓝图识别（只读，展示当前生效蓝图的那一份）—— 暖色嵌套面 + 靛青点缀，去掉冷蓝块 */}
-            <div className="flex h-full min-h-0 min-w-0 flex-col rounded-lg border border-zinc-200 bg-sunken/50 p-3 dark:border-zinc-800 dark:bg-sunken/40">
+            <div className="flex h-full min-h-0 min-w-0 flex-col rounded-lg bg-sunken/40 p-3">
               <div className="mb-1 flex h-6 items-center justify-between gap-2">
                 <span className="flex items-center gap-1 text-xs font-semibold text-dai dark:text-dai">
                   蓝图识别文风
@@ -110,7 +110,7 @@ export default function StylePanel({ novelId }: Props) {
                 </div>
               </div>
               {blueprintDirective.trim() ? (
-                <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap rounded-lg border border-zinc-200 bg-sunken/50 p-2.5 font-serif text-xs leading-relaxed text-prose dark:border-zinc-800 dark:bg-sunken/40">
+                <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap rounded-lg bg-sunken/40 p-2.5 font-serif text-xs leading-relaxed text-prose">
                   {blueprintDirective}
                 </div>
               ) : (
@@ -121,7 +121,7 @@ export default function StylePanel({ novelId }: Props) {
             </div>
 
             {/* 右：手动添加（默认文字展示，点「编辑」才出输入框） */}
-            <div className="flex h-full min-h-0 min-w-0 flex-col rounded-lg border border-zinc-200 bg-sunken/50 p-3 dark:border-zinc-800 dark:bg-sunken/40">
+            <div className="flex h-full min-h-0 min-w-0 flex-col rounded-lg bg-sunken/40 p-3">
               <div className="mb-1 flex h-6 items-center justify-between gap-2">
                 <span className="flex items-center gap-1 text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                   手动添加文风
@@ -166,7 +166,7 @@ export default function StylePanel({ novelId }: Props) {
                   </div>
                 </>
               ) : manualDirective.trim() ? (
-                <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap rounded-lg border border-zinc-200 bg-sunken/50 p-2.5 font-serif text-xs leading-relaxed text-prose dark:border-zinc-800 dark:bg-sunken/40">
+                <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap rounded-lg bg-sunken/40 p-2.5 font-serif text-xs leading-relaxed text-prose">
                   {manualDirective}
                 </div>
               ) : (
@@ -209,7 +209,7 @@ export default function StylePanel({ novelId }: Props) {
                     ))}
                   </dl>
                   {p.traits?.example_fragment && (
-                    <p className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 p-2 text-xs italic text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                    <p className="mt-2 rounded-lg bg-zinc-50 p-2 text-xs italic text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
                       {p.traits.example_fragment}
                     </p>
                   )}

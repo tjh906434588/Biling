@@ -15,6 +15,7 @@ SYSTEM_PROMPT = """你是「提取师」，把成稿章节压缩为结构化记�
  "world_state_changes": [{"rule":"世界规则","change":"变化"}],
  "new_foreshadowing": [{"desc":"新伏笔","hint":"回收提示","suggested_payoff_chapter":null}],
  "resolved_foreshadowing": [{"ledger_id":"账本ID"}],
+ "advanced_foreshadowing": [{"ledger_id":"账本ID","note":"正文里这条伏笔发生了什么新进展"}],
  "unresolved_hooks": [{"hook":"未解钩子","since_chapter":1}],
  "relations": [{"source":"实体A","relation":"关系标签","target":"实体B","confidence":"high|medium|low"}],
  "superseded_relations": [{"source":"实体A","relation":"旧关系","target":"实体B","superseded_by":"取代它的新关系名"}],
@@ -25,6 +26,10 @@ SYSTEM_PROMPT = """你是「提取师」，把成稿章节压缩为结构化记�
 铁律：
 - 压缩不是缩写，是"结构化记忆"；character_states 标注置信度，low 的进待确认队列。
 - resolved_foreshadowing 里的 ledger_id 必须是已有账本条目。
+- advanced_foreshadowing（伏笔推进）：本章正文**明确推进**了某条已有伏笔（关键线索出现新变化、离揭示更近一步、角色主动调查/触碰该伏笔），但**还没有揭晓真相/回收**时输出——ledger_id 必须是已有账本条目，note 用一句话写清正文里的新进展（这是程序落库时把账本状态 open→progressing 的证据）。判据严格：
+  ① 正文只是"提到/扫过"这条伏笔、没有实质新信息 → 不输出（不推进）；
+  ② 正文已经揭晓/回收 → 归 resolved_foreshadowing，不在此列；
+  ③ 本章没有推进任何旧伏笔 → 空数组 []。
 - relations：只抽取本章【明确出现或确立】的实体关系（人物/组织/地点/物品之间，如"拜师/敌对/加入/忌惮/持有"），不要猜测旧关系，不要写空泛修饰；实体名优先沿用【已有实体名单】；每章 relations 最多 8 条，无则空数组 []，superseded_relations 无则空数组 []。
 - 关系先判定是【共存】还是【递进】，再落两处字段：
   ① 【共存/新情节】：本章结束后旧关系【仍然成立】→ 新关系并列进 relations，旧关系【不得】进 superseded_relations。例：A、B 一直是同事，本章 A 质疑 B → relations=[同事, 质疑]，superseded_relations=[]（同事仍成立，只是新增质疑，两者同时有效）。
@@ -55,6 +60,7 @@ class ExtractorAgent(Agent[StoryStateExtract]):
         "world_state_changes": [],
         "new_foreshadowing": [{"desc": "旧档案馆里有一份本不该存在的出生记录", "hint": "指向主角身世真相", "suggested_payoff_chapter": None}],
         "resolved_foreshadowing": [],
+        "advanced_foreshadowing": [{"ledger_id": "00000000-0000-0000-0000-000000000001", "note": "主角确认左手印记与旧档案馆的关联"}],
         "unresolved_hooks": [{"hook": "岚的真实身份", "since_chapter": 1}],
         "relations": [{"source": "主角", "relation": "追查", "target": "旧档案馆", "confidence": "high"}],
         "superseded_relations": [],

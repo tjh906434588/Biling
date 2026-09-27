@@ -7,7 +7,7 @@
  * - 生成不因切换页面而中断；
  * - 回到蓝图页时流式输出、进度、结果自动恢复显示。
  */
-import { friendlyRunError, getAgentRunningTask, getStreamStatus, runAgent, type AgentRunningTaskResult, type AuthorConfirm } from "./api";
+import { friendlyRunError, friendlyTaskError, getAgentRunningTask, getStreamStatus, runAgent, type AgentRunningTaskResult, type AuthorConfirm } from "./api";
 import { pushAuthorConfirm } from "@/components/author-confirm";
 
 export type BlueprintRunStatus = "idle" | "running" | "done" | "error";
@@ -105,7 +105,7 @@ export async function tryResumeBlueprintRun(novelId: string): Promise<boolean> {
           continue;
         }
         if (r.task && r.task.status === "error") {
-          apply({ status: "error", errMsg: r.task.error ?? "生成任务后台失败。" });
+          apply({ status: "error", errMsg: friendlyTaskError(r.task.error, "生成任务后台失败。") });
         } else {
           apply({ status: "done", msg: r.task?.msg ?? "生成完成。" });
         }
@@ -175,7 +175,7 @@ export function startBlueprintRun(
         try {
           const st = await getStreamStatus(novelId);
           if (st.recent && st.recent.agent === "blueprint_architect" && st.recent.status === "error") {
-            apply({ status: "error", errMsg: st.recent.error ?? "生成失败，请重试。" });
+            apply({ status: "error", errMsg: friendlyTaskError(st.recent.error, "生成失败，请重试。") });
             return;
           }
         } catch {

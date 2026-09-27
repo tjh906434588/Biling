@@ -93,14 +93,14 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
                 ))}
               </select>
               <button
-                className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                className="btn btn-ghost"
                 onClick={detectChapter}
                 disabled={chapterNo === "" || loading}
               >
                 取章检测
               </button>
               <button
-                className="rounded-lg bg-zinc-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+                className="btn btn-primary"
                 onClick={() => runDetect(text)}
                 disabled={!text.trim() || loading}
               >
@@ -132,8 +132,8 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
                   <div className="mt-1 font-mono text-lg font-semibold">{VERDICT_LABEL[result.verdict]}</div>
                 </div>
                 <Stat label="综合得分" value={`${result.heuristic_score}/100`} accent />
-                <Stat label="困惑度 PPL" value={result.ppl ?? "—"} />
-                <Stat label="突发性 Burstiness" value={result.burstiness ?? "—"} />
+                <Stat label="困惑度" value={result.ppl ?? "—"} />
+                <Stat label="突发性" value={result.burstiness ?? "—"} />
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {result.signals.map((s) => (
@@ -155,7 +155,7 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
                     <span className="panel-step">3</span>
                     词法命中
                   </h2>
-                  <span className="panel-hint">regex · 模板痕迹</span>
+                  <span className="panel-hint">模板痕迹</span>
                 </div>
                   {Object.entries(result.regex_hits).length === 0 ? (
                     <p className="text-xs text-zinc-400">无命中</p>
@@ -177,7 +177,7 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
                     <span className="panel-step">4</span>
                     密度指纹
                   </h2>
-                  <span className="panel-hint">density · 句长与连接词</span>
+                  <span className="panel-hint">句长与连接词</span>
                 </div>
                   {result.density ? (
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { getStreamStatus, type StreamStatusResult, type StreamTaskInfo } from "@/lib/api";
+import { friendlyTaskError, getStreamStatus, type StreamStatusResult, type StreamTaskInfo } from "@/lib/api";
 import { notification } from "@/components/notification";
 import { message } from "@/components/message";
 
@@ -95,8 +95,8 @@ export default function AgentTaskToasts({ novelId, tab }: { novelId: string; tab
           const label = taskLabel(info);
           if (info.status === "error") {
             const title = prev.agent === "blueprint_activation" ? "蓝图激活失败" : `${label} 生成失败`;
-            if (onWritingPage) message.error(info.error ?? title);
-            else notification.error({ title, message: info.error ?? undefined });
+            if (onWritingPage) message.error(friendlyTaskError(info.error, title));
+            else notification.error({ title, message: friendlyTaskError(info.error, undefined) });
           } else if (prev.agent === "blueprint_activation") {
             notification.success({ title: info.msg ?? "蓝图已设为生效中" });
           } else {

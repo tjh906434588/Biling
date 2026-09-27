@@ -164,7 +164,7 @@ export default function ModelsPanel() {
     <Loading loading={loading || loadingModels}>
       <div className="grid w-full gap-6">
       {/* ---------- 模型接入：当前使用 + 服务商状态 + 添加/切换模型（弹窗） ---------- */}
-      <section className="flex flex-col gap-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+      <section className="panel flex flex-col gap-4">
         <div>
           <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">模型接入</h2>
           <p className="mt-0.5 text-xs text-zinc-400">
@@ -204,7 +204,7 @@ export default function ModelsPanel() {
 
         <div>
           <button
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+            className="btn btn-primary"
             onClick={() => openPicker()}
           >
             {defaultModel ? "切换模型 / 添加模型" : "添加模型"}
@@ -213,7 +213,7 @@ export default function ModelsPanel() {
       </section>
 
       {/* ---------- 高级设置：按任务类型指定模型（按钮 + 弹窗配置） ---------- */}
-      <section className="flex flex-col gap-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+      <section className="panel flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">高级设置：按任务类型指定模型</h2>
@@ -222,7 +222,7 @@ export default function ModelsPanel() {
             </p>
           </div>
           <button
-            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="btn btn-ghost"
             onClick={openAdvanced}
           >
             配置{loading ? "" : `（已指定 ${routes.length} 类）`}
@@ -274,13 +274,13 @@ export default function ModelsPanel() {
         footer={
           <>
             <button
-              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="btn btn-ghost px-3 py-1.5"
               onClick={() => setAdvancedOpen(false)}
             >
               取消
             </button>
             <button
-              className="rounded-lg bg-zinc-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+              className="btn btn-primary px-4 py-1.5"
               onClick={saveAdvanced}
               disabled={advancedSaving}
             >

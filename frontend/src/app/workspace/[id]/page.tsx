@@ -597,7 +597,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
       <div className="flex min-h-0 flex-1">
         {/* 宽屏：IDE 式工具面板（图标 + 分组） */}
         <aside
-          className="hidden w-[188px] shrink-0 flex-col gap-5 overflow-y-auto border-r border-zinc-200 bg-sunken/40 px-2.5 py-4 xl:flex"
+          className="hidden w-[188px] shrink-0 flex-col gap-5 overflow-y-auto border-r border-zinc-200 bg-sunken/40 px-2.5 py-4 lg:flex"
           aria-label="工作台导航"
         >
           {NAV_GROUPS.map((g) => (
@@ -637,14 +637,18 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
         {/* 中窄屏：可横滑标签条 */}
         <div className="flex min-h-0 flex-1 flex-col">
           <nav
-            className="no-scrollbar flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-200/70 bg-sunken/30 px-3 py-2 xl:hidden"
+            className="no-scrollbar flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-200/70 bg-sunken/30 px-3 py-2 lg:hidden"
             aria-label="工作台导航"
           >
             {FLAT_TABS.map(stripItem)}
           </nav>
 
           <main className={`min-h-0 flex-1 ${tab === "settings" ? "overflow-hidden" : "overflow-y-auto"}`}>
-            <div className={`mx-auto w-full max-w-[1280px] px-4 py-6 sm:px-6 ${tab === "settings" ? "flex h-full flex-col" : ""}`}>
+            <div
+              className={`mx-auto w-full px-4 py-6 sm:px-6 ${
+                tab === "write" || tab === "outline" ? "max-w-[1728px]" : "max-w-[1280px]"
+              } ${tab === "settings" ? "flex h-full flex-col" : ""}`}
+            >
               {AI_TABS.has(tab) && <AiNotReadyBanner onConfigure={() => setTab("models")} />}
               <FirstRunGuide novelId={id} onGo={setTab} />
               {tab === "write" && <WritingPanel novelId={id} />}

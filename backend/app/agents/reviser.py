@@ -40,7 +40,7 @@ from app.agents.platform_rules import (
 )
 from app.db.models import ChapterVersion
 from app.schemas.agents import NovelChapter
-from app.services.detector import detect
+from app.services.detector import detect, format_ai_lint_report, lint_ai_sentences
 from app.services.entity_checker import format_hard_facts_snapshot
 
 SYSTEM_PROMPT = f"""你是「修订师」，一位手稳的老编辑。你的任务是：**只改评价指出的问题，绝不重写故事**。
@@ -202,6 +202,12 @@ class ReviserAgent(Agent[NovelChapter]):
             if bits:
                 det_text = "\n".join(bits)
 
+        # 句子级 AI 味 lint（确定性正则，逐句标出）：把上次正文里被判 AI 腔的
+        # 具体句子喂给修订师，要求针对这些句子改写，而不是笼统"避免 AI 腔"。
+        ai_lint_text = ""
+        if current_text.strip():
+            ai_lint_text = format_ai_lint_report(lint_ai_sentences(current_text))
+
         review = params.get("review") or {}
         review_text = ""
         if isinstance(review, dict):
@@ -318,6 +324,14 @@ class ReviserAgent(Agent[NovelChapter]):
             ComponentBlock(
                 "det",
                 f"【当前正文的 AI 检测体检（本地启发式，修订时尽量改善这些指标）】\n{det_text or '（无可计算指标）'}",
+                PRIORITY_CONTEXT,
+            ),
+            ComponentBlock(
+                "ai_lint",
+                f"【AI 味句式核对（确定性正则扫描出的具体句子，逐句必须处理）】\n"
+                f"{ai_lint_text or 'AI 味句式检测：无命中（0 处）。'}\n\n"
+                "对命中句子：改写为具体的动作/对话/细节，消除模板腔，而不是删掉或换成另一句套话；"
+                "确属误报（如角色台词刻意如此）的在修订 note 里说明理由，不允许沉默跳过。",
                 PRIORITY_CONTEXT,
             ),
             ComponentBlock(

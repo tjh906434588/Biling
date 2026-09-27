@@ -300,3 +300,96 @@ def detect(text: str) -> DetectionResult:
     except Exception:  # 检测任何异常都不影响主流程
         result.note = "检测过程异常，已降级为 unknown（不阻断写作）"
     return result
+
+
+# ---------- 5. 追读钩子确定性扫描（读者追读力对照材料：开篇钩子 / 章末悬念） ----------
+# 与 ai_lint 同性质：程序预先算出来的字面信号，不是 LLM 感觉。评价师评「读者追读」维度时
+# 必须逐条对照——命中信号确认成立写入评论/问题，或说明为何不适用，不允许沉默跳过。
+
+# 开篇 300 字内直接进动作/冲突的触发词（命中即「有事件感」，有开篇钩子）
+_OPENING_ACTION_PATTERNS = [
+    r"猛地", r"突然", r"撞", r"摔", r"砸", r"拍", r"踹", r"踢", r"攥", r"掐", r"推",
+    r"怒", r"吼", r"骂", r"冷笑", r"咬牙", r"刀", r"枪", r"血", r"杀", r"死", r"轰", r"炸",
+    r"尖叫", r"喊", r"拦", r"挡",
+]
+# 章末 300 字内的悬念断点触发词（命中即「有章末钩子」）
+_ENDING_SUSPENSE_PATTERNS = [
+    r"突然", r"猛地", r"就在这时", r"与此同时", r"脚步声", r"推门", r"敲门", r"门被",
+    r"回头", r"抬头", r"睁开眼", r"怔住", r"僵住", r"愣住", r"瞳孔", r"不可置信",
+]
+# 平淡收尾类（结尾 300 字命中即疑似无章末钩子：空镜/沉思/叹气/总结）
+_ENDING_FLAT_PATTERNS = [
+    r"望向", r"看向", r"眺望", r"陷入沉思", r"叹了口气", r"罢了", r"总之", r"如此",
+    r"若有所思", r"笑了笑",
+]
+
+
+def scan_readthrough_hooks(text: str) -> dict:
+    """确定性扫描章节的开篇钩子与章末悬念（供评价师评「读者追读」时对照）。
+
+    输出 dict：
+      opening_slice / ending_slice    开篇前 200 字、章末后 300 字原文
+      opening_has_dialogue            开篇是否含对话
+      opening_action_hits             开篇动作/冲突触发词列表
+      opening_flat                    开篇无对话无动作冲突 → 疑似环境铺垫空转
+      ending_question                 章末是否以问句收尾
+      ending_suspense_hits            章末悬念断点触发词列表
+      ending_flat                     章末无问句无悬念词且平淡收束 → 疑似无章末钩子
+      dialogue_ratio                  全章对话占比（过低情绪感可能偏弱，仅参考）
+    """
+    raw = (text or "").strip()
+    flat = re.sub(r"\s+", " ", raw)
+    out = {
+        "opening_slice": flat[:200],
+        "opening_has_dialogue": bool(_QUOTE.findall(flat[:200])),
+        "opening_action_hits": [p for p in _OPENING_ACTION_PATTERNS if re.search(p, flat[:300])],
+        "opening_flat": False,
+        "ending_slice": flat[-300:],
+        "ending_question": bool(re.search(r"[？?]\s*$", flat)),
+        "ending_suspense_hits": [],
+        "ending_flat": False,
+        "dialogue_ratio": None,
+    }
+    if not flat:
+        return out
+    out["ending_suspense_hits"] = [p for p in _ENDING_SUSPENSE_PATTERNS if re.search(p, flat[-300:])]
+    if not out["ending_question"] and not out["ending_suspense_hits"]:
+        out["ending_flat"] = any(re.search(p, flat[-300:]) for p in _ENDING_FLAT_PATTERNS)
+    if not out["opening_has_dialogue"] and not out["opening_action_hits"]:
+        out["opening_flat"] = True
+    q = _QUOTE.findall(flat)
+    out["dialogue_ratio"] = round(min(len(q) * 2.0 / max(len(flat), 1), 1.0), 3)
+    return out
+
+
+def format_readthrough_report(scan: dict) -> str:
+    """把追读钩子扫描结果压成可注入提示词/展示的文本（无正文返回「无」）。"""
+    if not (scan.get("opening_slice") or scan.get("ending_slice")):
+        return "追读钩子扫描：无正文可扫。"
+    lines = ["追读钩子扫描（程序确定性信号，评价「读者追读」时逐条对照）："]
+    opening = scan.get("opening_slice") or ""
+    lines.append(f"- 开篇前 200 字：{opening}…")
+    flags: list[str] = []
+    if scan.get("opening_has_dialogue"):
+        flags.append("含对话")
+    hits = scan.get("opening_action_hits") or []
+    if hits:
+        flags.append("含动作/冲突词：" + "、".join(hits[:5]))
+    if scan.get("opening_flat"):
+        flags.append("⚠ 无对话、无动作冲突 → 疑似环境铺垫空转（开篇钩子风险）")
+    lines.append("  开篇信号：" + ("；".join(flags) if flags else "无明显钩子信号"))
+    ending = scan.get("ending_slice") or ""
+    lines.append(f"- 章末最后 300 字：…{ending}")
+    flags2: list[str] = []
+    if scan.get("ending_question"):
+        flags2.append("以问句收尾（章末钩子）")
+    hits2 = scan.get("ending_suspense_hits") or []
+    if hits2:
+        flags2.append("含悬念断点词：" + "、".join(hits2[:5]))
+    if scan.get("ending_flat"):
+        flags2.append("⚠ 平淡收束（无问句、无悬念词 → 章末钩子风险）")
+    lines.append("  章末信号：" + ("；".join(flags2) if flags2 else "无明显章末钩子信号"))
+    dr = scan.get("dialogue_ratio")
+    if dr is not None:
+        lines.append(f"- 全章对话占比 {dr:.0%}（过低时情绪感可能偏弱，仅作参考）")
+    return "\n".join(lines)

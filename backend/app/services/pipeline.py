@@ -1159,6 +1159,32 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
     db.add(row)
     db.commit()
 
+    # ── 伏笔账本流转（状态机推进通路）───────────────────────────────
+    # 根因：此前 resolved_foreshadowing 只写进 story_state 记录，从未落到账本行，
+    # 账本回收实际只发生在「大纲批准 resolve」与「手动改」两条路上，提取师判定
+    # 的回收/推进对账本状态完全无效 → 伏笔状态机空转。
+    # 现在接线（只读正文字面证据的提取师输出驱动，非硬规则）：
+    #   resolved_foreshadowing → closed（活跃三态 open/progressing/deferred 均可回收）
+    #   advanced_foreshadowing → progressing（仅 open 可推进；progressing/closed 不动）
+    # 幂等：重提取重复流转无害；id 非法/不存在/不属于本小说 → 跳过，不打回提取师。
+    try:
+        resolved_no = int(chapter_no)
+    except (TypeError, ValueError):
+        resolved_no = None
+    for e in parsed.resolved_foreshadowing:
+        r = db.get(PlotLedger, e.ledger_id)
+        if r is None or r.novel_id != novel_id or r.status not in ("open", "progressing", "deferred"):
+            continue
+        r.status = "closed"
+        if resolved_no is not None and r.chapter_resolved is None:
+            r.chapter_resolved = resolved_no
+    for e in parsed.advanced_foreshadowing:
+        r = db.get(PlotLedger, e.ledger_id)
+        if r is None or r.novel_id != novel_id or r.status != "open":
+            continue
+        r.status = "progressing"
+    db.commit()
+
     # 实体关系回填（M4：dynamic 剧情层）
     # 重提取时：先清理本章此前产生的动态关系，再写入新关系，
     # 避免切换版本/修订后旧版本遗留的过期关系残留。
@@ -1801,7 +1827,9 @@ def sync_ledger_from_outline(
         except (TypeError, ValueError):
             continue  # 非法 id 直接跳过，不回收
         row = db.get(PlotLedger, rid)
-        if row is not None and row.novel_id == novel_id and row.status == "open":
+        # 状态机回收守卫：活跃态（open / progressing / deferred）都允许回收为 closed。
+        # 原守卫只认 "open"，导致处于 progressing / deferred 的伏笔永远关不掉（状态机空转）。
+        if row is not None and row.novel_id == novel_id and row.status in ("open", "progressing", "deferred"):
             # 目标行若属于已降 draft 的旧版大纲（当前不可见），新版「接续回收」这条伏笔：
             # 把行迁移到当前版本再标 closed，保证回收结论在当前版本下可见；manual 行保留原来源。
             if row.source == "outline" and row.outline_id is not None and row.outline_id != outline.id:

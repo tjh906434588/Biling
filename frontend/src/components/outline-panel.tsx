@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   approveOutline,
   friendlyRunError,
+  friendlyTaskError,
   getActiveBlueprint,
   getAgentRunningTask,
   getOutlineApprovalStatus,
@@ -318,7 +319,7 @@ export default function OutlinePanel({ novelId }: Props) {
           continue;
         }
         if (r2.task?.status === "error") {
-          message.error(`大纲生成失败：${r2.task.error ?? "后台任务失败"}`);
+          message.error(`大纲生成失败：${friendlyTaskError(r2.task.error, "后台任务失败")}`);
         } else {
           message.success(r2.task?.msg ?? "大纲已生成完毕");
           // 与蓝图页一致：生成完成自动关闭「生成过程」与「新增大纲」弹窗
@@ -370,7 +371,7 @@ export default function OutlinePanel({ novelId }: Props) {
           const onPanel = liveNovelRef.current === novelId && mountedRef.current;
           if (t && t.status === "error") {
             setApprovingId(null);
-            if (onPanel) message.error(`大纲批准失败：${t.error ?? "请稍后重试"}`);
+            if (onPanel) message.error(`大纲批准失败：${friendlyTaskError(t.error, "请稍后重试")}`);
           } else if (t && t.outline_id) {
             setApprovingId(null);
             const n = t.injected_characters?.length ?? 0;
@@ -543,7 +544,7 @@ export default function OutlinePanel({ novelId }: Props) {
         } else if (ev.event === "stream_delta" && d.delta) {
           setDraftText((prev) => prev + d.delta);
         } else if (ev.event === "schema_validate") {
-          if (d.status !== "ok") message.error("大纲 schema 校验失败，可重试。");
+          if (d.status !== "ok") message.error("大纲格式校验失败，可重试。");
         } else if (ev.event === "stored") {
           // 只记录落库结果，不在此弹提示——成功提示统一在 finally 出口弹一次，避免与恢复路径重复
           if (typeof d.chapter_no === "number") storedChapterRef.current = d.chapter_no;
@@ -783,21 +784,87 @@ export default function OutlinePanel({ novelId }: Props) {
                 ) : null}
               </h3>
               <div className="flex shrink-0 items-center gap-2">
-                {/* 版本号按钮：点击打开版本选择弹窗；旁标当前展示版本是否已批准 */}
-                <button
-                  type="button"
-                  onClick={() => setShowVersionModal(true)}
-                  className="flex items-center gap-1 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                  title="点击切换大纲版本"
-                >
-                  <span>v{viewing.version_no}</span>
-                </button>
+                {/* 版本号按钮：点击展开内联版本浮层（替代原弹窗），点外部自动收起，不遮正文 */}
+                <span className="relative inline-flex">
+                  <button
+                    type="button"
+                    onClick={() => setShowVersionModal((o) => !o)}
+                    className="btn btn-ghost px-3 py-1.5 text-sm font-medium"
+                    title="点击切换大纲版本"
+                  >
+                    <span>v{viewing.version_no}</span>
+                  </button>
+                  {showVersionModal && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        aria-hidden
+                        onClick={() => setShowVersionModal(false)}
+                      />
+                      <div className="absolute right-0 top-full z-50 mt-2 max-h-[60vh] w-80 overflow-y-auto rounded-lg border border-zinc-200 bg-surface p-2 shadow-book dark:border-zinc-700 dark:bg-zinc-900">
+                        <p className="px-2 py-1 text-[11px] leading-5 text-zinc-400">
+                          同一章可保留多版大纲，点击版本预览；已批准标 ✓。
+                        </p>
+                        {versions.length === 0 ? (
+                          <p className="py-4 text-center text-xs text-zinc-400">该章还没有任何大纲版本。</p>
+                        ) : (
+                          <ul className="mt-1 space-y-1">
+                            {versions.map((v) => {
+                              const active = v.id === viewing?.id;
+                              const approved = v.status === "approved";
+                              return (
+                                <li key={v.id}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setViewVersionId(v.id);
+                                      setShowVersionModal(false);
+                                    }}
+                                    className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                                      active
+                                        ? "border-zinc-500 bg-zinc-100 dark:bg-zinc-800"
+                                        : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
+                                    }`}
+                                  >
+                                    <span className="flex min-w-0 flex-col gap-0.5">
+                                      <span className="flex items-center gap-2 font-medium">
+                                        <span>v{v.version_no}</span>
+                                        {approved ? (
+                                          <span className="rounded bg-green-100 px-1.5 py-px text-[10px] text-green-700 dark:bg-green-900 dark:text-green-300">
+                                            ✓ 已批准
+                                          </span>
+                                        ) : (
+                                          <span className="rounded bg-zinc-100 px-1.5 py-px text-[10px] text-zinc-400 dark:bg-zinc-800 dark:text-zinc-400">
+                                            未批准
+                                          </span>
+                                        )}
+                                      </span>
+                                      {v.title && <span className="truncate text-xs text-zinc-500">{v.title}</span>}
+                                    </span>
+                                    <span className="shrink-0 text-[11px] text-zinc-400">
+                                      {new Date(v.created_at).toLocaleString("zh-CN", {
+                                        month: "2-digit",
+                                        day: "2-digit",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })}
+                                    </span>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </span>
                 {/* 重写当前章大纲：复用新增大纲弹窗，章节号锁定为本章（生成的新版本与旧版本各自独立） */}
                 <button
                   type="button"
                   onClick={() => openAddModal(viewing.chapter_no)}
                   disabled={generatingNew}
-                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  className="btn btn-ghost px-3 py-1.5 text-sm font-medium"
                   title={
                     generatingNew
                       ? "大纲生成中，暂不能重写"
@@ -808,7 +875,7 @@ export default function OutlinePanel({ novelId }: Props) {
                 </button>
                 {viewing.status === "draft" ? (
                   <button
-                    className="rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="btn btn-approve"
                     onClick={() => handleApprove(viewing)}
                     disabled={approvingId !== null}
                   >
@@ -833,7 +900,7 @@ export default function OutlinePanel({ novelId }: Props) {
 
             {content?.beats && content.beats.length > 0 && (
               <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">节拍（beats）</h4>
+                <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">节拍</h4>
                 <ol className="flex flex-col gap-1.5">
                   {content.beats.map((b, i) => (
                     <li key={i} className="rounded-lg border border-zinc-200 p-2.5 text-sm dark:border-zinc-800">
@@ -887,7 +954,7 @@ export default function OutlinePanel({ novelId }: Props) {
 
             {content?.resolve_foreshadowing && content.resolve_foreshadowing.length > 0 && (
               <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-green-600 dark:text-green-400">回收伏笔（置 closed）</h4>
+                <h4 className="mb-1.5 text-xs font-semibold text-green-600 dark:text-green-400">回收伏笔</h4>
                 <ul className="flex flex-col gap-1">
                   {content.resolve_foreshadowing.map((r, i) => (
                     <li key={i} className="rounded-lg border border-green-200 bg-green-50 p-2 text-sm dark:border-green-900 dark:bg-green-950">
@@ -923,7 +990,7 @@ export default function OutlinePanel({ novelId }: Props) {
         subtitle={
           rewriteChapterNo != null
             ? "重写本章：生成一个新版本（未批准），与本章已有版本各自独立、互不影响。批准新版本后，小说家写本章时才优先引用它。"
-            : "大纲 = 单章的施工图。大纲师按当前生效蓝图，排出这一章的目标、节拍（beats）、冲突和视角。生成的是「未批准」版本，批准此版本后，小说家写这一章时会优先照它来。"
+            : "大纲 = 单章的施工图。大纲师按当前生效蓝图，排出这一章的目标、节拍、冲突和视角。生成的是「未批准」版本，批准此版本后，小说家写这一章时会优先照它来。"
         }
         onClose={() => setShowAddModal(false)}
         maxWidth="max-w-xl"
@@ -1057,7 +1124,7 @@ export default function OutlinePanel({ novelId }: Props) {
             <span className="text-xs text-zinc-500">本章目标</span>
             <textarea
               className="resize-none rounded-lg border border-zinc-300 bg-zinc-50 p-3 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              placeholder="本章目标（goal，留空则由大纲师自行把握）"
+              placeholder="本章目标（留空则由大纲师自行把握）"
               rows={2}
               value={form.goal}
               onChange={(e) => setForm({ ...form, goal: e.target.value })}
@@ -1068,69 +1135,7 @@ export default function OutlinePanel({ novelId }: Props) {
         </div>
       </Modal>
 
-      {/* ── 版本选择弹窗：点击详情标题右侧的 vN 打开，列出本章全部版本，标明已批准项 ── */}
-      <Modal
-        open={showVersionModal}
-        title={viewing ? `第 ${viewing.chapter_no} 章 · 选择大纲版本` : "选择大纲版本"}
-        subtitle="同一章可保留多版大纲，点击版本可预览内容；已批准版本标 ✓。切换生效需在详情顶部点「批准此版本」。"
-        onClose={() => setShowVersionModal(false)}
-        maxWidth="max-w-lg"
-        footer={
-          <div className="flex w-full justify-end">
-            <button
-              type="button"
-              onClick={() => setShowVersionModal(false)}
-              className="btn btn-ghost px-4 py-1.5"
-            >
-              关闭
-            </button>
-          </div>
-        }
-      >
-        <div className="flex flex-col gap-2">
-          {versions.length === 0 && (
-            <p className="py-6 text-center text-xs text-zinc-400">该章还没有任何大纲版本。</p>
-          )}
-          {versions.map((v) => {
-            const active = v.id === viewing?.id;
-            const approved = v.status === "approved";
-            return (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => {
-                  setViewVersionId(v.id);
-                  setShowVersionModal(false);
-                }}
-                className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-                  active
-                    ? "border-zinc-500 bg-zinc-100 dark:bg-zinc-800"
-                    : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
-                }`}
-              >
-                <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="flex items-center gap-2 font-medium">
-                    <span>v{v.version_no}</span>
-                    {approved ? (
-                      <span className="rounded bg-green-100 px-1.5 py-px text-[10px] text-green-700 dark:bg-green-900 dark:text-green-300">
-                        ✓ 已批准
-                      </span>
-                    ) : (
-                      <span className="rounded bg-zinc-100 px-1.5 py-px text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                        未批准
-                      </span>
-                    )}
-                  </span>
-                  {v.title && <span className="truncate text-xs text-zinc-500">{v.title}</span>}
-                </span>
-                <span className="shrink-0 text-[11px] text-zinc-400">
-                  {new Date(v.created_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </Modal>
+      {/* ── 版本选择已改为详情标题 vN 旁的内联浮层（见上方 trigger），不再用弹窗 ── */}
 
       {/* ── 生成过程弹窗：DeepSeek 网页版同款交互（复用公共组件，参考蓝图页） ── */}
       <AgentStreamModal

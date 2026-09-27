@@ -360,6 +360,17 @@ class ResolvedForeshadowing(BaseModel):
     ledger_id: uuid.UUID
 
 
+class AdvancedForeshadowing(BaseModel):
+    """伏笔推进（状态机推进通路）：正文里这条伏笔有了新进展但还没到回收点。
+
+    落库时把 open 置为 progressing（仅 open 可推进；closed 不动），驱动账本从
+    「已埋设」流转到「正在推进」，不再卡死在 open。
+    """
+
+    ledger_id: uuid.UUID
+    note: str = ""  # 正文中这条伏笔发生了什么新进展（证据摘要）
+
+
 class UnresolvedHook(BaseModel):
     hook: str
     since_chapter: Optional[int] = None
@@ -424,6 +435,7 @@ class StoryStateExtract(BaseModel):
     world_state_changes: list[WorldStateChange] = []
     new_foreshadowing: list[ForeshadowingItem] = []
     resolved_foreshadowing: list[ResolvedForeshadowing] = []
+    advanced_foreshadowing: list[AdvancedForeshadowing] = []  # 伏笔推进（open→progressing）
     unresolved_hooks: list[UnresolvedHook] = []
     relations: list[RelationExtract] = []
     superseded_relations: list[SupersededRelation] = []  # 被取代的旧关系（如 师徒→叛出师门）
@@ -485,6 +497,10 @@ class Rubric(BaseModel):
     pacing: RubricDimension
     style_compliance: RubricDimension
     foreshadowing_accountability: RubricDimension
+    # 读者追读（追读力系统）：可空兜底——旧评价记录/旧模型输出无此维度时不致校验失败
+    reader_retention: Optional[RubricDimension] = None
+    # 追读子项分：opening_hook/ending_hook/tension/anticipation（前端逐项展示）
+    retention_hooks: Optional[dict[str, int]] = None
 
 
 class Issue(BaseModel):

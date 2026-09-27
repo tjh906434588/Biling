@@ -162,9 +162,9 @@ function parseImportText(text: string): { items: ImportItem[]; errors: string[] 
   try {
     arr = JSON.parse(clean);
   } catch (e) {
-    return { items: [], errors: [`无法解析为 JSON：${(e as Error).message}`] };
+    return { items: [], errors: ["内容无法解析，请检查粘贴的设定格式"] };
   }
-  if (!Array.isArray(arr)) return { items: [], errors: ["内容不是 JSON 数组"] };
+  if (!Array.isArray(arr)) return { items: [], errors: ["内容格式不对，请粘贴 AI 输出的设定清单"] };
 
   const items: ImportItem[] = [];
   arr.forEach((raw, i) => {
@@ -172,11 +172,11 @@ function parseImportText(text: string): { items: ImportItem[]; errors: string[] 
     const type = String(r.type ?? "").trim() as SettingType;
     const name = String(r.name ?? "").trim();
     if (!SETTING_TYPES.includes(type)) {
-      errors.push(`第 ${i + 1} 条：type「${type || "(空)"}」不在可选类型内`);
+      errors.push(`第 ${i + 1} 条：类型「${type || "(空)"}」不属于可选类型`);
       return;
     }
     if (!name) {
-      errors.push(`第 ${i + 1} 条：name 为空`);
+      errors.push(`第 ${i + 1} 条：名称为空`);
       return;
     }
     const constitution = String(r.constitution ?? r.constitution_text ?? "").trim();
@@ -573,10 +573,10 @@ function TimingBlock({ stages, onStagesChange, segments, onSegmentsChange, plan 
             <button
               key={o.value}
               type="button"
-              className={`rounded-full border px-2 py-0.5 text-[11px] ${
+              className={`rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
                 on
-                  ? "border-transparent bg-zinc-900 text-white dark:border-transparent dark:bg-zinc-100 dark:text-zinc-900"
-                  : "border-zinc-300 text-zinc-500 hover:border-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                  : "border border-zinc-300 text-zinc-500 hover:border-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
               }`}
               onClick={() => toggleStage(o.value)}
             >
@@ -1741,7 +1741,7 @@ export default function SettingsPanel({ novelId }: Props) {
           <textarea
             className="w-full shrink-0 resize-y rounded-lg border border-zinc-300 bg-zinc-50 p-2 text-[12px] outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             rows={10}
-            placeholder='把 AI 输出的 JSON 粘贴到这里，例如：[{"type":"character","name":"岚","constitution":"女性占卜师","dynamic":"沉默寡言"}]'
+            placeholder='把 AI 输出的设定清单粘贴到这里（含类型、名称、设定与动态信息），可直接复制，无需手动编辑'
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
           />

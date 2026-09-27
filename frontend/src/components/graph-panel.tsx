@@ -5,23 +5,30 @@ import { getGraph, getMemoryReview, type GraphEdge, type GraphNode, type GraphVi
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
 
-/* 节点类型配色：浅色填充 + 描边 + 深色文字（深色模式下也清晰） */
+/* 节点配色：基础色为 mid-tone（深浅色通用），fill/text 用 color-mix 与主题感知的
+   --paper / --ink-strong 混合，自动适配浅色与深色模式（无需为每主题另写一套色值）。
+   基础色在 globals.css 的 :root 中定义（--g-character 等）。 */
+const gStyle = (v: string) => ({
+  fill: `color-mix(in oklab, ${v} 22%, var(--paper))`,
+  stroke: v,
+  text: `color-mix(in oklab, ${v} 82%, var(--ink-strong))`,
+});
 const KIND_STYLE: Record<string, { fill: string; stroke: string; text: string }> = {
-  character: { fill: "#dbeafe", stroke: "#3b82f6", text: "#1e3a8a" },
-  location: { fill: "#dcfce7", stroke: "#16a34a", text: "#14532d" },
-  faction: { fill: "#ede9fe", stroke: "#8b5cf6", text: "#4c1d95" },
-  world_rule: { fill: "#fef3c7", stroke: "#d97706", text: "#78350f" },
-  item: { fill: "#ffedd5", stroke: "#ea580c", text: "#7c2d12" },
-  concept: { fill: "#ccfbf1", stroke: "#0d9488", text: "#134e4a" },
-  other: { fill: "#f4f4f5", stroke: "#a1a1aa", text: "#3f3f46" },
+  character: gStyle("var(--g-character)"),
+  location: gStyle("var(--g-location)"),
+  faction: gStyle("var(--g-faction)"),
+  world_rule: gStyle("var(--g-world_rule)"),
+  item: gStyle("var(--g-item)"),
+  concept: gStyle("var(--g-concept)"),
+  other: gStyle("var(--g-other)"),
 };
 
-/* 角色分级配色：主/重/次/灰 由身份字对应的等级决定，颜色一眼区分 */
+/* 角色分级配色：主/重/次/灰 由身份字对应的等级决定，颜色一眼区分（复用上面的基础色） */
 const ROLE_STYLE: Record<string, { fill: string; stroke: string; text: string }> = {
-  protagonist: { fill: "#fee2e2", stroke: "#ef4444", text: "#7f1d1d" }, // 主：红
-  major: { fill: "#fef3c7", stroke: "#f59e0b", text: "#78350f" }, // 重：橙
-  minor: { fill: "#dbeafe", stroke: "#3b82f6", text: "#1e3a8a" }, // 次：蓝
-  extra: { fill: "#f4f4f5", stroke: "#a1a1aa", text: "#3f3f46" }, // 灰：灰
+  protagonist: gStyle("var(--g-protagonist)"), // 主：朱砂红
+  major: gStyle("var(--g-item)"), // 重：橙
+  minor: gStyle("var(--g-character)"), // 次：蓝
+  extra: gStyle("var(--g-other)"), // 灰：灰
 };
 
 /* 节点身份字：角色分级 / 势力（圆圈内显示）。覆盖全部等级，未知值兜底显示 */
@@ -283,10 +290,10 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
         <defs>
           {/* 箭头 marker（userSpaceOnUse 按图坐标固定大小，14px 保证清晰可见；双 marker 避免 auto-start-reverse 兼容问题） */}
           <marker id="rel-arrow" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="14" markerHeight="14" orient="auto" markerUnits="userSpaceOnUse">
-            <path d="M3,3 L13,7 L3,11 z" fill="#52525b" />
+            <path d="M3,3 L13,7 L3,11 z" style={{ fill: "var(--zinc-500)" }} />
           </marker>
           <marker id="rel-arrow-rev" viewBox="0 0 14 14" refX="2" refY="7" markerWidth="14" markerHeight="14" orient="auto" markerUnits="userSpaceOnUse">
-            <path d="M11,3 L1,7 L11,11 z" fill="#52525b" />
+            <path d="M11,3 L1,7 L11,11 z" style={{ fill: "var(--zinc-500)" }} />
           </marker>
         </defs>
 
@@ -382,10 +389,7 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
                   y={ly}
                   textAnchor="middle"
                   fontSize={10}
-                  fill="currentColor"
-                  stroke="#ffffff"
-                  strokeWidth={3}
-                  paintOrder="stroke"
+                  style={{ fill: "currentColor", stroke: "var(--paper)", strokeWidth: 3, paintOrder: "stroke" }}
                   className="pointer-events-none select-none"
                 >
                   {lines.map((ln, i) => (
@@ -421,7 +425,7 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
                 onPointerLeave={() => setHoverNode((h) => (h && h.id === nd.id ? null : h))}
                 onPointerDown={() => setHoverNode(null)}
               >
-                <circle cx={p.x} cy={p.y} r={r} fill={style.fill} stroke={style.stroke} strokeWidth={1.6} />
+                <circle cx={p.x} cy={p.y} r={r} style={{ fill: style.fill, stroke: style.stroke }} strokeWidth={1.6} />
                 {mark && (
                   <text
                     x={p.x}
@@ -429,7 +433,7 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
                     textAnchor="middle"
                     fontSize={11}
                     fontWeight={700}
-                    fill={style.text}
+                    style={{ fill: style.text }}
                     className="pointer-events-none select-none"
                   >
                     {mark}
@@ -441,10 +445,7 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
                   textAnchor="middle"
                   fontSize={11}
                   fontWeight={600}
-                  fill={style.text}
-                  stroke="#ffffff"
-                  strokeWidth={3}
-                  paintOrder="stroke"
+                  style={{ fill: style.text, stroke: "var(--paper)", strokeWidth: 3, paintOrder: "stroke" }}
                   className="pointer-events-none select-none"
                 >
                   {nd.label}
@@ -622,23 +623,28 @@ export default function GraphPanel({ novelId }: { novelId: string }) {
                 <div className="mt-2.5 border-t border-zinc-100 pt-2 dark:border-zinc-800">
                   <p className="mb-1.5 font-medium text-zinc-800 dark:text-zinc-100">节点身份字</p>
                   <ul className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-                    {[
-                      ["主", "主角", "#fee2e2", "#ef4444", "#7f1d1d"],
-                      ["重", "重要配角", "#fef3c7", "#f59e0b", "#78350f"],
-                      ["次", "次要配角", "#dbeafe", "#3b82f6", "#1e3a8a"],
-                      ["灰", "龙套/炮灰", "#f4f4f5", "#a1a1aa", "#3f3f46"],
-                      ["势", "势力", "#ede9fe", "#8b5cf6", "#4c1d95"],
-                    ].map(([mark, name, fill, stroke, text]) => (
+                    {(
+                      [
+                        ["主", "主角", "protagonist"],
+                        ["重", "重要配角", "major"],
+                        ["次", "次要配角", "minor"],
+                        ["灰", "龙套/炮灰", "extra"],
+                        ["势", "势力", "faction"],
+                      ] as [string, string, string][]
+                    ).map(([mark, name, key]) => {
+                      const s = (ROLE_STYLE as Record<string, { fill: string; stroke: string; text: string }>)[key] ?? KIND_STYLE[key];
+                      return (
                       <li key={mark} className="flex items-center gap-1.5">
                         <span
                           className="grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px] font-bold leading-none"
-                          style={{ background: fill as string, color: text as string, border: `1px solid ${stroke as string}` }}
+                          style={{ background: s.fill, color: s.text, border: `1px solid ${s.stroke}` }}
                         >
                           {mark}
                         </span>
                         {name}
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 </div>
               </span>

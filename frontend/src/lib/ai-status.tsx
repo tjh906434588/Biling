@@ -113,7 +113,7 @@ export function AiNotReadyBanner({ onConfigure }: { onConfigure?: () => void }) 
           }
         : null;
       notifIdRef.current = notification.error({
-        title: `AI 模型未接入${label ? `（当前选中 ${label} 但未配置 Key）` : ""}`,
+        title: `AI 模型未接入${label ? `（当前选中 ${label} 但未配置密钥）` : ""}`,
         message: (
           <>
             没有可用的 AI 模型，所有 AI 功能（生成/提取/评价/大纲/蓝图/风格学习）暂不可用。
@@ -157,7 +157,7 @@ export function AiNotReadyBanner({ onConfigure }: { onConfigure?: () => void }) 
 export function CostHint({ children }: { children?: ReactNode }) {
   return (
     <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-      {children ?? "调用 AI · 消耗 Token"}
+      {children ?? "调用 AI · 消耗额度"}
     </span>
   );
 }

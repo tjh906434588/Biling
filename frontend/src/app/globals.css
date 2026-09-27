@@ -96,6 +96,16 @@
   --amber-900: #573a15;
   --amber-950: #33210b;
 
+  /* —— 图谱节点基础色（mid-tone，深浅色通用；fill/text 由 graph-panel 用 color-mix 与 --paper/--ink-strong 混合，自动适配深浅） —— */
+  --g-character: #587aab; /* 蓝 */
+  --g-location: #5d8a5f; /* 竹青绿 */
+  --g-faction: #8b5cf6; /* 紫（势力） */
+  --g-world_rule: #b8842c; /* 赭石 */
+  --g-item: #ea580c; /* 橙 */
+  --g-concept: #0d9488; /* 青 */
+  --g-other: #b0a288; /* 灰 */
+  --g-protagonist: #b55440; /* 朱砂红（主角） */
+
   /* —— 字体 —— */
   /* 中文回退链直接命中系统已装字体：NoTo Sans SC / 苹方 / 微软雅黑；拉丁字形用 Geist */
   --sans-stack: var(--font-geist-sans), "Noto Sans SC", "PingFang SC", "HarmonyOS Sans SC",
@@ -568,6 +578,26 @@
   }
   .btn-seal:hover:not(:disabled) {
     background: color-mix(in oklab, var(--seal) 88%, #000);
+  }
+
+  /* 正向确认/批准：竹青底（成功语义），用于「设为生效中/批准此版本/添加模型」 */
+  .btn-approve {
+    background: var(--jade);
+    color: #fdf8f0;
+    font-weight: 500;
+  }
+  .btn-approve:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--jade) 88%, #000);
+  }
+  /* 危险/删除：朱砂描边（克制），用于「删除」等破坏性动作 */
+  .btn-danger {
+    border: 1px solid var(--seal);
+    color: var(--seal);
+    background: transparent;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--seal) 12%, transparent);
+    color: color-mix(in oklab, var(--seal) 78%, #000);
   }
 
   /* —— 阅读正文：宋体 + 大行距，模拟纸书 —— */

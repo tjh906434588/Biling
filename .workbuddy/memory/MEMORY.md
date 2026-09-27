@@ -9,6 +9,10 @@
   取值与老面板的 `dark:*` 一致，因此对老面板无副作用。
 - 例外：`bg-zinc-900` **不会**翻转（它是主按钮底色）。主按钮请用 `.btn-primary`，
   次按钮用 `.btn-ghost`，两者内部用 `--btn-bg/--btn-fg` 自适应深浅色。
+- 新增语义按钮类（2026-09-27）：正向确认/批准用 `.btn-approve`（竹青 `--jade` 底），
+  破坏性动作（删除）用 `.btn-danger`（朱砂描边）。散落的 `bg-green-700`/`border-red-200` 原始类统一收敛到这两类。
+- **图谱面板配色**：节点/箭头/图例不再硬编码 hex，改用 `:root` 里的 `--g-character/--g-location/--g-faction/--g-world_rule/--g-item/--g-concept/--g-other/--g-protagonist` 基础色，
+  在 graph-panel 里用 `color-mix(in oklab, 基础色 22%, var(--paper))` 算填充、`...82%, var(--ink-strong)` 算文字，一套值自动适配深浅色。改图谱配色只动这 8 个变量，别再写死 hex。
 - 语义变量：`--ink-strong`（标题主色）、`--ink-body`、`--prose`（阅读正文）、`--rule`（发丝边框）。
 - 版心：`.shell`（1320px）与 `.shell-wide`（1560px，工作台用），两者都自带 clamp 内边距。
 - 阅读正文加 `.reading`（宋体 + 行距 1.95），竖排用 `.vertical`，入场动画 `.rise` / `.ink-in`。
@@ -67,3 +71,30 @@
 - 前端视觉回归：`scripts/shot.mjs`（走 CDP 的截图脚本，用法见文件头注释）。
   headless 的 `--screenshot` 等不到客户端 fetch，也等不到入场动画，别用。
 - 临时验证：`next build` 后 `next start -p 3100`（完事记得停掉）。
+- **真实数据库是 `backend/biling.db`**（`database_url = sqlite:///./biling.db`，相对 CWD）——
+  仓库根的 `biling.db` 是空壳（0 表），别被误导。后端 uvicorn 跑在 `127.0.0.1:8000`。
+  截图前先确认 3000/8000 都在线（用户常年开着这两个服务）。
+- **工作台 tab 深链走 query `?tab=`**：`blueprint`(默认，会删 tab 参数) / `write` / `outline` /
+  `settings` / `ledger` / `style` / `detect` / `graph` / `models` / `tools`。
+- 截图等待正文渲染用 waitExpr：`!!document.querySelector('.reading') && (…textContent||'').length>200`。
+  `PROBE` 环境变量可注入 JS（支持 `awaitPromise`）——可用来「点击某按钮后再截图」或测量元素宽度自证布局。
+- 写工作台的布局要点（2026-09-27 定稿）：
+  - 内容画布：`write`/`outline` tab 用 `max-w-[1728px]`，其余 `max-w-[1280px]`（页面 `main` 里按 tab 切换）——
+    1080p(1920) 下 1280 会在两侧各空 226px，正文被挤窄，故放宽。
+  - 写页三列：nav 侧栏(188) + 章节目录列(340) + [正文 flex-1 + 分隔条 + 评价栏]；并排断点是 **xl 不是 lg**
+    （因为 nav 侧栏从 lg 起就出现，lg 宽度不够并排）。
+  - **评价栏宽度是「可调」的**（`writing-panel.tsx`，2026-09-27 二次迭代）：
+    `reviewWidth` 状态 + `--review-w` CSS 变量驱动 `xl:w-[var(--review-w)]`；
+    三档预设 `REVIEW_W_PRESETS`（窄 420 / 中 620 / 宽 860，默认 620）、
+    正文与评价之间的**分隔条可拖拽**（`startReviewResize`，clamp 340–1000，双击复位，聚焦后 ←/→ 微调）；
+    偏好存 localStorage `biling.reviewWidth`。评价栏另有 `reviewCollapsed` 折叠成 w-12 竖条。
+  - **章节目录也可折叠**（`dirCollapsed`）：折叠后网格变 `lg:grid-cols-[48px_minmax(0,1fr)]`
+    ——注意必须保留**两列**，早期误写成单列会把正文/评价挤到第二行、直接掉出视口。
+  - 1920(1080p) 实测（`?tab=write`，正文可读区 `.reading` 宽 / 评价栏宽）：
+    目录展开+中档 → 566 / 620；**目录折叠+中档 → 858 / 620**；目录折叠+宽档 → 618 / 860（此处评价栏容器 ≥672px，维度卡自动转 2 列）。
+    结论：1080p 下「目录 340 + 正文 + 评价」三者互斥，想两头都宽就折叠目录或折叠评价栏。
+  - 评价栏内容用**容器查询**（`.@container` + `@2xl:grid-cols-2`）：栏 <672px 时六维评分卡单列（好读），
+    ≥672px 才并两列——别再写 `md:grid-cols-2`（跟视口走，300px 的窄栏里也会硬并两列 → 挤成一团）。
+  - nav 侧栏断点 `lg:flex`，中窄屏横滑标签条 `lg:hidden`。
+  - 表单类弹窗（新增章节、信息控制）里，**新增章节已改右侧滑入抽屉**（`fixed right-0` 的 `aside`，不遮正文），
+    其余表单仍可用居中 `Modal`（属合理范式）。

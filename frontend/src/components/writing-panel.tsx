@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import {
   getActiveBlueprint,
   getAgentRunningTask,
@@ -31,6 +40,32 @@ import { CostHint, useAiStatus } from "@/lib/ai-status";
 interface Props {
   novelId: string;
 }
+
+/** 评价维度英文 key → 用户可读中文（界面直接展示用）。 */
+const RUBRIC_LABELS: Record<string, string> = {
+  blueprint_adherence: "蓝图贴合度",
+  consistency: "前后一致性",
+  character_voice: "角色口吻",
+  pacing: "节奏把控",
+  style_compliance: "文风与语言",
+  foreshadowing_accountability: "伏笔交代",
+  reader_retention: "读者追读",
+};
+
+/** 追读力子项英文 key → 中文。 */
+const RETENTION_HOOK_LABELS: Record<string, string> = {
+  opening_hook: "开篇钩子",
+  ending_hook: "章末悬念",
+  tension: "情绪张力",
+  anticipation: "期待感",
+};
+
+/** 问题严重度 → 中文。 */
+const SEVERITY_LABELS: Record<string, string> = {
+  high: "严重",
+  medium: "中等",
+  low: "轻微",
+};
 
 interface GenForm {
   chapter_no: number;
@@ -370,6 +405,18 @@ const EMPTY_FORM: GenForm = {
   hint_only: "",
 };
 
+/** 评价栏宽度（px）：三档预设切换，xl 起生效。偏好存 localStorage，跨刷新保持。 */
+const REVIEW_W_DEFAULT = 620;
+const REVIEW_W_MIN = 340;
+const REVIEW_W_MAX = 1000;
+const REVIEW_W_KEY = "biling.reviewWidth";
+/** 评价栏三档预设（窄 / 中 / 宽），点一下即切换。 */
+const REVIEW_W_PRESETS: ReadonlyArray<readonly [string, number]> = [
+  ["窄", 420],
+  ["中", 620],
+  ["宽", 860],
+];
+
 /** 卷信息（与蓝图 content.volumes 一致，用于章节目录按卷分组）。 */
 type VolumeInfo = NonNullable<Blueprint["content"]["volumes"]>[number];
 
@@ -440,7 +487,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 function sourceLabel(source: string): string {
   if (source.startsWith("novelist")) return "初稿";
-  return SOURCE_LABELS[source] ?? source;
+  return SOURCE_LABELS[source] ?? "未知来源";
 }
 
 /** 复制文本到剪贴板：优先异步 Clipboard API；权限被拒/不可用（如非 https、iframe 内）时回退 execCommand。 */
@@ -609,6 +656,30 @@ export default function WritingPanel({ novelId }: Props) {
   // 弹窗开关：新增章节 / 信息控制 仍用弹窗；评价与优化、版本树已改为右侧常驻内联面板（见下方）
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
+  /** 评价与优化侧栏折叠：折叠后正文恢复全宽阅读，再点窄条展开 */
+  const [reviewCollapsed, setReviewCollapsed] = useState(false);
+  /** 评价栏宽度（px）：窄/中/宽三档预设切换，xl 起生效。偏好存 localStorage，跨刷新保持。 */
+  const [reviewWidth, setReviewWidth] = useState(REVIEW_W_DEFAULT);
+  /** 章节目录折叠：目录 340px 常驻会把正文+评价两头挤窄，折叠后两者都变宽。 */
+  const [dirCollapsed, setDirCollapsed] = useState(false);
+
+  // 读取/保存评价栏宽度偏好（localStorage 不可用时静默退化为默认值）
+  useEffect(() => {
+    try {
+      const v = Number(window.localStorage.getItem(REVIEW_W_KEY));
+      if (Number.isFinite(v) && v >= REVIEW_W_MIN && v <= REVIEW_W_MAX) setReviewWidth(v);
+    } catch {
+      /* localStorage 不可用：用默认宽度 */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(REVIEW_W_KEY, String(Math.round(reviewWidth)));
+    } catch {
+      /* 忽略：写不进去不影响本次使用 */
+    }
+  }, [reviewWidth]);
+
   /** 版本树：标题旁版本号点击展开的内联浮层（替代原弹窗）。 */
   const [versionOpen, setVersionOpen] = useState(false);
   /** 重新生成模式：非 null 时新增章节弹窗以"重新生成当前章正文"语义工作（章节号锁定当前章）。 */
@@ -1456,7 +1527,7 @@ export default function WritingPanel({ novelId }: Props) {
             setReviewRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
           } else if (ev.event === "schema_validate" && d.status !== "ok") {
             failed = true;
-            showToast("评价 schema 校验失败，可重试。", "error");
+            showToast("评价格式校验失败，可重试。", "error");
           } else if (ev.event === "stored") {
             // 收到落库回执即先行刷新一次评价列表（早于流结束展示）；流结束后还会无条件校准一次。
             void listReviews(novelId, activeChapter.chapter_no)
@@ -1661,7 +1732,7 @@ export default function WritingPanel({ novelId }: Props) {
             collectedGaps = items.length ? items : [];
           } else if (ev.event === "schema_validate" && d.status !== "ok") {
             failed = true;
-            showToast("优化 schema 校验失败，可重试。", "error");
+            showToast("优化格式校验失败，可重试。", "error");
           } else if (ev.event === "stream_error") {
             failed = true;
             showToast((ev.data as { message?: string }).message ?? "AI 优化出错，请稍后重试。", "error");
@@ -1787,15 +1858,45 @@ export default function WritingPanel({ novelId }: Props) {
 
   return (
     <Loading loading={loading}>
-      <div className="grid items-start gap-6 lg:grid-cols-[340px_minmax(0,1fr)] xl:gap-8">
+      <div
+        className={`grid items-start gap-6 xl:gap-8 ${
+          dirCollapsed ? "lg:grid-cols-[48px_minmax(0,1fr)]" : "lg:grid-cols-[340px_minmax(0,1fr)]"
+        }`}
+      >
+      {/* 目录折叠后的窄条：点它把 340px 目录栏收起，正文与评价栏同时变宽 */}
+      {dirCollapsed && (
+        <div className="panel flex flex-row items-center gap-2 py-2 lg:w-full xl:h-[calc(100dvh-6rem)] xl:flex-col xl:py-3">
+          <button
+            type="button"
+            onClick={() => setDirCollapsed(false)}
+            title="展开章节目录"
+            aria-label="展开章节目录"
+            className="btn btn-ghost h-8 w-8 shrink-0 p-0"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 6l6 6-6 6" /></svg>
+          </button>
+          <span className="text-xs tracking-widest text-zinc-500 dark:text-zinc-400 xl:[writing-mode:vertical-rl]">
+            章节目录
+          </span>
+        </div>
+      )}
       {/* 左侧：章节目录（一件事一张卡，按卷分组、可展开搜索，与大纲页一致）。
           模块高度跟随内容，最多与页面底部对齐；内容多时在列表内滚动，避免整页滚动条。 */}
-      <aside className="flex max-h-[calc(100dvh-6rem)] min-w-0 flex-col gap-4 overflow-hidden">
+      <aside className={`${dirCollapsed ? "hidden" : "flex"} max-h-[calc(100dvh-6rem)] min-w-0 flex-col gap-4 overflow-hidden`}>
         <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="panel-head shrink-0">
             <h3 className="panel-title">章节目录</h3>
             <div className="flex items-center gap-2">
               <span className="panel-hint">{chapters.length} 章</span>
+              <button
+                type="button"
+                onClick={() => setDirCollapsed(true)}
+                title="收起章节目录，正文与评价栏同时变宽"
+                aria-label="收起章节目录"
+                className="btn btn-ghost h-6 w-6 shrink-0 p-0"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M15 6l-6 6 6 6" /></svg>
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -1989,7 +2090,7 @@ export default function WritingPanel({ novelId }: Props) {
               type="button"
               onClick={handleCopyContent}
               disabled={activeNo == null || !selectedVersion}
-              className="w-full cursor-pointer rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-600 hover:border-zinc-500 disabled:cursor-not-allowed disabled:hover:border-zinc-300 disabled:opacity-100 dark:border-zinc-700 dark:text-zinc-300 dark:disabled:hover:border-zinc-700"
+              className="btn btn-ghost w-full"
             >
              复制本章正文
             </button>
@@ -2000,12 +2101,14 @@ export default function WritingPanel({ novelId }: Props) {
         </div>
       </aside>
 
-      {/* 右侧：本章正文（上，占比更大）+ 评价与优化（下，常驻内联），两张卡上下排布、各自独立滚动，
-          正文与评价同屏可见，不再用弹窗遮挡正文。 */}
-      <section className="flex h-[calc(100dvh-6rem)] min-w-0 flex-col gap-5 sm:gap-7 overflow-hidden">
+      {/* 右侧：正文（左，占据主区）+ 评价与优化（右，常驻侧栏）并排，各自独立滚动、互不挤压；
+          中窄屏（<xl）回退为上下堆叠，评价栏限高可滚动；xl 起正文与评价左右并排、各自满高独立滚动。正文与评价始终同屏可见，不再用弹窗；评价栏可折叠为窄条让正文全宽阅读。 */}
+      <section
+        className="flex h-[calc(100dvh-6rem)] min-w-0 flex-col gap-5 overflow-hidden xl:flex-row xl:gap-6"
+      >
         {/* ① 当前章节正文（全部版本 + 已定稿正文），显示在界面、不撑破页面高度 */}
         {detail ? (
-          <div className="panel flex min-h-0 flex-[3] flex-col">
+          <div className="panel flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="panel-head">
               <h3 className="panel-title">
                 {/* 点击标题即复制「第 X 章 标题」（含章节号），无需单独按钮 */}
@@ -2136,7 +2239,7 @@ export default function WritingPanel({ novelId }: Props) {
             )}
           </div>
         ) : activeNo != null ? (
-          <div className="panel flex min-h-0 flex-[3] flex-col">
+          <div className="panel flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="panel-head">
               <h3 className="panel-title">
                 第 {activeNo} 章
@@ -2147,7 +2250,7 @@ export default function WritingPanel({ novelId }: Props) {
             </p>
           </div>
         ) : (
-          <div className="panel flex min-h-0 flex-[3] flex-col">
+          <div className="panel flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="panel-head">
               <h3 className="panel-title">
                 本章正文
@@ -2159,21 +2262,69 @@ export default function WritingPanel({ novelId }: Props) {
           </div>
         )}
 
-        {/* ② 评价与优化：右侧常驻内联面板（替代原弹窗），评价师结果与「按评价优化」与正文同屏可见 */}
-        <div className="panel flex min-h-0 flex-[2] flex-col">
-          <div className="panel-head shrink-0">
-            <h3 className="panel-title">
-              <span className="panel-step">②</span>
-              评价与优化
-            </h3>
-            {activeNo != null && (
-              <span className="panel-hint">
-                第 {activeNo} 章
-                {selectedVersion ? ` · v${selectedVersion.version_no} ${sourceLabel(selectedVersion.source)}` : ""}
-              </span>
-            )}
+        {/* 评价与优化：右侧常驻侧栏（替代原弹窗），评价师结果与「按评价优化」与正文同屏可见；
+            可点标题栏「收起」按钮折叠为窄条，正文即恢复全宽阅读；再点窄条展开。 */}
+        {reviewCollapsed ? (
+          <div className="panel flex max-h-[45vh] min-h-0 flex-row items-center justify-center gap-2 py-2 xl:max-h-none xl:w-12 xl:flex-col xl:shrink-0 xl:justify-start xl:py-3">
+            <button
+              type="button"
+              onClick={() => setReviewCollapsed(false)}
+              title="展开评价与优化"
+              aria-label="展开评价与优化"
+              className="btn btn-ghost h-8 w-8 shrink-0 p-0"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 6l6 6-6 6" /></svg>
+            </button>
+            <span className="text-xs tracking-widest text-zinc-500 dark:text-zinc-400 xl:[writing-mode:vertical-rl]">评价与优化</span>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
+        ) : (
+          <div
+            className="panel flex max-h-[45vh] min-h-0 flex-col xl:max-h-none xl:w-[var(--review-w)] xl:shrink-0"
+            style={{ "--review-w": `${Math.round(reviewWidth)}px` } as CSSProperties}
+          >
+          <div className="panel-head shrink-0">
+            <h3 className="panel-title">评价与优化</h3>
+            <div className="flex items-center gap-2">
+              {activeNo != null && (
+                <span className="panel-hint">
+                  第 {activeNo} 章
+                  {selectedVersion ? ` · v${selectedVersion.version_no} ${sourceLabel(selectedVersion.source)}` : ""}
+                </span>
+              )}
+              {/* 宽度三档（仅并排时有效）：窄/中/宽一键切换 */}
+              <div className="hidden items-center gap-0.5 rounded border border-zinc-200 p-0.5 xl:flex dark:border-zinc-700">
+                {REVIEW_W_PRESETS.map(([label, w]) => {
+                  const on = Math.round(reviewWidth) === w;
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => setReviewWidth(w)}
+                      aria-pressed={on}
+                      title={`评价栏宽度设为 ${w}px`}
+                      className={`rounded px-1.5 py-0.5 text-[11px] leading-none transition-colors ${
+                        on
+                          ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                          : "text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={() => setReviewCollapsed(true)}
+                title="收起，正文全宽阅读"
+                aria-label="收起评价与优化"
+                className="btn btn-ghost h-7 w-7 shrink-0 p-0"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M15 6l-6 6 6 6" /></svg>
+              </button>
+            </div>
+          </div>
+          <div className="@container min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
             {detail ? (
               currentReview ? (
                 <ReviewCard
@@ -2237,58 +2388,51 @@ export default function WritingPanel({ novelId }: Props) {
             )}
           </div>
         </div>
+        )}
 
         {/* 联动重写中断：已迁移为右上角全局 error Notification（writing-panel 顶部 rewriteFail 同步 effect 管理） */}
       </section>
 
-      {/* ── 新增章节弹窗 ── */}
-      <Modal
-        open={showAddModal}
-        title={regenerateNo != null ? "重新生成章节正文" : "新增章节"}
-        subtitle={
-          regenerateNo != null
-            ? `将基于当前章节设置重新生成第 ${form.chapter_no} 章正文（新增为一个版本），标题 / 大纲目标 / 章节功能等均可修改。`
-            : `将追加为第 ${nextNo} 章（目录最新一章的下一章）。写正文前会先弹出「本章规划」（目标/节奏/视角/节拍/结尾钩子）供你确认，生成后为草稿，需手动定稿。`
-        }
-        onClose={() => {
-          setShowAddModal(false);
-          setRegenerateNo(null);
-        }}
-        footer={
-          <div className="flex w-full items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => setShowAddModal(false)}
-              className="btn btn-ghost px-4 py-1.5"
-            >
-              取消
-            </button>
-            <div className="flex items-center gap-2">
-              <span className="hidden sm:inline">
-                <CostHint />
-              </span>
+      {/* ── 新增章节抽屉：右侧滑入的内联面板（替代居中弹窗，不遮挡正文，填写时可对照左侧正文） ── */}
+      {showAddModal && (
+        <>
+          <div
+            className="fixed inset-0 z-[90] bg-black/30"
+            aria-hidden
+            onClick={() => {
+              setShowAddModal(false);
+              setRegenerateNo(null);
+            }}
+          />
+          <aside
+            role="dialog"
+            aria-modal="true"
+            className="fixed right-0 top-0 z-[95] flex h-[100dvh] w-[440px] max-w-[92vw] flex-col border-l border-zinc-200 bg-surface shadow-book dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-700">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  {regenerateNo != null ? "重新生成章节正文" : "新增章节"}
+                </h3>
+                <p className="mt-0.5 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                  {regenerateNo != null
+                    ? `将基于当前章节设置重新生成第 ${form.chapter_no} 章正文（新增为一个版本），标题 / 大纲目标 / 章节功能等均可修改。`
+                    : `将追加为第 ${nextNo} 章（目录最新一章的下一章）。写正文前会先弹出「本章规划」（目标/节奏/视角/节拍/结尾钩子）供你确认，生成后为草稿，需手动定稿。`}
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={() => void handleGenerate()}
-                disabled={generating || !canAdd}
-                className="btn btn-primary px-4 py-1.5 disabled:opacity-50"
+                aria-label="关闭"
+                onClick={() => {
+                  setShowAddModal(false);
+                  setRegenerateNo(null);
+                }}
+                className="shrink-0 rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
               >
-                {generating ? "生成中…" : "生成正文"}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" /></svg>
               </button>
-              {/* 点击生成后出现：打开生成过程弹窗（与大纲新增弹窗一致，仅生成中显示） */}
-              {generating && (
-                <button
-                  type="button"
-                  onClick={() => setShowGenRun(true)}
-                  className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                >
-                  查看生成过程
-                </button>
-              )}
             </div>
-          </div>
-        }
-      >
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <div className="flex flex-col gap-3">
           {/* 沿用大纲开关：仅该章有已批大纲时出现（无已批大纲时不显示任何规划提示） */}
           {targetOutline && (
@@ -2404,7 +2548,45 @@ export default function WritingPanel({ novelId }: Props) {
             </button>
           </div>
         </div>
-      </Modal>
+            </div>
+            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-zinc-200 px-5 py-3 dark:border-zinc-700">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddModal(false);
+                  setRegenerateNo(null);
+                }}
+                className="btn btn-ghost px-4 py-1.5"
+              >
+                取消
+              </button>
+              <div className="flex items-center gap-2">
+                <span className="hidden sm:inline">
+                  <CostHint />
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleGenerate()}
+                  disabled={generating || !canAdd}
+                  className="btn btn-primary px-4 py-1.5 disabled:opacity-50"
+                >
+                  {generating ? "生成中…" : "生成正文"}
+                </button>
+                {/* 点击生成后出现：打开生成过程弹窗（与大纲新增弹窗一致，仅生成中显示） */}
+                {generating && (
+                  <button
+                    type="button"
+                    onClick={() => setShowGenRun(true)}
+                    className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
+                  >
+                    查看生成过程
+                  </button>
+                )}
+              </div>
+            </div>
+          </aside>
+        </>
+      )}
 
       {/* ── 信息控制弹窗（本地 draft：取消丢弃 / 清空只清本地 / 完成才提交） ── */}
       <Modal
@@ -2590,21 +2772,54 @@ function ReviewCard({
       </div>
 
       {rubricEntries.length > 0 && (
-        <div className="mb-3 grid gap-2 md:grid-cols-2">
-          {rubricEntries.map(([k, v]) => (
-            <div key={k} className="rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">{k}</span>
-                <span className={`text-sm font-bold ${scoreColor(v?.score)}`}>{v?.score ?? "—"}</span>
+        <div className="mb-3 grid gap-2 @2xl:grid-cols-2">
+          {rubricEntries.map(([k, v]) => {
+            const isRetention = k === "reader_retention";
+            const hookEntries = Object.entries(v?.hooks ?? {});
+            const retentionRisk =
+              isRetention && typeof v?.score === "number" && v.score < 65;
+            return (
+              <div
+                key={k}
+                className={`rounded-lg border p-2.5 dark:border-zinc-800 ${
+                  isRetention
+                    ? "border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/40"
+                    : "border-zinc-200"
+                }`}
+              >
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    {RUBRIC_LABELS[k] ?? k}
+                  </span>
+                  <span className={`text-sm font-bold ${scoreColor(v?.score)}`}>{v?.score ?? "—"}</span>
+                </div>
+                {isRetention && hookEntries.length > 0 && (
+                  <div className="mb-1.5 grid grid-cols-2 gap-1">
+                    {hookEntries.map(([hk, hs]) => (
+                      <div
+                        key={hk}
+                        className="flex items-center justify-between rounded bg-zinc-100 px-1.5 py-1 text-[11px] dark:bg-zinc-900"
+                      >
+                        <span className="text-zinc-500">{RETENTION_HOOK_LABELS[hk] ?? hk}</span>
+                        <span className={`font-semibold ${scoreColor(hs)}`}>{hs ?? "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-zinc-600 dark:text-zinc-300">{v?.comment}</p>
+                {retentionRisk && (
+                  <p className="mt-1.5 rounded bg-red-100 px-2 py-1 text-[11px] font-medium text-red-700 dark:bg-red-900 dark:text-red-300">
+                    追读风险：本章低于 65 分，读者可能划走不追更，建议按评语改完重新评价。
+                  </p>
+                )}
+                {v?.evidence && (
+                  <p className="mt-1 border-l-2 border-zinc-200 pl-2 text-[11px] text-zinc-400 dark:border-zinc-700">
+                    {v.evidence}
+                  </p>
+                )}
               </div>
-              <p className="text-xs text-zinc-600 dark:text-zinc-300">{v?.comment}</p>
-              {v?.evidence && (
-                <p className="mt-1 border-l-2 border-zinc-200 pl-2 text-[11px] text-zinc-400 dark:border-zinc-700">
-                  {v.evidence}
-                </p>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -2624,7 +2839,7 @@ function ReviewCard({
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <span className="mr-1.5 rounded bg-red-100 px-1 py-0.5 text-[10px] text-red-700 dark:bg-red-900 dark:text-red-300">
-                      {i.severity ?? "?"}
+                      {i.severity ? (SEVERITY_LABELS[i.severity] ?? i.severity) : "?"}
                     </span>
                     {i.desc}
                     {i.suggested_fix && (
@@ -2663,7 +2878,7 @@ function ReviewCard({
         </div>
       )}
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 @2xl:grid-cols-2">
         {review.strengths && review.strengths.length > 0 && (
           <div>
             <h4 className="mb-1.5 text-xs font-semibold text-green-600 dark:text-green-400">亮点</h4>

@@ -25,13 +25,13 @@ export interface Novel {
 export async function listNovels(q?: string): Promise<Novel[]> {
   const url = q ? `${BASE}/novels?q=${encodeURIComponent(q)}` : `${BASE}/novels`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`加载小说失败：${res.status}`);
+  if (!res.ok) throw new Error("加载小说失败");
   return res.json();
 }
 
 export async function getNovel(novelId: string): Promise<Novel> {
   const res = await fetch(`${BASE}/novels/${novelId}`);
-  if (!res.ok) throw new Error(`加载小说失败：${res.status}`);
+  if (!res.ok) throw new Error("加载小说失败");
   return res.json();
 }
 
@@ -51,7 +51,7 @@ export async function updateNovel(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `更新小说失败：${res.status}`);
+    throw httpError(err.detail, "更新小说失败");
   }
   return res.json();
 }
@@ -61,7 +61,7 @@ export async function deleteNovel(novelId: string): Promise<void> {
   const res = await fetch(`${BASE}/novels/${novelId}`, { method: "DELETE" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `删除小说失败：${res.status}`);
+    throw httpError(err.detail, "删除小说失败");
   }
 }
 
@@ -78,7 +78,7 @@ export async function createNovel(data: {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `创建失败：${res.status}`);
+    throw httpError(err.detail, "创建失败");
   }
   return res.json();
 }
@@ -119,7 +119,7 @@ export async function listSettings(novelId: string, type?: string, q?: string): 
   if (q) p.set("q", q);
   const qs = p.toString();
   const res = await fetch(`${BASE}/novels/${novelId}/settings${qs ? `?${qs}` : ""}`);
-  if (!res.ok) throw new Error(`加载设定失败：${res.status}`);
+  if (!res.ok) throw new Error("加载设定失败");
   return res.json();
 }
 
@@ -141,7 +141,7 @@ export async function createSetting(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `创建设定失败：${res.status}`);
+    throw httpError(err.detail, "创建设定失败");
   }
   return res.json();
 }
@@ -158,14 +158,14 @@ export async function updateSetting(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `更新设定失败：${res.status}`);
+    throw httpError(err.detail, "更新设定失败");
   }
   return res.json();
 }
 
 export async function deleteSetting(novelId: string, settingId: string): Promise<void> {
   const res = await fetch(`${BASE}/novels/${novelId}/settings/${settingId}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`删除设定失败：${res.status}`);
+  if (!res.ok) throw new Error("删除设定失败");
 }
 
 // ---------- 章节（生成=草稿 → 手动定稿，版本详情可预览/激活） ----------
@@ -208,13 +208,13 @@ export interface ChapterDetail {
 
 export async function listChapters(novelId: string): Promise<ChapterListItem[]> {
   const res = await fetch(`${BASE}/novels/${novelId}/chapters`);
-  if (!res.ok) throw new Error(`加载章节失败：${res.status}`);
+  if (!res.ok) throw new Error("加载章节失败");
   return res.json();
 }
 
 export async function getChapter(novelId: string, chapterNo: number): Promise<ChapterDetail> {
   const res = await fetch(`${BASE}/novels/${novelId}/chapters/${chapterNo}`);
-  if (!res.ok) throw new Error(`加载章节详情失败：${res.status}`);
+  if (!res.ok) throw new Error("加载章节详情失败");
   return res.json();
 }
 
@@ -231,7 +231,7 @@ export async function selectVersion(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `选定版本失败：${res.status}`);
+    throw httpError(err.detail, "选定版本失败");
   }
   return res.json();
 }
@@ -249,7 +249,9 @@ export interface QualityReview {
   /** 该版本是否为本章当前激活版本；false → 评价已随版本更替而过期。 */
   is_current: boolean;
   overall_score: number | null;
-  rubric: Record<string, { score?: number; comment?: string; evidence?: string }> | null;
+  rubric:
+    | Record<string, { score?: number; comment?: string; evidence?: string; hooks?: Record<string, number> }>
+    | null;
   issues: Array<{ severity?: string; type?: string; desc?: string; suggested_fix?: string }> | null;
   strengths: string[] | null;
   revision_hints: string[] | null;
@@ -260,7 +262,7 @@ export interface QualityReview {
 export async function listReviews(novelId: string, chapterNo?: number): Promise<QualityReview[]> {
   const qs = chapterNo != null ? `?chapter_no=${chapterNo}` : "";
   const res = await fetch(`${BASE}/novels/${novelId}/reviews${qs}`);
-  if (!res.ok) throw new Error(`加载评价失败：${res.status}`);
+  if (!res.ok) throw new Error("加载评价失败");
   return res.json();
 }
 
@@ -282,14 +284,14 @@ export interface Outline {
 export async function listOutlines(novelId: string, status?: string): Promise<Outline[]> {
   const url = status ? `${BASE}/novels/${novelId}/outlines?status=${status}` : `${BASE}/novels/${novelId}/outlines`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`加载大纲失败：${res.status}`);
+  if (!res.ok) throw new Error("加载大纲失败");
   return res.json();
 }
 
 /** 某一大纲所属章节的全部版本（历史版本切换用），按版本号升序。 */
 export async function listOutlineVersions(novelId: string, outlineId: string): Promise<Outline[]> {
   const res = await fetch(`${BASE}/novels/${novelId}/outlines/${outlineId}/versions`);
-  if (!res.ok) throw new Error(`加载大纲版本失败：${res.status}`);
+  if (!res.ok) throw new Error("加载大纲版本失败");
   return res.json();
 }
 
@@ -299,7 +301,7 @@ export async function outlineHasChapter(
   outlineId: string,
 ): Promise<{ chapter_no: number; has_chapter: boolean }> {
   const res = await fetch(`${BASE}/novels/${novelId}/outlines/${outlineId}/has-chapter`);
-  if (!res.ok) throw new Error(`查询章节状态失败：${res.status}`);
+  if (!res.ok) throw new Error("查询章节状态失败");
   return res.json();
 }
 
@@ -316,7 +318,7 @@ export async function approveOutline(novelId: string, outlineId: string): Promis
   const res = await fetch(`${BASE}/novels/${novelId}/outlines/${outlineId}/approve`, { method: "POST" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `批准大纲失败：${res.status}`);
+    throw httpError(err.detail, "批准大纲失败");
   }
   return res.json();
 }
@@ -345,7 +347,7 @@ export async function getOutlineApprovalStatus(novelId: string): Promise<Outline
   const res = await fetch(`${BASE}/novels/${novelId}/outlines/approval`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `查询批准状态失败：${res.status}`);
+    throw httpError(err.detail, "查询批准状态失败");
   }
   return res.json();
 }
@@ -391,13 +393,13 @@ export async function listLedger(
   if (opts?.overdue_only) p.set("overdue_only", "true");
   const qs = p.toString();
   const res = await fetch(`${BASE}/novels/${novelId}/ledger${qs ? `?${qs}` : ""}`);
-  if (!res.ok) throw new Error(`加载伏笔账本失败：${res.status}`);
+  if (!res.ok) throw new Error("加载伏笔账本失败");
   return res.json();
 }
 
 export async function listOverdueLedger(novelId: string): Promise<LedgerItem[]> {
   const res = await fetch(`${BASE}/novels/${novelId}/ledger/overdue`);
-  if (!res.ok) throw new Error(`加载超期伏笔失败：${res.status}`);
+  if (!res.ok) throw new Error("加载超期伏笔失败");
   return res.json();
 }
 
@@ -413,14 +415,14 @@ export async function updateLedger(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `更新伏笔失败：${res.status}`);
+    throw httpError(err.detail, "更新伏笔失败");
   }
   return res.json();
 }
 
 export async function deleteLedger(novelId: string, itemId: string): Promise<void> {
   const res = await fetch(`${BASE}/novels/${novelId}/ledger/${itemId}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`删除伏笔失败：${res.status}`);
+  if (!res.ok) throw new Error("删除伏笔失败");
 }
 
 // ---------- 蓝图（M3：blueprint_architect 落库 + 激活归档） ----------
@@ -467,13 +469,13 @@ export async function listBlueprints(novelId: string, status?: string): Promise<
     ? `${BASE}/novels/${novelId}/blueprints?status=${status}`
     : `${BASE}/novels/${novelId}/blueprints`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`加载蓝图失败：${res.status}`);
+  if (!res.ok) throw new Error("加载蓝图失败");
   return res.json();
 }
 
 export async function getActiveBlueprint(novelId: string): Promise<Blueprint | null> {
   const res = await fetch(`${BASE}/novels/${novelId}/blueprints/active`);
-  if (!res.ok) throw new Error(`加载 active 蓝图失败：${res.status}`);
+  if (!res.ok) throw new Error("加载 active 蓝图失败");
   return res.json();
 }
 
@@ -489,7 +491,7 @@ export async function activateBlueprint(novelId: string, blueprintId: string): P
   const res = await fetch(`${BASE}/novels/${novelId}/blueprints/${blueprintId}/activate`, { method: "POST" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `激活蓝图失败：${res.status}`);
+    throw httpError(err.detail, "激活蓝图失败");
   }
   return res.json();
 }
@@ -517,7 +519,7 @@ export async function getBlueprintActivationStatus(novelId: string): Promise<Blu
   const res = await fetch(`${BASE}/novels/${novelId}/blueprints/activation`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `查询激活状态失败：${res.status}`);
+    throw httpError(err.detail, "查询激活状态失败");
   }
   return res.json();
 }
@@ -526,7 +528,7 @@ export async function deleteBlueprint(novelId: string, blueprintId: string): Pro
   const res = await fetch(`${BASE}/novels/${novelId}/blueprints/${blueprintId}`, { method: "DELETE" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `删除蓝图失败：${res.status}`);
+    throw httpError(err.detail, "删除蓝图失败");
   }
 }
 
@@ -546,7 +548,7 @@ export async function importBlueprintFile(novelId: string, file: File): Promise<
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `导入失败：${res.status}`);
+    throw httpError(err.detail, "导入失败");
   }
   return res.json();
 }
@@ -577,7 +579,7 @@ export async function getAgentRunningTask(
   const res = await fetch(`${BASE}/stream/agents/${agent}/tasks?novel_id=${novelId}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `查询生成任务失败：${res.status}`);
+    throw httpError(err.detail, "查询生成任务失败");
   }
   return res.json();
 }
@@ -605,7 +607,7 @@ export async function getStreamStatus(novelId: string): Promise<StreamStatusResu
   const res = await fetch(`${BASE}/stream/agents/status?novel_id=${novelId}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `查询生成任务失败：${res.status}`);
+    throw httpError(err.detail, "查询生成任务失败");
   }
   return res.json();
 }
@@ -645,7 +647,7 @@ export async function checkOutlineSkeleton(
     } catch {
       detail = raw.slice(0, 200);
     }
-    throw new Error(detail || `大纲骨架校验失败：${res.status}`);
+    throw httpError(detail, "大纲骨架校验失败");
   }
   return res.json();
 }
@@ -671,7 +673,7 @@ export interface StyleProfile {
 
 export async function listStyleProfiles(novelId: string): Promise<StyleProfile[]> {
   const res = await fetch(`${BASE}/novels/${novelId}/style`);
-  if (!res.ok) throw new Error(`加载风格画像失败：${res.status}`);
+  if (!res.ok) throw new Error("加载风格画像失败");
   return res.json();
 }
 
@@ -686,7 +688,7 @@ export async function learnStyle(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `风格学习失败：${res.status}`);
+    throw httpError(err.detail, "风格学习失败");
   }
   return res.json();
 }
@@ -723,7 +725,7 @@ export async function detectText(novelId: string, text: string): Promise<DetectR
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `检测失败：${res.status}`);
+    throw httpError(err.detail, "检测失败");
   }
   return res.json();
 }
@@ -755,7 +757,7 @@ export interface GraphView {
 
 export async function getGraph(novelId: string): Promise<GraphView> {
   const res = await fetch(`${BASE}/novels/${novelId}/graph`);
-  if (!res.ok) throw new Error(`加载图谱失败：${res.status}`);
+  if (!res.ok) throw new Error("加载图谱失败");
   return res.json();
 }
 
@@ -773,7 +775,7 @@ export interface MemoryReview {
 
 export async function getMemoryReview(novelId: string): Promise<MemoryReview> {
   const res = await fetch(`${BASE}/novels/${novelId}/memory-review`);
-  if (!res.ok) throw new Error(`加载记忆审查失败：${res.status}`);
+  if (!res.ok) throw new Error("加载记忆审查失败");
   return res.json();
 }
 
@@ -792,7 +794,7 @@ export interface ModelRoute {
 
 export async function listRoutes(): Promise<ModelRoute[]> {
   const res = await fetch(`${BASE}/models/routes`);
-  if (!res.ok) throw new Error(`加载模型路由失败：${res.status}`);
+  if (!res.ok) throw new Error("加载模型路由失败");
   return res.json();
 }
 
@@ -806,7 +808,7 @@ export async function upsertRoute(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `保存路由失败：${res.status}`);
+    throw httpError(err.detail, "保存路由失败");
   }
   return res.json();
 }
@@ -822,14 +824,14 @@ export async function updateRoute(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `更新路由失败：${res.status}`);
+    throw httpError(err.detail, "更新路由失败");
   }
   return res.json();
 }
 
 export async function deleteRoute(routeId: string): Promise<void> {
   const res = await fetch(`${BASE}/models/routes/${routeId}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`删除路由失败：${res.status}`);
+  if (!res.ok) throw new Error("删除路由失败");
 }
 
 // ---------- 模型接入（API Key + 默认模型，页面配置，实时生效） ----------
@@ -872,7 +874,7 @@ export interface CatalogProvider {
 /** 预置模型目录：服务商 + 官方地址 + 推荐模型 + Key 状态（对齐后端 MODEL_CATALOG + 自定义模型）。 */
 export async function listModelCatalog(): Promise<CatalogProvider[]> {
   const res = await fetch(`${BASE}/models/catalog`);
-  if (!res.ok) throw new Error(`加载模型目录失败：${res.status}`);
+  if (!res.ok) throw new Error("加载模型目录失败");
   return res.json();
 }
 
@@ -899,14 +901,14 @@ export async function saveCustomModel(input: CustomModelSaveInput): Promise<Cust
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `保存自定义模型失败：${res.status}`);
+    throw httpError(err.detail, "保存自定义模型失败");
   }
   return res.json();
 }
 
 export async function deleteCustomModel(provider: string): Promise<void> {
   const res = await fetch(`${BASE}/models/custom/${encodeURIComponent(provider)}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`删除自定义模型失败：${res.status}`);
+  if (!res.ok) throw new Error("删除自定义模型失败");
 }
 
 export interface DefaultModel {
@@ -916,7 +918,7 @@ export interface DefaultModel {
 
 export async function getDefaultModel(): Promise<DefaultModel | null> {
   const res = await fetch(`${BASE}/models/default`);
-  if (!res.ok) throw new Error(`加载默认模型失败：${res.status}`);
+  if (!res.ok) throw new Error("加载默认模型失败");
   return res.json();
 }
 
@@ -928,13 +930,13 @@ export async function setDefaultModel(provider: string, model: string): Promise<
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `保存默认模型失败：${res.status}`);
+    throw httpError(err.detail, "保存默认模型失败");
   }
 }
 
 export async function listProviderKeys(): Promise<Record<string, ProviderKeyStatus>> {
   const res = await fetch(`${BASE}/models/keys`);
-  if (!res.ok) throw new Error(`加载模型接入失败：${res.status}`);
+  if (!res.ok) throw new Error("加载模型接入失败");
   return res.json();
 }
 
@@ -946,13 +948,13 @@ export async function saveProviderKey(provider: string, apiKey: string, baseUrl?
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `保存失败：${res.status}`);
+    throw httpError(err.detail, "保存失败");
   }
 }
 
 export async function deleteProviderKey(provider: string): Promise<void> {
   const res = await fetch(`${BASE}/models/keys/${encodeURIComponent(provider)}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`删除失败：${res.status}`);
+  if (!res.ok) throw new Error("删除失败");
 }
 
 /** 把一个模型接入并独立保存其 Key（同服务商不同模型互不影响；重复添加同一模型则更新该条）。 */
@@ -970,7 +972,7 @@ export async function addAccessModel(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `接入模型失败：${res.status}`);
+    throw httpError(err.detail, "接入模型失败");
   }
 }
 
@@ -980,7 +982,7 @@ export async function removeAccessModel(provider: string, model: string): Promis
     `${BASE}/models/access?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}`,
     { method: "DELETE" },
   );
-  if (!res.ok) throw new Error(`移除模型失败：${res.status}`);
+  if (!res.ok) throw new Error("移除模型失败");
 }
 
 /** 用输入框里的 Key 探测账号可用模型（不落库），验证连通 + 帮助填路由。 */
@@ -997,7 +999,7 @@ export async function probeProvider(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `测试连接失败：${res.status}`);
+    throw httpError(err.detail, "测试连接失败");
   }
   const data = await res.json();
   return data.models ?? [];
@@ -1102,7 +1104,7 @@ export async function fetchPendingConfirms(novelId?: string, agent?: string): Pr
   if (novelId) q.set("novel_id", novelId);
   if (agent) q.set("agent", agent);
   const res = await fetch(`${BASE}/stream/agents/confirm?${q}`);
-  if (!res.ok) throw new Error(`查询作者确认请求失败：${res.status}`);
+  if (!res.ok) throw new Error("查询作者确认请求失败");
   const data = await res.json();
   return (data.items ?? []) as AuthorConfirm[];
 }
@@ -1129,7 +1131,7 @@ export async function submitAuthorConfirm(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `提交作者确认失败：${res.status}`);
+    throw httpError(err.detail, "提交作者确认失败");
   }
   return res.json() as Promise<AuthorConfirm>;
 }
@@ -1139,7 +1141,7 @@ export async function dismissAuthorConfirm(confirmId: string): Promise<void> {
   const res = await fetch(`${BASE}/stream/agents/confirm/${confirmId}/dismiss`, { method: "POST" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `跳过作者确认失败：${res.status}`);
+    throw httpError(err.detail, "跳过作者确认失败");
   }
 }
 
@@ -1173,7 +1175,7 @@ export async function runAgent(
       signal: controller.signal,
     });
     if (!res.ok || !res.body) {
-      throw new Error(`请求失败：${res.status}`);
+      throw new Error("请求失败");
     }
     const reader = res.body.getReader();
     const decoder = new TextDecoder("utf-8");
@@ -1227,6 +1229,19 @@ export function friendlyRunError(e: unknown): string {
   return raw;
 }
 
+/** 把 AI 任务/接口返回的错误转成用户可读文案：
+ *  后端错误本身是中文 → 原样展示；空值/纯英文/状态码等技术信息 → 统一用中文兜底，避免用户看到裸英文或 HTTP 码。 */
+export function friendlyTaskError(err?: string | null, fallback = "AI 任务执行出错，请稍后重试。"): string {
+  if (!err || !String(err).trim()) return fallback;
+  const s = String(err).trim();
+  return /[\u4e00-\u9fff]/.test(s) ? s : fallback;
+}
+
+/** 把 fetch 的错误响应 detail 包装成友好错误（英文 detail / 空 detail → 中文兜底，隐藏裸 HTTP 状态码）。 */
+export function httpError(detail: unknown, fallback: string): Error {
+  return new Error(friendlyTaskError(detail ? String(detail) : "", fallback));
+}
+
 /** 把调试 dry_run 的产物显式加入正式库（不重新调用 AI）。 */
 export async function commitAgent(
   agent: string,
@@ -1242,7 +1257,7 @@ export async function commitAgent(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `提交失败：${res.status}`);
+    throw httpError(err.detail, "提交失败");
   }
   return res.json();
 }
@@ -1263,7 +1278,7 @@ export interface AgentPrompt {
 
 export async function listPrompts(novelId: string): Promise<AgentPrompt[]> {
   const res = await fetch(`${BASE}/prompts?novel_id=${novelId}`);
-  if (!res.ok) throw new Error(`加载写作指令失败：${res.status}`);
+  if (!res.ok) throw new Error("加载写作指令失败");
   return res.json();
 }
 
@@ -1284,7 +1299,7 @@ export async function updatePrompt(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `保存写作指令失败：${res.status}`);
+    throw httpError(err.detail, "保存写作指令失败");
   }
   return res.json();
 }
@@ -1294,7 +1309,7 @@ export async function resetPrompt(novelId: string, agentKey: string): Promise<Ag
   const res = await fetch(`${BASE}/prompts/${agentKey}?novel_id=${novelId}`, { method: "DELETE" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `恢复默认失败：${res.status}`);
+    throw httpError(err.detail, "恢复默认失败");
   }
   return res.json();
 }

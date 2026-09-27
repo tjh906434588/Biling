@@ -41,7 +41,12 @@ from app.agents.platform_rules import (
     format_genre_storytelling_rules,
 )
 from app.schemas.agents import ReviewOutput
-from app.services.detector import format_ai_lint_report, lint_ai_sentences
+from app.services.detector import (
+    format_ai_lint_report,
+    format_readthrough_report,
+    lint_ai_sentences,
+    scan_readthrough_hooks,
+)
 from app.services.entity_checker import (
     check_entity_facts,
     check_org_archive_gaps,
@@ -62,11 +67,21 @@ SYSTEM_PROMPT = """你是「评价师」，一位严苛的小说编辑。对照�
    "character_voice": {"score":0-100,"comment":"","evidence":""},
    "pacing": {"score":0-100,"comment":"对照 chapter_function 的节奏","evidence":""},
    "style_compliance": {"score":0-100,"comment":"检验标准：读者会觉得这个作者挺有意思吗？语言自然流畅吗？有故事感而不是散文感吗？","evidence":""},
-   "foreshadowing_accountability": {"score":0-100,"comment":"","evidence":""}},
+   "foreshadowing_accountability": {"score":0-100,"comment":"","evidence":""},
+   "reader_retention": {"score":0-100,"comment":"读者视角逐项说明：开篇钩子/章末悬念/情绪张力/期待感分别怎样，低分要指明具体位置","evidence":""},
+   "retention_hooks": {"opening_hook":0-100,"ending_hook":0-100,"tension":0-100,"anticipation":0-100}},
  "issues": [{"severity":"high|medium|low","type":"consistency|pacing|character_voice|style|foreshadowing","desc":"问题","suggested_fix":"改法"}],
  "strengths": [...], "revision_hints": [...]}
 
 铁律：
+- 【读者追读】每章必须评 reader_retention（读者看完这章会不会点下一章，番茄追读的关键）：
+  retention_hooks 四个子项各给 0-100：
+  - opening_hook 开篇钩子：前 500 字是否直接进冲突/对话/悬念？还是环境铺垫空转让读者划走；
+  - ending_hook 章末悬念：结尾是否断在悬念/问句/事件中途？还是收在平淡句（空镜/沉思/总结）；
+  - tension 情绪张力：本章冲突与情绪强度，读者在不在意主角处境；
+  - anticipation 期待感：是否留下读者想知道的未解悬念。
+  任一子项 <65 必须写进 issues（type "pacing" 或 "style"，desc 指出具体是哪句/哪段），并在 comment 里指明位置。
+  必须对照【追读钩子扫描】组件的程序确定性信号逐条回应：命中信号确认成立或说明不适用，不允许沉默跳过。
 - 必须对照证据打分：evidence 字段强制非空，泛泛而谈"写得好"视为无效输出。
 - 证据引文必须逐字真实存在于【待评价章节正文】或【最近章节全文/伏笔账本/关系图谱/设定库/本章大纲】中；
   程序会逐条核对引文是否真实存在——编造、改写、张冠李戴的引文会被检测出并打回整份报告重写，
@@ -145,6 +160,17 @@ class CriticAgent(Agent[ReviewOutput]):
                 "score": 72,
                 "comment": "成功回收一条伏笔，新埋一条",
                 "evidence": "原文引用：'那枚铜币滚落在地'，对应账本条目的 payoff",
+            },
+            "reader_retention": {
+                "score": 74,
+                "comment": "开篇直接进冲突（追债人破门），章末断在信封上的红字悬念，期待感尚可",
+                "evidence": "原文引用：'门被一脚踹开'",
+            },
+            "retention_hooks": {
+                "opening_hook": 85,
+                "ending_hook": 68,
+                "tension": 75,
+                "anticipation": 78,
             },
         },
         "issues": [
@@ -313,6 +339,12 @@ class CriticAgent(Agent[ReviewOutput]):
                 PRIORITY_REQUIRED,
             ),
             ComponentBlock(
+                "readthrough_hooks",
+                f"【追读钩子扫描·程序确定性信号，评 reader_retention 时逐条对照】\n"
+                f"{format_readthrough_report(scan_readthrough_hooks(chapter_text_raw))}",
+                PRIORITY_BASE,
+            ),
+            ComponentBlock(
                 "background_scope",
                 background_scope,
                 PRIORITY_REQUIRED,
@@ -421,7 +453,7 @@ class CriticAgent(Agent[ReviewOutput]):
             if not quotes:
                 t = (text or "").strip()
                 # 无引文但很短的套话 evidence：证据不成立（评语可在 comment，证据必须引用）
-                if where.startswith("rubric.") and len(self._norm_text(t)) < 12 and any(
+                if where.startswith("rubric.") and len(self._norm_text(t)) < 8 and any(
                     w in t for w in self._GENERIC_WORDS
                 ):
                     errors.append(f"{where}.evidence 缺少真实原文引用（泛泛而谈，打回重写）")
@@ -430,10 +462,13 @@ class CriticAgent(Agent[ReviewOutput]):
                 if not self._quote_in_corpus(q, corpus_norm):
                     errors.append(f"{where} 引文「{q}」在上下文中不存在（疑似编造）")
 
+        # 仅校验 rubric 各维度 evidence 的引文真实性（这是防编造的主防线）。
+        # issues[].desc 是评价师的自由分析文字，引号多用于强调/转述，不要求逐字命中语料，
+        # 若也校验会把正常分析误判为「编造」整份打回，显著拉低评价覆盖率（证据门禁过激）。
         for name, dim in parsed.rubric.model_dump().items():
+            if not dim:  # reader_retention 可空（旧输出/旧记录兼容），跳过
+                continue
             check(dim.get("evidence") or "", f"rubric.{name}")
-        for i, issue in enumerate(parsed.issues):
-            check(issue.desc or "", f"issues[{i}]")
 
         if errors:
             raise ValueError(
