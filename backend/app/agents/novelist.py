@@ -14,6 +14,8 @@ from app.agents.base import (
     PRIORITY_STYLE,
 )
 from app.agents.context import (
+    compute_ledger_debt,
+    format_ledger_debt_report,
     get_latest_style_profile,
     get_novel,
     get_recent_chapters,
@@ -168,6 +170,14 @@ class NovelistAgent(Agent[NovelChapter]):
             if cur_no:
                 chapters = [c for c in chapters if c.chapter_no != cur_no]
         prev_text = "\n\n".join(f"[第{c.chapter_no}章 {c.title or ''}]\n{c.content}" for c in reversed(chapters)) or "（无前文）"
+
+        # 伏笔债务追踪（webnovel-writer 债务引擎思想移植）：超期/逼近揭示的伏笔写入时优先处理，
+        # 正文推进不可无限拖延，否则越写越远越烂尾
+        try:
+            cur_no = int(chapter_no or 0)
+        except (TypeError, ValueError):
+            cur_no = 0
+        debt_report = format_ledger_debt_report(compute_ledger_debt(self.db, novel_id, cur_no))
 
         # L2 风格画像（存在则注入）
         style_text = "（暂无风格画像）"
@@ -368,6 +378,32 @@ class NovelistAgent(Agent[NovelChapter]):
                         "你必须严格按以下场景清单写作：不得增删场景，不得改变每个场景的「目标→冲突→结果」，"
                         "并按各场景选定的「写法」扩写：\n"
                         + "\n".join(scene_lines),
+                        PRIORITY_REQUIRED,
+                    )
+                )
+        # 伏笔债务：超期/逼近揭示的伏笔是本章的义务（不是建议），有债务时必须优先安排回收/推进，
+        # 无债务时是占位提示，不改变正常写作。
+        if "超期" in debt_report or "逼近" in debt_report:
+            components.append(
+                ComponentBlock(
+                    "ledger_debt",
+                    f"【伏笔债务（超期/逼近揭示的伏笔，本章必须处理，优先级高于文笔要求）】\n{debt_report}",
+                    PRIORITY_REQUIRED,
+                )
+            )
+        # 上一章结尾正文语态（chinese-novelist 的"动笔前最后读到正文语态"思想）：
+        # 放在所有组件的最末——模型写正文前最后读到的是上一章真实结尾的语态与节奏，
+        # 而不是指令/摘要，从"接续腔调"而非"照章执行"进入写作。
+        if chapters:
+            tail_chapter = chapters[0]  # get_recent_chapters 章号降序 → 最近一章
+            tail_text = (tail_chapter.content or "").strip()
+            if tail_text:
+                components.append(
+                    ComponentBlock(
+                        "prev_tail",
+                        f"【上一章结尾正文（第 {tail_chapter.chapter_no} 章末尾）】\n{tail_text[-600:]}\n"
+                        "——以上是上一章最后 600 字。接着写本章时，保持这段原文的叙述语态、句长节奏、"
+                        "视角与情绪浓度自然延续，不要另起一套腔调。",
                         PRIORITY_REQUIRED,
                     )
                 )

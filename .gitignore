@@ -31,3 +31,6 @@ backend/seed_outline_preview.py
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 工具私有状态（对话/工作记忆，不入库）
+.workbuddy/

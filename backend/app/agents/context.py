@@ -69,10 +69,19 @@ def get_approved_outline_ids(db: Session, novel_id: uuid.UUID) -> set[str]:
 
 def get_visible_open_ledger(db: Session, novel_id: uuid.UUID) -> list[PlotLedger]:
     """open 账本行：与设定同逻辑，大纲来源（source="outline"）只返回「来源版本仍批准」的行，
-    切版本后隐藏（不删除，切回恢复）；其余来源（提取师/手动）恒可见。"""
+    切版本后隐藏（不删除，切回恢复）；其余来源（提取师/手动）恒可见。
+
+    伏笔状态机（status 取值，按注入可见性分组）：
+    - 活跃（注入可见）：open（已埋设/待回收）、progressing（正在推进/读者能看到它在动）、
+      deferred（暂时搁置/回收期延后但仍在账上）；
+    - 终结（注入隐藏）：closed（已回收）、abandoned（废弃）、superseded（被新线索取代）。
+    """
     rows = list(
         db.execute(
-            select(PlotLedger).where(PlotLedger.novel_id == novel_id, PlotLedger.status == "open")
+            select(PlotLedger).where(
+                PlotLedger.novel_id == novel_id,
+                PlotLedger.status.in_(("open", "progressing", "deferred")),
+            )
         ).scalars()
     )
     approved = get_approved_outline_ids(db, novel_id)
@@ -81,6 +90,70 @@ def get_visible_open_ledger(db: Session, novel_id: uuid.UUID) -> list[PlotLedger
         for r in rows
         if r.source != "outline" or (r.outline_id is not None and str(r.outline_id) in approved)
     ]
+
+
+# 伏笔债务窗口（章）：target_reveal_chapter 超过当前章数 ≤ 该值视为「逼近揭示」，
+# 超过（已过揭示期仍未回收）视为「超期=债务」。
+LEDGER_DEBT_APPROACH_WINDOW = 2
+
+
+def compute_ledger_debt(db: Session, novel_id: uuid.UUID, up_to_chapter: int) -> dict:
+    """伏笔债务追踪（webnovel-writer 债务引擎思想移植，只读计算，不改账本）：
+
+    对活跃伏笔（含 target_reveal_chapter 计划揭示章的）按当前写到第几章分类：
+    - overdue（债务）：已过计划揭示章仍未回收 → 正文越写越远，越容易烂尾，必须尽快处理；
+    - approaching（逼近）：距计划揭示章 ≤ LEDGER_DEBT_APPROACH_WINDOW 章 → 近期该回收/推进了；
+    - on_track（正常）：还有充足章数，不催促。
+
+    返回 {"overdue": [PlotLedger], "approaching": [PlotLedger], "overdue_count": int, "up_to_chapter": int}。
+    未设 target_reveal_chapter 的行不参与分类（无揭示期的悬念按 open 正常注入）。
+    """
+    rows = get_visible_open_ledger(db, novel_id)
+    overdue: list[PlotLedger] = []
+    approaching: list[PlotLedger] = []
+    for r in rows:
+        t = r.target_reveal_chapter
+        if not t:
+            continue
+        if t < up_to_chapter:
+            overdue.append(r)
+        elif t - up_to_chapter <= LEDGER_DEBT_APPROACH_WINDOW:
+            approaching.append(r)
+    overdue.sort(key=lambda r: (not r.is_pinned, -(r.urgency or 0), r.target_reveal_chapter or 0))
+    approaching.sort(key=lambda r: (r.target_reveal_chapter or 0, -(r.urgency or 0)))
+    return {
+        "overdue": overdue,
+        "approaching": approaching,
+        "overdue_count": len(overdue),
+        "up_to_chapter": up_to_chapter,
+    }
+
+
+def format_ledger_debt_report(debt: dict) -> str:
+    """把债务追踪结果压成注入文本（critic/novelist 共用；无债务返回占位）。"""
+    overdue = debt.get("overdue") or []
+    approaching = debt.get("approaching") or []
+    if not overdue and not approaching:
+        return "伏笔债务：无超期、无逼近揭示的伏笔（全部在计划揭示期内）。"
+    up_to_chapter = debt.get("up_to_chapter") or 0
+    lines = ["伏笔债务追踪（按计划揭示章核对，正文推进不可无限拖延）："]
+    if overdue:
+        lines.append(f"- 超期未回收（已过揭示章 {len(overdue)} 条，优先级最高的必须先处理）：")
+        for r in overdue[:6]:
+            t = r.target_reveal_chapter or 0
+            overrun = max(1, up_to_chapter - t) if t else "?"
+            lines.append(
+                f"  [#{str(r.id)[:8]}][{r.item_type}] {r.description}"
+                f"（第{r.chapter_introduced or '?'}章埋，计划第{t}章揭示，已超 {overrun} 章）"
+            )
+    if approaching:
+        lines.append(f"- 逼近揭示（{len(approaching)} 条，1-{LEDGER_DEBT_APPROACH_WINDOW} 章内应回收/推进）：")
+        for r in approaching[:6]:
+            lines.append(
+                f"  [#{str(r.id)[:8]}][{r.item_type}] {r.description}"
+                f"（第{r.chapter_introduced or '?'}章埋，计划第{r.target_reveal_chapter}章揭示）"
+            )
+    return "\n".join(lines)
 
 
 def filter_graph_relations_for_version(

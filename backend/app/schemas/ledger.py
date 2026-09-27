@@ -12,7 +12,10 @@ class LedgerUpdate(BaseModel):
     related_entity: Optional[str] = None
     urgency: Optional[int] = Field(default=None, ge=1, le=10)
     target_reveal_chapter: Optional[int] = Field(default=None, ge=1)
-    status: Optional[str] = Field(default=None, pattern="^(open|closed|abandoned)$")
+    status: Optional[str] = Field(
+        default=None,
+        pattern="^(open|progressing|deferred|closed|abandoned|superseded)$",
+    )
 
 
 class LedgerRead(BaseModel):

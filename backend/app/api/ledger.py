@@ -29,13 +29,14 @@ def _current_progress(db: Session, novel_id: uuid.UUID) -> int:
 
 def _to_read(row: PlotLedger, progress: int) -> LedgerRead:
     r = LedgerRead.model_validate(row)
+    active = row.status in ("open", "progressing", "deferred")
     r.overdue = (
-        row.status == "open"
+        active
         and row.target_reveal_chapter is not None
         and row.target_reveal_chapter <= progress  # 已写到/超过目标揭示章仍未回收
     )
     r.stale = (
-        row.status == "open"
+        active
         and row.chapter_introduced is not None
         and row.chapter_introduced <= progress - 5  # 引入 >=5 章仍未回收，久未处理
     )
@@ -83,8 +84,8 @@ def list_ledger(
 
 @router.get("/{novel_id}/ledger/overdue", response_model=list[LedgerRead])
 def list_overdue(novel_id: uuid.UUID, db: Session = Depends(get_db)):
-    """超期视图：open 且超过 target_reveal_chapter 尚未回收的伏笔。"""
-    return list_ledger(novel_id, status="open", overdue_only=True, db=db)
+    """超期视图：活跃状态（open/progressing/deferred）且超过 target_reveal_chapter 尚未回收的伏笔。"""
+    return list_ledger(novel_id, overdue_only=True, db=db)
 
 
 @router.patch("/{novel_id}/ledger/{item_id}", response_model=LedgerRead)

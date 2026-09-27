@@ -24,21 +24,21 @@ def memory_review(novel_id: uuid.UUID, db: Session = Depends(get_db)):
         select(func.max(Chapter.chapter_no)).where(Chapter.novel_id == novel_id)
     ).scalar() or 0
 
-    # 1. 超期伏笔：open 且已写到 target_reveal_chapter 仍未回收
+    # 1. 超期伏笔：活跃（open/progressing/deferred）且已写到 target_reveal_chapter 仍未回收
     overdue = db.execute(
         select(PlotLedger).where(
             PlotLedger.novel_id == novel_id,
-            PlotLedger.status == "open",
+            PlotLedger.status.in_(("open", "progressing", "deferred")),
             PlotLedger.target_reveal_chapter.is_not(None),
             PlotLedger.target_reveal_chapter <= progress,
         ).order_by(PlotLedger.urgency.desc().nullslast())
     ).scalars().all()
 
-    # 2. 悬置过久的 open 钩子：引入 >=5 章且未超期但久未回收
+    # 2. 悬置过久的活跃钩子：引入 >=5 章且未超期但久未回收
     stale = db.execute(
         select(PlotLedger).where(
             PlotLedger.novel_id == novel_id,
-            PlotLedger.status == "open",
+            PlotLedger.status.in_(("open", "progressing", "deferred")),
             PlotLedger.chapter_introduced.is_not(None),
             PlotLedger.chapter_introduced <= progress - 5,
         ).order_by(PlotLedger.chapter_introduced)

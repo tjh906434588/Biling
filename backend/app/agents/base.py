@@ -3,11 +3,12 @@
 每个角色实现此基类；编排层（services/pipeline）顺序/并发调用，产出经 Pydantic 校验。
 """
 import json
+import logging
 import re
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Generic, TypeVar
+from typing import AsyncIterator, Generic, Optional, TypeVar
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
@@ -15,6 +16,8 @@ from sqlalchemy.orm import Session
 from app.agents.prompt_config import CONFIGURABLE_AGENTS, build_writing_directive
 from app.llm.gateway import stream_completion
 from app.llm.routes import resolve_route
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -147,3 +150,13 @@ class Agent(ABC, Generic[T]):
                 except (ValidationError, ValueError, json.JSONDecodeError):
                     pass
             raise
+
+    def host_validate(self, parsed: T, params: dict, meta: Optional[dict] = None) -> None:
+        """宿主侧校验（默认 no-op）：schema 校验通过后，对产出做「不需要 LLM 的确定性检查」。
+
+        子类可覆盖：校验产出的证据引用是否真实存在于上下文（防编造引文）、
+        引用是否与输入矛盾等。失败抛 ValueError（携带可读错误信息），
+        由编排层并入自纠错重试流程（与 schema 失败同路径，最多重试一次）。
+        meta：build_context 的 ContextPack.meta（含 params 与各角色旁路数据）。
+        """
+        return None

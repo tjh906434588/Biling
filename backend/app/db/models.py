@@ -195,7 +195,9 @@ class PlotLedger(Base):
     chapter_resolved: Mapped[Optional[int]] = mapped_column(Integer)
     urgency: Mapped[Optional[int]] = mapped_column(Integer)  # 紧迫度 1-10
     target_reveal_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 计划揭示章节
-    status: Mapped[str] = mapped_column(String(16), default="open")  # open|closed|abandoned
+    status: Mapped[str] = mapped_column(String(16), default="open")
+    # 伏笔状态机：活跃（注入可见）open 已埋设待回收 / progressing 正在推进 / deferred 回收期延后仍记账；
+    # 终结（注入隐藏）closed 已回收 / abandoned 废弃 / superseded 被新线索取代。旧值兼容：open|closed|abandoned。
     confidence: Mapped[str] = mapped_column(String(8), default="high")  # high|medium|low
     # 关键信息固化（C）：大纲师判定 importance=high 的伏笔置 True；注入时不受账本 20 条上限影响，
     # 永远进窗口（防止早期重要伏笔被挤出——账本超上限时最先被丢掉的就是最老的一批）

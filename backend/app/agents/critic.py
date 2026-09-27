@@ -1,5 +1,8 @@
 """评价师（Critic）：对照蓝图与账本评价章节质量，反哺小说家。"""
+import re
 import uuid
+from typing import Optional
+
 from sqlalchemy.orm import Session
 
 from app.agents.base import (
@@ -13,8 +16,10 @@ from app.agents.base import (
     PRIORITY_CONTEXT,
 )
 from app.agents.context import (
+    compute_ledger_debt,
     filter_settings_for_chapter,
     format_blueprint_for_prompt,
+    format_ledger_debt_report,
     format_settings_for_prompt,
     derive_stage,
     get_active_blueprint,
@@ -36,6 +41,7 @@ from app.agents.platform_rules import (
     format_genre_storytelling_rules,
 )
 from app.schemas.agents import ReviewOutput
+from app.services.detector import format_ai_lint_report, lint_ai_sentences
 from app.services.entity_checker import (
     check_entity_facts,
     check_org_archive_gaps,
@@ -62,6 +68,9 @@ SYSTEM_PROMPT = """你是「评价师」，一位严苛的小说编辑。对照�
 
 铁律：
 - 必须对照证据打分：evidence 字段强制非空，泛泛而谈"写得好"视为无效输出。
+- 证据引文必须逐字真实存在于【待评价章节正文】或【最近章节全文/伏笔账本/关系图谱/设定库/本章大纲】中；
+  程序会逐条核对引文是否真实存在——编造、改写、张冠李戴的引文会被检测出并打回整份报告重写，
+  所以请只引用你确实看到的原文，并用「」标注。
 - 评审要严苛，降温度，视角重新看待文本。
 - 【冲突红线】评价与每条建议必须对照【最近章节全文】【实体关系图谱】【设定库】【伏笔账本 open 项】核查：
   建议若会与上文已确立的事实/关系/设定矛盾、或会动到未回收的伏笔 → **不得提出该建议**；
@@ -181,6 +190,14 @@ class CriticAgent(Agent[ReviewOutput]):
             for r in ledger_rows[:20]
         ) or "（账本无 open 项）"
 
+        # 伏笔债务追踪（webnovel-writer 债务引擎思想移植）：按计划揭示章核对超期/逼近的伏笔，
+        # 评价 foreshadowing_accountability 时必须点名超期项，防止正文推进越远越烂尾
+        try:
+            cur_no = int(params.get("chapter_no") or 0)
+        except (TypeError, ValueError):
+            cur_no = 0
+        debt_report = format_ledger_debt_report(compute_ledger_debt(self.db, novel_id, cur_no))
+
         # 实体关系图谱：评价 consistency 时对照，防止章节写崩已确立关系
         relations_text = get_graph_relations_text(self.db, novel_id)
 
@@ -213,6 +230,13 @@ class CriticAgent(Agent[ReviewOutput]):
         org_snapshot_text = format_org_archive_snapshot(active_settings)
         # 年代×行业研究精简快照：现实题材下判断"机构是否符合当时情况"的依据（作者可改）
         era_snapshot_text = format_era_research_critic_snapshot(novel.era_research if novel else None)
+
+        # 确定性 AI 味句式预扫描：程序正则逐句标出命中句（与设定核对清单同性质——
+        # 程序预先算出来的字面结果，不是猜测；critic 对每条要么确认成立写入 issues，
+        # 要么说明为何不适用，不允许沉默跳过）
+        chapter_text_raw = params.get("chapter_text", "") or ""
+        ai_lint_findings = lint_ai_sentences(chapter_text_raw)
+        ai_lint_text = format_ai_lint_report(ai_lint_findings)
 
         # 组件化上下文（token 预算器按优先级裁剪：硬约束不裁，超窗先裁前文/关系/设定）
         components = [
@@ -248,6 +272,12 @@ class CriticAgent(Agent[ReviewOutput]):
                 PRIORITY_SETTING,
             ),
             ComponentBlock(
+                "ledger_debt",
+                f"【伏笔债务追踪·程序按计划揭示章核对，超期/逼近项在 foreshadowing_accountability 中必须点名处理】\n"
+                f"{debt_report}",
+                PRIORITY_SETTING,
+            ),
+            ComponentBlock(
                 "relations",
                 f"实体关系图谱（评价 consistency 时对照，正文不得与已确立关系矛盾）：\n{relations_text}",
                 PRIORITY_SETTING,
@@ -275,13 +305,21 @@ class CriticAgent(Agent[ReviewOutput]):
                 PRIORITY_REQUIRED,
             ),
             ComponentBlock(
+                "ai_lint",
+                f"【AI 味句式核对清单·程序正则预扫描结果，逐句必须回应】\n{ai_lint_text}\n"
+                "对每一条：确属 AI 腔 → 写入 issues（type \"style\"，附一句更口语、更具体的改写）；"
+                "属误报（此处写法有明确人物/语境依据）→ 在 style_compliance rubric 的 comment 说明理由，"
+                "不允许沉默跳过。",
+                PRIORITY_REQUIRED,
+            ),
+            ComponentBlock(
                 "background_scope",
                 background_scope,
                 PRIORITY_REQUIRED,
             ),
             ComponentBlock(
                 "chapter_text",
-                f"待评价章节正文：\n{params.get('chapter_text', '')}",
+                f"待评价章节正文：\n{chapter_text_raw}",
                 PRIORITY_REQUIRED,
             ),
             ComponentBlock(
@@ -320,9 +358,86 @@ class CriticAgent(Agent[ReviewOutput]):
                 "setting_check": check_items,
                 "entity_check": entity_items,
                 "org_archive_gaps": org_gap_items,
+                # 证据引用宿主校验语料：评价引文必须真实出现在以下任一文本中（防编造引文）
+                "corpus": "\n\n".join(
+                    [
+                        chapter_text_raw,
+                        prev_text,
+                        ledger_text,
+                        relations_text,
+                        settings_text,
+                        str(params.get("outline") or ""),
+                    ]
+                ),
             },
             temperature=self.temperature,
         )
 
     def parse_output(self, text: str) -> ReviewOutput:
         return ReviewOutput.model_validate_json(text.strip())
+
+    # ---------- 宿主侧确定性校验（证据引用真实性，防编造引文）----------
+
+    _QUOTE_RE = re.compile(r"[“\"「『]([^”\"」』]{2,40})[”\"」』]")
+    _GENERIC_WORDS = ("写得好", "很好", "不错", "优秀", "自然", "流畅", "较好", "整体")
+
+    @staticmethod
+    def _norm_text(s: str) -> str:
+        """去空白/标点/数字/英文后用于字面比对（宽松匹配，容忍引文与正文的标点差异）。"""
+        return re.sub(
+            r"[\s“”\"“”「」『』'‘’《》.,，。!！?？;；:：、—…·~*#0-9a-zA-Z]",
+            "",
+            s or "",
+        )
+
+    @classmethod
+    def _quote_in_corpus(cls, quote: str, corpus_norm: str) -> bool:
+        nq = cls._norm_text(quote)
+        if len(nq) < 3:
+            return True  # 过短引文（单字/双字）不判错，防误伤
+        return nq in corpus_norm
+
+    def host_validate(self, parsed: ReviewOutput, params: dict, meta: Optional[dict] = None) -> None:
+        """评价产出确定性校验（不靠 LLM，纯字面比对）：
+
+        1. 编造引文：rubric.evidence 与 issues[].desc 中出现的「引号内原文」必须真实存在于
+           上下文语料（本章正文 + 最近章节全文 + 伏笔账本 + 关系图谱 + 设定库 + 本章大纲），
+           否则判为编造，抛 ValueError 打回重写；
+        2. 泛泛而谈：rubric 维度 evidence 无任何引文、且内容短、且为套话 → 判为无证据，
+           抛 ValueError 打回重写。
+
+        与 SYSTEM_PROMPT 的「evidence 强制非空 / 必须对照证据打分」配套，把提示词软约束
+        变成确定性门禁：评价引用一假，整份报告重写。
+        """
+        corpus = ((meta or {}).get("corpus") or "").strip()
+        if not corpus:
+            return  # 无语料（异常路径）跳过，不误伤
+        corpus_norm = self._norm_text(corpus)
+
+        errors: list[str] = []
+
+        def check(text: str, where: str) -> None:
+            quotes = [q for q in self._QUOTE_RE.findall(text or "") if q.strip()]
+            if not quotes:
+                t = (text or "").strip()
+                # 无引文但很短的套话 evidence：证据不成立（评语可在 comment，证据必须引用）
+                if where.startswith("rubric.") and len(self._norm_text(t)) < 12 and any(
+                    w in t for w in self._GENERIC_WORDS
+                ):
+                    errors.append(f"{where}.evidence 缺少真实原文引用（泛泛而谈，打回重写）")
+                return
+            for q in quotes:
+                if not self._quote_in_corpus(q, corpus_norm):
+                    errors.append(f"{where} 引文「{q}」在上下文中不存在（疑似编造）")
+
+        for name, dim in parsed.rubric.model_dump().items():
+            check(dim.get("evidence") or "", f"rubric.{name}")
+        for i, issue in enumerate(parsed.issues):
+            check(issue.desc or "", f"issues[{i}]")
+
+        if errors:
+            raise ValueError(
+                "；".join(errors[:6])
+                + "。证据只能引用【待评价章节正文】或上下文中真实存在的原文，"
+                "不得编造、改写、张冠李戴；请修正后重新输出。"
+            )

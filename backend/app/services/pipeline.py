@@ -950,16 +950,28 @@ async def _apply_style_from_import(
 async def _validate_with_retry(
     agent: Agent, ctx: ContextPack, text: str, db: Session
 ) -> tuple[Optional[BaseModel], bool, bool, Optional[str]]:
-    """校验；失败时携带错误信息自纠错重跑 1 次。返回 (parsed, ok, retried, last_error)。"""
+    """校验；失败时携带错误信息自纠错重跑 1 次。返回 (parsed, ok, retried, last_error)。
+
+    schema 校验（agent.validate）通过后，再跑宿主侧确定性校验（agent.host_validate，
+    如 critic 证据引用真实性检查）：两者任一失败都走同一条自纠错重试路径。
+    """
+    def _try_validate(t: str) -> BaseModel:
+        parsed = agent.validate(t)
+        params = (ctx.meta or {}).get("params") or {}
+        agent.host_validate(parsed, params, ctx.meta)
+        return parsed
+
     try:
-        return agent.validate(text), True, False, None
+        return _try_validate(text), True, False, None
     except (ValidationError, ValueError, json.JSONDecodeError) as e:
         logger.warning("agent=%s 首次校验失败：%s", agent.task_type, e)
         if MAX_SCHEMA_RETRY <= 0:
             return None, False, False, str(e)
         retry_msgs = ctx.messages + [{
             "role": "user",
-            "content": f"你上一次的输出未通过校验，错误：{e}\n请重新输出严格符合格式的 JSON。",
+            "content": f"你上一次的输出未通过校验，错误：{e}\n"
+            "请修正错误后再输出：若为格式问题则严格输出符合格式的 JSON；"
+            "若为证据/引文问题则必须引用上下文里真实存在的原文，禁止编造。",
         }]
         retry_ctx = ContextPack(
             novel_id=ctx.novel_id,
@@ -974,7 +986,7 @@ async def _validate_with_retry(
             retry_text = ""
             async for piece in agent.run(retry_ctx):
                 retry_text += piece
-            return agent.validate(retry_text), True, True, None
+            return _try_validate(retry_text), True, True, None
         except (ValidationError, ValueError, json.JSONDecodeError) as e2:
             logger.warning("agent=%s 自纠错后仍失败：%s", agent.task_type, e2)
             return None, False, True, str(e2)
@@ -1669,6 +1681,8 @@ def persist_chapter_plan(
             "beats": beats,
             "ending_hook": plan.get("ending_hook", ""),
             "writing_treatment": {
+                "narrative": plan.get("narrative", ""),
+                "execution": plan.get("execution", ""),
                 "pace": plan.get("pace", ""),
                 "entry": plan.get("entry", ""),
                 "tone": plan.get("tone", ""),
@@ -2101,7 +2115,31 @@ def get_pending_confirms(
     novel_id 缺省时返回所有小说的待确认项（全局确认提醒中心轮询用）；
     agent 传入时精确到角色（如前端只在大纲页/设置页展示对应确认点）。
     """
-    from app.db.models import AuthorConfirm
+    from app.db.models import AgentTask, AuthorConfirm
+
+    # 孤儿确认清扫：pending 确认若其关联任务已结束/不存在（如后端进程在确认等待期间
+    # 重启/中断、任务被懒清理终结后确认点无人等待），自动作废——否则跨小说确认提醒
+    # 中心会反复弹「需要你确认」，而确认点早已无意义（蓝图/大纲已生成完）。
+    # 任务正在等待确认时其 AgentTask 必为 running（确认等待期间有独立心跳），不会被误伤。
+    orphan_rows = db.execute(
+        select(AuthorConfirm).where(AuthorConfirm.status == "pending", AuthorConfirm.task_id.is_not(None))
+    ).scalars().all()
+    if orphan_rows:
+        task_ids = {r.task_id for r in orphan_rows}
+        alive_ids = set(
+            db.execute(
+                select(AgentTask.id).where(AgentTask.id.in_(task_ids), AgentTask.status == "running")
+            ).scalars()
+        )
+        swept = False
+        for r in orphan_rows:
+            if r.task_id not in alive_ids:
+                r.status = "dismissed"
+                r.answer = "__obsolete__"
+                r.answer_meta = {"label": None, "note": "任务已结束，确认点自动作废"}
+                swept = True
+        if swept:
+            db.commit()
 
     q = select(AuthorConfirm).where(AuthorConfirm.status == "pending")
     if novel_id is not None:
@@ -2250,8 +2288,23 @@ async def request_author_confirmation(
         except Exception:
             logger.exception("novel_id=%s agent=%s confirm_key=%s 确认等待 deadline 顺延失败（不影响等待）", novel_id, agent, confirm_key)
             extend = None  # 顺延失败则不再回退，保持原行为
+    # 确认等待期间保持任务心跳：生成阶段的心跳只覆盖 run_agent_stream，
+    # 等作者答复可能长达数分钟，期间不刷新 updated_at 会被请求路径的懒清理
+    # 误判为失联僵尸任务标 error（前端看门狗随之误报失败、任务被提前终结）。
+    last_touch = 0.0
     try:
         while True:
+            if task_id is not None:
+                now = time.monotonic()
+                if now - last_touch >= HEARTBEAT_INTERVAL_SECONDS:
+                    last_touch = now
+                    try:
+                        t = db.get(AgentTask, task_id)
+                        if t is not None and t.status == "running":
+                            t.updated_at = datetime.utcnow()
+                            db.commit()
+                    except Exception:
+                        db.rollback()  # 心跳失败不影响等待，仅失去心跳
             # 强制从 DB 重新加载：POST /confirm 用的是另一个 session，identity map 会缓存旧状态
             try:
                 db.refresh(row)

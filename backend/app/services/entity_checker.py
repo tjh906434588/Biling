@@ -256,12 +256,22 @@ def _collect_org_text(st: dict, description: str = "") -> str:
     return "\n".join(parts)
 
 
+def _is_background_org(s) -> bool:
+    """是否作者标记为「背景机构」：structured.is_background=True 时不再要求档案完整。
+
+    背景机构=正文只提名字、作者没打算展开写的机构（如主角上班的公司），
+    强制补全成立时间/负责人/人员规模没有意义，作者也无法硬编。
+    """
+    st = s.structured or {}
+    return bool(st.get("is_background"))
+
+
 def _org_archive_status(s) -> dict:
-    """机构卡的档案维度现状：{维度: True/False}。"""
+    """机构卡的档案维度现状：{维度: True/False}。背景机构一律视为已定档（不检查）。"""
     st = s.structured or {}
     hay = _collect_org_text(st, s.description or "")
     return {
-        dim: any(k in hay for k in kws)
+        dim: any(k in hay for k in kws) or _is_background_org(s)
         for dim, kws in _ORG_DIMENSION_KEYWORDS.items()
     }
 
@@ -271,6 +281,7 @@ def check_org_archive_gaps(chapter_text: str, settings) -> list[dict]:
 
     只在正文里出现过的机构才检查——第八章写到了「江城人才信息服务部」，
     那么这家机构的老板/规模/业务/位置有没有定档，是作者当下就需要知道的。
+    作者标记为「背景机构」（structured.is_background）的跳过：不要求完整档案。
     """
     text = (chapter_text or "").strip()
     if not text:
@@ -278,6 +289,8 @@ def check_org_archive_gaps(chapter_text: str, settings) -> list[dict]:
     items: list[dict] = []
     for s in settings:
         if s.type != "faction":
+            continue
+        if _is_background_org(s):
             continue
         names = [str(s.name)] + [str(a) for a in (s.aliases or []) if str(a).strip()]
         if not any(n and n in text for n in names):
@@ -294,6 +307,7 @@ def check_org_archive_gaps(chapter_text: str, settings) -> list[dict]:
             "source": "entity",
             "kind": "org_archive_gap",
             "entity": str(s.name),
+            "entity_id": str(s.id),
             "fact": "机构档案",
             "expected_text": "（档案缺：%s）" % "、".join(missing),
             "found": "",
