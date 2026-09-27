@@ -16,8 +16,8 @@ tools/fanqie_crawler/
 ├── extract_template.js       # 浏览器提取+解码脚本模板（Exec 环境）
 ├── corpus/                   # 已解码章节正文（每本仅前 N 章，用于规则提炼，非全文）
 │   └── 十日终焉/dec_ch{1..10}.txt
-└── rules/                    # 规则总结库
-    └── top30_rules.md        # 逐本追加：前十章规则总结
+└── rules/                    # 题材族约束库（通用，样本持续追加）
+    └── fanqie_rules.md        # 各族 storytelling/rhythm 规则 + 逐本观察记录
 ```
 
 ## 完整流程（每次抓新书照此走）
@@ -33,8 +33,9 @@ tools/fanqie_crawler/
 4. **逐章抓取解码**：在 Exec 中跑 `fetchChapters`（模板见 extract_template.js），
    每章 navigate → evaluate → 取 `content[0].text` → JSON.parse → 解码。
 5. **落盘语料**：写入 `corpus/<书名>/dec_ch{n}.txt`。
-6. **提炼规则**：阅读前十章，按 `rules/top30_rules.md` 内的模板追加该书的规则总结
-   （开篇黄金三章 / 金手指兑现节奏 / 事件组织 / 悬念管理 / 可写规则清单）。
+6. **提炼规则**：阅读前十章，按 `rules/fanqie_rules.md` 内的模板追加该书的规则总结
+   （开篇黄金三章 / 金手指兑现节奏 / 事件组织 / 悬念管理 / 可写规则清单），
+   并做同族多本比对融合（【必写】/【可选】分级），同步到 `backend/app/agents/platform_rules.py`。
 
 ## 已知坑（务必看）
 
