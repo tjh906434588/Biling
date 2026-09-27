@@ -186,8 +186,8 @@ function ConfirmDialog({ confirm, onSettled }: ConfirmDialogProps) {
   return (
     <Modal
       open
-      title={`${AGENT_LABELS[confirm.agent] ?? confirm.agent} · 作者确认`}
-      subtitle="生成流程在此暂停等你定夺，确认后继续"
+      title={`${AGENT_LABELS[confirm.agent] ?? confirm.agent} · 请你确认`}
+      subtitle="写到这停一下，你拍板后继续"
       onClose={() => {
         // 点关闭 = 跳过：通知后端解除确认阻塞，避免轮询每 3 秒把弹窗重新推回来
         void dismissAuthorConfirm(confirm.id).catch(() => {});
@@ -743,8 +743,13 @@ export function ConfirmNotifier() {
           const nid = notification.warning({
             title: `《${it.novel_title ?? "未命名小说"}》需要你确认`,
             message: `${label}在生成中停下等你定夺：\n${it.question}`,
-            duration: 0, // 常驻，直到作者去确认或主动关闭
+            duration: 0, // 常驻，直到作者去确认、主动跳过或确认被作废
             onClick: () => router.push(`/workspace/${it.novel_id}`),
+            // 点 ✕ = 放弃此确认：通知后端跳过（解除等待），否则轮询每几秒会把它重新弹回来
+            onClose: () => {
+              void dismissAuthorConfirm(it.id).catch(() => {});
+              notifiedRef.current.delete(it.id);
+            },
           });
           notifiedRef.current.set(it.id, nid);
         }

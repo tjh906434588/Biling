@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agents.registry import AGENT_NAMES
-from app.db.models import AgentTask, Chapter, ChapterVersion, Outline, QualityReview
+from app.db.models import AgentTask, AuthorConfirm, Chapter, ChapterVersion, Outline, QualityReview
 from app.db.session import SessionLocal, get_db
 from app.schemas.agents import (
     AgentCommitRequest,
@@ -279,7 +279,7 @@ def _schedule_memory_keeper(db: Session, novel_id: uuid.UUID, agent_name: str, p
 
 
 async def _ensure_era_research(
-    db: Session, novel_id: uuid.UUID, material: str = "", on_pending=None, on_stream=None
+    db: Session, novel_id: uuid.UUID, material: str = "", on_pending=None, on_stream=None, task_id: uuid.UUID | None = None
 ) -> dict:
     """生成蓝图前自动研究「年代×行业」，研究结论请作者确认后再应用。
 
@@ -336,18 +336,20 @@ async def _ensure_era_research(
             elif decision == "apply_fix":
                 novel2 = db.get(Novel, novel_id)
                 if novel2 is not None:
-                    if novel2.genres is None:
-                        novel2.genres = []
                     for issue in scope_issues:
                         dim = issue.get("dim")
                         suggested = str(issue.get("suggested") or "").strip()
                         if dim == "background_type" and suggested in ("realistic", "alternate", "pure_fantasy"):
                             novel2.background_type = suggested
                         elif dim == "genres" and suggested:
+                            # 必须整体赋新列表：genres 是裸 JSON 列（无 MutableList 变更追踪），
+                            # 直接 .append() 原地修改不会把字段标记为 dirty，flush 时更新被丢弃。
+                            new_genres = list(novel2.genres or [])
                             for g in re.split(r"[、,，;；]", suggested):
                                 g = g.strip()
-                                if g and g not in novel2.genres:
-                                    novel2.genres.append(g)
+                                if g and g not in new_genres:
+                                    new_genres.append(g)
+                            novel2.genres = new_genres
                     novel2.era_research = result
                     db.commit()
             # ignore：不落库研究，保持现有设定
@@ -362,23 +364,23 @@ async def _ensure_era_research(
             btype_missing = not novel.background_type
             genres_missing = not (novel.genres or [])
             if btype_missing and genres_missing:
-                pick_hint = "你尚未选择世界背景类型和题材，已按素材推断，请确认选择。"
+                pick_hint = "你还没选背景类型和题材，系统按素材帮你猜了，请看下面的选项确认。"
             elif btype_missing:
-                pick_hint = "你尚未选择世界背景类型，已按素材推断，请确认。"
+                pick_hint = "你还没选背景类型，系统按素材帮你猜了，请看下面的选项确认。"
             elif genres_missing:
-                pick_hint = "你尚未选择题材，已按素材推断，请确认。"
+                pick_hint = "你还没选题材，系统按素材帮你猜了，请看下面的选项确认。"
             else:
                 pick_hint = ""
             sy = result.get("story_start_year")
             if sy:
                 sy_text = (
-                    f"故事开局年份：{sy}（研究从素材推断，为时间锚点）。剧情将按时间线推进，时代知识逐年对照；"
-                    "如年份不对，可在下方输入框直接填写正确年份（如 2000）。"
+                    f"故事开局年份：{sy}（从素材推断）。剧情会按时间线推进、逐年对照当时真实情况；"
+                    "如果年份不对，可以直接在下方输入框改（比如改成 2000）。"
                 )
             else:
                 sy_text = (
-                    "未能从素材判定故事开局年份。请在下方输入框直接填写开局年份（如 2000），"
-                    "剧情将按时间线推进，时代知识逐年对照。"
+                    "没能从素材看出故事是哪一年开局的。请直接在下方输入框填一个开局年份（比如 2000），"
+                    "剧情会按时间线推进、逐年对照当时真实情况。"
                 )
             # 主表述以开局年份+行业为准（时代定位仅是标签，非时间范围）
             if sy:
@@ -388,18 +390,18 @@ async def _ensure_era_research(
             decision = await request_author_confirmation(
                 db,
                 novel_id=novel_id,
-                task_id=None,
+                task_id=task_id,  # 透传主任务 id：确认等待期间保持心跳，防懒清理误杀
                 agent="era_researcher",
                 confirm_key="era_research_confirm",
                 question=(
-                    f"已完成年代×行业研究：判定为「{verdict}」。\n{sy_text}\n" + pick_hint
-                    + ("研究发现背景类型或题材可能与作品不符（见下方详情），" if scope_issues else "")
-                    + "请确认如何应用研究结论（机构/老板/业务形态以你的需求为准）："
+                    f"时代研究做完了，判定为「{verdict}」。\n{sy_text}\n" + pick_hint
+                    + ("另外，系统觉得你选的背景类型或题材跟这个故事可能对不上，详见第二个选项。" if scope_issues else "")
+                    + "\n下面的选项选一个就行；如果机构、老板、业务形态你有自己的想法，也可以在下方输入框直接写出来。"
                 ),
                 options=[
-                    {"id": "apply", "label": "应用研究结论", "desc": "落库为时代常识（含开局年份与时间演进红线），设定生成与评价复用（可稍后在项目设置页修改）"},
-                    {"id": "apply_fix", "label": "应用结论并修正背景类型/题材", "desc": "按校验建议更新背景类型与题材，同时落库研究" if scope_issues else "落库研究并同步建议的题材/背景"},
-                    {"id": "ignore", "label": "忽略，保持现状", "desc": "不落库研究，按现有设定直接生成"},
+                    {"id": "apply", "label": "好，就用这个时代背景", "desc": "系统会记住故事发生在哪一年、干的是什么行业，之后写设定、写正文、做评价都按这个时代来。以后想改也能在项目设置里改。"},
+                    {"id": "apply_fix", "label": "好，顺便把背景类型/题材改对", "desc": "系统觉得你选的背景类型或题材和故事不太搭，会自动帮你改成更合适的，同时也会记住时代背景。注意：你之前自己选的设定可能被改动。"},
+                    {"id": "ignore", "label": "不用，按我自己填的来", "desc": "这次研究结果不用，系统按你原来自己选的背景直接开始，不会做任何修改。"},
                 ],
                 allow_custom=True,
                 on_pending=on_pending,
@@ -665,11 +667,15 @@ def _plan_to_outline_text(plan: dict) -> str:
     ]
     if plan.get("time_slice"):
         parts.append(f"时间切片：{plan['time_slice']}")
+    if plan.get("narrative"):
+        parts.append(f"叙事方案：{plan['narrative']}")
     if plan.get("pace"):
         parts.append(f"节奏/开场：{plan['pace']}")
     beats = [b for b in (plan.get("beats") or []) if isinstance(b, str) and b.strip()]
     if beats:
         parts.append(f"节拍：{'；'.join(beats)}")
+    if plan.get("execution"):
+        parts.append(f"执行收尾：{plan['execution']}")
     if plan.get("ending_hook"):
         parts.append(f"结尾钩子：{plan.get('ending_hook')}")
     wt = []
@@ -698,13 +704,12 @@ async def _propose_chapter_plan(
 ) -> dict | None:
     """正文生成前置：逐维度咨询作者「本章规划」（大纲+章节合并方案）。
 
-    章节规划师把本章规划拆成 10 个固定维度（核心事件/节奏开场/视角/节拍/结尾钩子/进入触发/
-    风格基调/主角反应弧/核心冲突/爽点类型）。**一次只生成一个维度**的 5 个固定不重复候选选项
-    （+ 前端 1 个自定义输入），作者选定/输入后，把前面的选择作为上下文再生成下一个维度，
-    共 10 轮。作者任一轮跳过/超时 → 中断咨询返回 None（novelist 按既有方式续写，不阻断）。
-    全部定完后组合成完整 plan dict（title/goal/chapter_function/pov/beats/ending_hook +
-    写法要点），由调用方落库为 approved 大纲（轻量版）并注入 novelist 参数据此写正文。
-    confirm_key 带 task_id + 维度 key：每次生成任务独立咨询（换方向重生成时会重新咨询）。
+    章节规划师把本章规划拆成 3 个维度（核心事件/叙事方案/执行收尾）。**一次只生成一个维度**的
+    5 个固定不重复候选选项（+ 前端 1 个自定义输入），作者选定/输入后，把前面的选择作为上下文
+    再生成下一个维度，共 3 轮。作者任一轮跳过/超时 → 中断咨询返回 None（novelist 按既有方式
+    续写，不阻断）。全部定完后组合成完整 plan dict（title/goal/chapter_function/pov/beats/
+    ending_hook + 写法要点），由调用方落库为 approved 大纲（轻量版）并注入 novelist 参数据此
+    写正文。confirm_key 带 task_id + 维度 key：每次生成任务独立咨询（换方向重生成时会重新咨询）。
     """
     from app.agents.chapter_planner import (
         PLAN_DIMENSIONS,
@@ -733,14 +738,20 @@ async def _propose_chapter_plan(
         return None  # 无弹窗通道则跳过咨询（理论不出现，兜底）
 
     # 执行方案骨架（与 _plan_to_outline_text / persist_chapter_plan 读取的 key 一致）
+    # 三维度（核心事件/叙事方案/执行收尾）选中后，各自的结构化字段映射回下面的 key：
+    #   goal → time_slice/core_conflict/protagonist_arc
+    #   narrative → pace/chapter_function/pov/tone/entry
+    #   execution → beats/ending_hook/satisfaction
     plan: dict = {
         "label": "",
         "title": "",
         "goal": "",
         "time_slice": "",
+        "narrative": "",
         "pace": "",
         "chapter_function": "progression",
         "pov": "",
+        "execution": "",
         "beats": [],
         "ending_hook": "",
         "entry": "",
@@ -772,6 +783,10 @@ async def _propose_chapter_plan(
             )
             return None
         if not proposal:
+            logger.warning(
+                "novel_id=%s 第 %s 个维度（%s）提案为空（LLM 未产出或校验未通过），中断逐维度咨询（不阻断正文生成）",
+                novel_id, idx + 1, key,
+            )
             return None
         dim_data = proposal.get("dimension") or {}
         options = [
@@ -872,7 +887,16 @@ async def _propose_chapter_plan(
             logger.exception("novel_id=%s 本章规划第 %s 维度确认流程异常（不阻断正文生成）", novel_id, idx + 1)
             return None
         if decision.get("status") != "answered":
-            return None  # 作者跳过/超时：中断逐维度咨询，novelist 按既有方式续写
+            # 作者跳过/超时当前维度：不再继续咨询后续维度。
+            # 但已确认过的维度必须保留（不能整体 return None 丢弃）——否则用户前面
+            # 确认的核心事件被白白浪费，novelist 无约束自由写，正文与已定方案冲突。
+            if selections:
+                logger.warning(
+                    "novel_id=%s 第 %s 个维度（%s）作者跳过/超时，保留已确认维度（%s）继续生成",
+                    novel_id, idx + 1, key, "、".join(selections),
+                )
+                break
+            return None  # 一个维度都没确认：无任何作者约束，novelist 按既有方式续写
         answer = decision.get("answer")
         if not answer:
             return None
@@ -883,12 +907,33 @@ async def _propose_chapter_plan(
         opt = next((o for o in options if o["id"] == answer), None)
         if opt:
             value = opt["text"]
-            if key == "goal" and opt.get("time_slice"):
-                plan["time_slice"] = str(opt["time_slice"]).strip()
-            if key == "pace" and opt.get("chapter_function"):
-                plan["chapter_function"] = opt["chapter_function"]
-            if key == "beats" and opt.get("beats"):
-                plan["beats"] = [b for b in opt["beats"] if isinstance(b, str) and b.strip()]
+            if key == "goal":
+                if opt.get("time_slice"):
+                    plan["time_slice"] = str(opt["time_slice"]).strip()
+                if opt.get("core_conflict"):
+                    plan["core_conflict"] = str(opt["core_conflict"]).strip()
+                if opt.get("protagonist_arc"):
+                    plan["protagonist_arc"] = str(opt["protagonist_arc"]).strip()
+            if key == "narrative":
+                plan["narrative"] = value
+                if opt.get("chapter_function"):
+                    plan["chapter_function"] = opt["chapter_function"]
+                if opt.get("pace"):
+                    plan["pace"] = str(opt["pace"]).strip()
+                if opt.get("pov"):
+                    plan["pov"] = str(opt["pov"]).strip()
+                if opt.get("tone"):
+                    plan["tone"] = str(opt["tone"]).strip()
+                if opt.get("entry"):
+                    plan["entry"] = str(opt["entry"]).strip()
+            if key == "execution":
+                plan["execution"] = value
+                if opt.get("beats"):
+                    plan["beats"] = [b for b in opt["beats"] if isinstance(b, str) and b.strip()]
+                if opt.get("ending_hook"):
+                    plan["ending_hook"] = str(opt["ending_hook"]).strip()
+                if opt.get("satisfaction"):
+                    plan["satisfaction"] = str(opt["satisfaction"]).strip()
         else:
             value = answer
         plan[key] = value
@@ -908,9 +953,9 @@ async def _propose_scene_plan(
     on_pending=None,
     on_stream=None,
 ) -> list[dict] | None:
-    """正文生成前置（第 2 阶段）：10 维度定稿后，把本章拆成 3-5 个场景逐字段确认。
+    """正文生成前置（第 2 阶段）：本章规划定稿后，把本章拆成 3-5 个场景逐字段确认。
 
-    场景规划师基于作者已确认的 10 个维度（params["chapter_plan"]）+ 同一套素材，
+    场景规划师基于作者已确认的本章规划（params["chapter_plan"]）+ 同一套素材，
     一次生成 3-5 个场景的骨架（每场景五字段：地点/出场人物/目标/冲突/结果，每字段恰好
     5 个固定不重复候选 + 前端 1 个自定义）。作者在「场景卡片」内逐字段单选/自定义，
     一张卡一个场景；全部场景确认后，再对每个场景生成 5 个约 100 字的写法提案，
@@ -918,7 +963,7 @@ async def _propose_scene_plan(
     [{scene_index, location, participants, goal, conflict, outcome, proposal}]，
     注入 params["scene_plan"] 供 novelist 作为硬约束写作。
 
-    作者在任一确认点跳过/超时 → 中断场景规划返回 None（novelist 按 10 维度方案续写，不阻断）。
+    作者在任一确认点跳过/超时 → 中断场景规划返回 None（novelist 按本章规划方案续写，不阻断）。
     """
     from app.agents.scene_planner import SCENE_FIELDS
     from app.services.pipeline import request_author_confirmation
@@ -1173,6 +1218,25 @@ def _finish_task(task_db: Session, task_id: uuid.UUID, *, status: str, msg: str 
         t.msg = msg
     if error is not None:
         t.error = error
+    elif status != "error":
+        # 状态不再是 error：清掉残留的旧错误（如任务被懒清理误标 error 后又正常完成）
+        t.error = None
+    # 任务结束（无论成败）：作废该任务仍未答复的确认点。正常流程确认在任务结束前就已
+    # answered/dismissed；残留 pending 说明确认等待被中断（进程重启/任务异常退出/懒清理误杀），
+    # 再挂下去只会让「跨小说确认提醒」永远提醒一个已无意义的确认（任务都不在等了）。
+    try:
+        stale_confirms = task_db.execute(
+            select(AuthorConfirm).where(
+                AuthorConfirm.task_id == task_id,
+                AuthorConfirm.status == "pending",
+            )
+        ).scalars().all()
+        for pc in stale_confirms:
+            pc.status = "dismissed"
+            pc.answer = "__obsolete__"
+            pc.answer_meta = {"label": None, "note": "任务已结束，确认点自动作废"}
+    except Exception:
+        task_db.rollback()
     task_db.commit()
 
 
@@ -1381,9 +1445,8 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
                 logger.exception("novel_id=%s 大纲方向提案异常（不阻断生成）", payload.novel_id)
 
         # 正文生成前置：咨询作者「本章规划」（大纲+章节合并方案）。
-        # 章节规划师基于与大纲师同一套素材把本章规划拆成 10 个独立维度（核心事件/节奏开场/
-        # 视角/节拍/结尾钩子/进入触发/风格基调/主角反应弧/核心冲突/爽点类型），作者逐项选择或自定义，
-        # 组合的方案落库为 approved 大纲（轻量版）并注入 novelist 参数据此写正文；
+        # 章节规划师基于与大纲师同一套素材把本章规划拆成 3 个维度（核心事件/叙事方案/执行收尾），
+        # 作者逐项选择或自定义，组合的方案落库为 approved 大纲（轻量版）并注入 novelist 参数据此写正文；
         # 重新生成=新增，照常咨询（方向由作者重新定夺）；
         # 仅批量自动重写（auto_rewrite，无人工确认环节）跳过咨询，避免打断批量自动化；
         # 作者忽略/超时则不注入（novelist 按既有方式续写）。
@@ -1407,9 +1470,9 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
                         payload.params["title"] = plan.get("title")
                     payload.params["writing_mode"] = "outline_guided"
 
-                    # 正文生成前置（第 2 阶段）：10 维度定稿后把本章拆成 3-5 个场景逐字段确认，
+                    # 正文生成前置（第 2 阶段）：本章规划定稿后把本章拆成 3-5 个场景逐字段确认，
                     # 再对每个场景生成 5 个写法提案六选一；作者任一确认点跳过/超时则放弃场景
-                    # 规划（novelist 按 10 维度方案续写，不阻断生成）。
+                    # 规划（novelist 按本章规划方案续写，不阻断生成）。
                     scene_plan = await _propose_scene_plan(
                         task_db, payload.novel_id, payload.params, task.id, plan,
                         on_pending=_emit_author_confirm, on_stream=_emit_stream,
@@ -1432,6 +1495,7 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
                 era_result = await _ensure_era_research(
                     task_db, payload.novel_id, material,
                     on_pending=_emit_author_confirm, on_stream=_emit_stream,
+                    task_id=task.id,  # 透传主任务 id：时代确认等待期间保持心跳，防懒清理误杀
                 )
                 if era_result.get("research"):
                     # 研究完成提示（仅前端展示，不累积到刷新恢复缓存）

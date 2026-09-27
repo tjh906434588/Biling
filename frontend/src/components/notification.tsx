@@ -133,9 +133,10 @@ function NotificationCard({ item }: { item: NotificationItem }) {
       onClick={
         clickable
           ? (e) => {
-              // 点击卡片 = 确认前往：关闭通知并执行跳转回调
+              // 点击卡片 = 前往处理：仅收起卡片并执行跳转回调，不触发 onClose
+              //（onClose 语义为「用户明确放弃」，如确认提醒的 ✕ = 跳过确认点；点击跳转≠放弃）
               e.stopPropagation();
-              closeNotification(item.id);
+              removeNotification(item.id);
               item.onClick?.();
             }
           : undefined

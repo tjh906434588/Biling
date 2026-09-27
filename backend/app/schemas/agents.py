@@ -556,14 +556,24 @@ class ChapterPlanDimensionOption(BaseModel):
     """单个候选选项：展示文本 + 该选项携带的结构化取值。
 
     作者在当前维度选其一（或自定义输入），取值并入执行方案；比"整体打包几套方案"更细：
-    作者可对任意维度单独换选，不必整套推翻。""" 
+    作者可对任意维度单独换选，不必整套推翻。三维度方案（核心事件/叙事方案/执行收尾）里，
+    每个候选都是一套结构化方案，多要素字段在选中后映射回执行方案对应 key。"""
 
     id: str  # 稳定短 id（如 "goal_1"），作者选中时回传
     text: str  # 候选文本（前端展示；作者选中后作为该维度取值）
     # —— 该选项携带的结构化信息（作者选中后合并进执行方案）——
-    chapter_function: Optional[str] = None  # pace 维度：本章节奏功能（progression/climax/…）
-    beats: Optional[list[str]] = None  # beats 维度：该套节拍序列（3-4 个，每个一句话）
+    chapter_function: Optional[str] = None  # narrative 维度：本章节奏功能（progression/climax/…）
+    beats: Optional[list[str]] = None  # execution 维度：该套节拍序列（3-4 个，每个一句话）
     time_slice: Optional[str] = None  # goal 维度：该选项所处的时间切片（如「入职第一天」）
+    # —— 三维度方案新增的结构化字段（各维度选中后映射回执行方案）——
+    core_conflict: Optional[str] = None  # goal 维度：冲突落点（谁对谁、争什么、可演场面）
+    protagonist_arc: Optional[str] = None  # goal 维度：主角态度从什么到什么
+    pace: Optional[str] = None  # narrative 维度：节奏档位 + 开场切入（如「中速·收紧，悬念开场」）
+    pov: Optional[str] = None  # narrative 维度：视角类型
+    tone: Optional[str] = None  # narrative 维度：风格基调词
+    entry: Optional[str] = None  # narrative 维度：进入方式（由谁/哪句话/哪个细节触发）
+    ending_hook: Optional[str] = None  # execution 维度：结尾钩子
+    satisfaction: Optional[str] = None  # execution 维度：爽点类型
 
 
 class ChapterPlanDimension(BaseModel):

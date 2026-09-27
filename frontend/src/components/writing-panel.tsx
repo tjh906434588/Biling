@@ -606,12 +606,11 @@ export default function WritingPanel({ novelId }: Props) {
    *  生成新草稿后不自动切换选中，只弹提示；切章/刷新详情时重置。 */
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
 
-  // 弹窗开关
+  // 弹窗开关：新增章节 / 信息控制 仍用弹窗；评价与优化、版本树已改为右侧常驻内联面板（见下方）
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
-  const [showReviewModal, setShowReviewModal] = useState(false);
-  /** 版本树弹窗：标题旁版本号点击打开，多级无序列表展示全部版本（新增/重新生成=根，评价优化=子级）。 */
-  const [showVersionModal, setShowVersionModal] = useState(false);
+  /** 版本树：标题旁版本号点击展开的内联浮层（替代原弹窗）。 */
+  const [versionOpen, setVersionOpen] = useState(false);
   /** 重新生成模式：非 null 时新增章节弹窗以"重新生成当前章正文"语义工作（章节号锁定当前章）。 */
   const [regenerateNo, setRegenerateNo] = useState<number | null>(null);
   /** 当前进行中的生成是「新增章节」还是「重新生成正文」：弹窗被手动关闭后 regenerateNo 会重置为 null，
@@ -722,75 +721,53 @@ export default function WritingPanel({ novelId }: Props) {
 
   /**
    * 写后设定自检命中 → 右上角常驻告警通知（带「重新生成/忽略」操作）。
+   * 仅对「正文必现清单漏写」弹窗；机构档案缺维度（org_archive_gap）属设定卡不完整、
+   * 重新生成解决不了，且作者可能无权/无需硬编（背景机构），已降级为评价区低优先级提示，
+   * 不再弹右上角常驻告警——需要时到「评价与优化」查看。
    * 切换章节/换小说即自动移除本通知（见下方 effect），避免挂着旧章节的告警。
    */
   function fireGapNotif(chapterNo: number, gaps: SettingGap[]) {
+    // 过滤出正文必现清单漏写（机构档案缺维度不弹窗，评价区低优先级提示承载）
+    const contentGaps = gaps.filter((g) => g.kind !== "org_archive_gap");
+    if (contentGaps.length === 0) return;
     if (gapsNotifId != null) {
       removeNotification(gapsNotifId);
       gapsNotifId = null;
     }
     gapsNotifNovel = novelId;
     gapsNotifChapter = chapterNo;
-    // 区分两类命中：机构档案缺维度（设定卡本身未定档，重新生成正文解决不了）vs 正文必现清单漏写
-    const hasOrgGap = gaps.some((g) => g.kind === "org_archive_gap");
-    const hasContentGap = gaps.some((g) => g.kind !== "org_archive_gap");
     gapsNotifId = notification.warning({
       duration: 0, // 常驻：等作者处理（重新生成 / 忽略 / 手动关闭）
-      title: `设定自检：第 ${chapterNo} 章发现 ${gaps.length} 处设定问题`,
+      title: `设定自检：第 ${chapterNo} 章发现 ${contentGaps.length} 处设定问题`,
       message: (
         <div className="space-y-1">
-          {gaps.map((g) =>
-            g.kind === "org_archive_gap" ? (
-              <div key={`${g.rule}-${g.missing.join("-")}`} className="leading-5">
-                《{g.rule}》档案缺少维度：{" "}
-                <span className="font-medium text-amber-900 dark:text-amber-100">{g.missing.join("、")}</span>
-              </div>
-            ) : (
-              <div key={`${g.rule}-${g.missing.join("-")}`} className="leading-5">
-                《{g.rule}》要求 [{g.group.join(" + ")}] 同时出现，已写到 {g.present.join("、")}，缺失{" "}
-                <span className="font-medium text-amber-900 dark:text-amber-100">{g.missing.join("、")}</span>
-              </div>
-            ),
-          )}
+          {contentGaps.map((g) => (
+            <div key={`${g.rule}-${g.missing.join("-")}`} className="leading-5">
+              《{g.rule}》要求 [{g.group.join(" + ")}] 同时出现，已写到 {g.present.join("、")}，缺失{" "}
+              <span className="font-medium text-amber-900 dark:text-amber-100">{g.missing.join("、")}</span>
+            </div>
+          ))}
           <div className="pt-0.5 text-[11px] leading-5 opacity-75">
-            {hasOrgGap ? (
-              hasContentGap ? (
-                <>
-                  机构档案缺维度属设定卡不完整，重新生成正文无法补齐，请到「设定」为该机构补上档案维度；
-                  其余正文漏写项可按下方处理。
-                </>
-              ) : (
-                <>
-                  属设定卡不完整（非本章正文漏写）：重新生成正文无法补齐，请到「设定」为该机构补上档案维度；
-                  若确认为背景机构无需完整档案，可忽略。
-                </>
-              )
-            ) : (
-              <>
-                属机器字面核对：若本章确实不该写到该项可忽略；否则建议重新生成，
-                或到「评价与优化」的【作者批注】里写明补写内容，让修订师补上。
-              </>
-            )}
+            属机器字面核对：若本章确实不该写到该项可忽略；否则建议重新生成，
+            或到「评价与优化」的【作者批注】里写明补写内容，让修订师补上。
           </div>
         </div>
       ),
       actions: (
         <>
-          {hasContentGap && (
-            <button
-              type="button"
-              onClick={() => {
-                closeNotification(gapsNotifId!);
-                gapsNotifId = null;
-                gapsNotifChapter = null;
-                gapsNotifNovel = null;
-                openRegenerateModal();
-              }}
-              className="rounded-md bg-amber-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-amber-700"
-            >
-              重新生成
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              closeNotification(gapsNotifId!);
+              gapsNotifId = null;
+              gapsNotifChapter = null;
+              gapsNotifNovel = null;
+              openRegenerateModal();
+            }}
+            className="rounded-md bg-amber-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-amber-700"
+          >
+            重新生成
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -1109,9 +1086,6 @@ export default function WritingPanel({ novelId }: Props) {
     approvedOutline != null &&
     !!selectedVersion.outline_id &&
     String(selectedVersion.outline_id) !== approvedOutline.id;
-  /** 右侧正文区是否"有内容"：有正文版本或已选中某章时为 true → 撑满页面高度；
-   *  无内容（未选章）时为 false → 自然高度，不让它强行占满整屏，也不反向把左侧模块带高。 */
-  const hasContent = detail != null || activeNo != null;
   /** 选中版本（须已定稿）还没提取过记忆层 → 高亮「提取→记忆层」。
    *  判定依据（任一命中即视为"已提取"，不高亮）：
    *    1. 本会话刚提取过当前章/当前版本（即时反馈）；
@@ -1519,17 +1493,8 @@ export default function WritingPanel({ novelId }: Props) {
     }
   }
 
-  /** 打开「评价与优化」：自动评价是生成后异步后台落库的（1-2 分钟），
-   *  若沿用打开页面时的旧评价快照，会看到「还没有评价」的过期空态。
-   *  打开时按当前章重新拉一次评价列表，保证展示最新（含刚落库的自动评价）；失败则保留现有数据。 */
-  function openReviewModal() {
-    setShowReviewModal(true);
-    if (detail) {
-      listReviews(novelId, detail.chapter_no)
-        .then((rs) => setReviews(rs))
-        .catch(() => undefined);
-    }
-  }
+  /** 「评价与优化」已改为右侧常驻内联面板：切换章节时 loadDetail 会按当前章重新拉取评价列表，
+   *  因此无需再靠打开弹窗触发刷新，进入面板即是最新（含生成后 1-2 分钟异步落库的自动评价）。 */
 
   /** 根部关系被删/改后，按序串行处理受影响的下游章节：
    *   第 A 章重写正文（按该章已批大纲，无大纲则自由草稿）→ 第 B 章重写 → …
@@ -1720,8 +1685,6 @@ export default function WritingPanel({ novelId }: Props) {
       setRevising(false);
       setReviseRun((r) => (r ? { ...r, running: false } : r));
       setShowReviseRun(false);
-      // 优化成功（未失败）即关闭评价与优化弹窗：新版本已生成，弹窗继续开着只会提示"对新版本再评价"
-      if (!failed) setShowReviewModal(false);
       if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
       setActiveNo(detail.chapter_no);
       await loadChapters();
@@ -1761,7 +1724,7 @@ export default function WritingPanel({ novelId }: Props) {
               type="button"
               onClick={() => {
                 handleSelectVersion(v.id);
-                setShowVersionModal(false);
+                setVersionOpen(false);
               }}
               disabled={aiBusy}
               title={
@@ -1937,6 +1900,7 @@ export default function WritingPanel({ novelId }: Props) {
                                     setActiveNo(c.chapter_no);
                                     setReviews(null);
                                     setSelectedVersionId(null);
+                                    setVersionOpen(false);
                                     void loadDetail(c.chapter_no);
                                   }}
                                 >
@@ -2036,11 +2000,12 @@ export default function WritingPanel({ novelId }: Props) {
         </div>
       </aside>
 
-      {/* 右侧：本章正文 + 评价与优化入口（一步一张卡） */}
-      <section className={`flex min-w-0 flex-col gap-5 sm:gap-7 ${hasContent ? "h-[calc(100dvh-6rem)]" : ""}`}>
+      {/* 右侧：本章正文（上，占比更大）+ 评价与优化（下，常驻内联），两张卡上下排布、各自独立滚动，
+          正文与评价同屏可见，不再用弹窗遮挡正文。 */}
+      <section className="flex h-[calc(100dvh-6rem)] min-w-0 flex-col gap-5 sm:gap-7 overflow-hidden">
         {/* ① 当前章节正文（全部版本 + 已定稿正文），显示在界面、不撑破页面高度 */}
         {detail ? (
-          <div className="panel flex min-h-0 flex-1 flex-col">
+          <div className="panel flex min-h-0 flex-[3] flex-col">
             <div className="panel-head">
               <h3 className="panel-title">
                 {/* 点击标题即复制「第 X 章 标题」（含章节号），无需单独按钮 */}
@@ -2061,26 +2026,48 @@ export default function WritingPanel({ novelId }: Props) {
                   第 {detail.chapter_no} 章
                   {(selectedVersion?.title ?? detail.title) ? ` ${selectedVersion?.title ?? detail.title}` : ""}
                 </span>
-                {/* 标题旁版本标识：版本名 · v{n}，点击弹出多级版本树弹窗（新增/重新生成=根，评价优化=子级） */}
-                <button
-                  type="button"
-                  onClick={() => setShowVersionModal(true)}
-                  className="ml-1 inline-flex cursor-pointer items-baseline gap-1 rounded-md px-1.5 py-0.5 align-middle transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                  title="点击查看全部版本（多级版本树，可点击切换预览）"
-                >
-                  {selectedVersion ? (
+                {/* 标题旁版本标识：版本名 · v{n}，点击展开内联版本树（新增/重新生成=根，评价优化=子级） */}
+                <span className="relative inline-flex">
+                  <button
+                    type="button"
+                    onClick={() => setVersionOpen((o) => !o)}
+                    className="ml-1 inline-flex cursor-pointer items-baseline gap-1 rounded-md px-1.5 py-0.5 align-middle transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    title="点击查看全部版本（多级版本树，可点击切换预览）"
+                  >
+                    {selectedVersion ? (
+                      <>
+                        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                          {sourceLabel(selectedVersion.source)}
+                        </span>
+                        <span className="text-xs font-semibold tabular-nums text-zinc-600 dark:text-zinc-300">
+                          · v{selectedVersion.version_no}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">v?</span>
+                    )}
+                  </button>
+                  {versionOpen && detail && (
                     <>
-                      <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                        {sourceLabel(selectedVersion.source)}
-                      </span>
-                      <span className="text-xs font-semibold tabular-nums text-zinc-600 dark:text-zinc-300">
-                        · v{selectedVersion.version_no}
-                      </span>
+                      {/* 透明点击捕获层：点浮层外部即关闭（非模态，不遮罩正文） */}
+                      <div
+                        className="fixed inset-0 z-40"
+                        aria-hidden
+                        onClick={() => setVersionOpen(false)}
+                      />
+                      <div className="absolute left-0 top-full z-50 mt-2 max-h-[60vh] w-72 overflow-y-auto rounded-lg border border-zinc-200 bg-surface p-2 shadow-book dark:border-zinc-700 dark:bg-zinc-900">
+                        <p className="px-2 py-1 text-[11px] leading-5 text-zinc-400">
+                          新增 / 重新生成为根节点；「评价优化」挂在被优化版本之下，可一直递进。点节点切换预览。
+                        </p>
+                        {detail.versions.length > 0 ? (
+                          <ul className="mt-1 space-y-1">{renderVersionNodes(null)}</ul>
+                        ) : (
+                          <p className="py-4 text-center text-xs text-zinc-400">本章还没有任何版本。</p>
+                        )}
+                      </div>
                     </>
-                  ) : (
-                    <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">v?</span>
                   )}
-                </button>
+                </span>
                 <span className="ml-1 text-xs font-normal text-zinc-500">
                   {selectedIsFinal ? "已定稿" : "草稿"}
                 </span>
@@ -2136,27 +2123,6 @@ export default function WritingPanel({ novelId }: Props) {
                 >
                   重新生成正文
                 </button>
-                <button
-                  type="button"
-                  onClick={openReviewModal}
-                  // 评价中不禁用：本次评价锁定了章节与版本，仍可重开弹窗查看「查看生成过程」进度；
-                  // 提取中禁用（本次是提取，进度在「提取 → 记忆层」按钮状态与提示上）
-                  disabled={activeNo == null || extracting}
-                  className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                  title={
-                    activeNo == null
-                      ? "请先选择一章"
-                      : extracting
-                        ? "提取记忆层中，暂不能评价与优化"
-                        : reviewing
-                          ? "评价进行中，点击可再次打开弹窗查看进度"
-                          : revising
-                            ? "优化进行中，点击可再次打开弹窗查看进度"
-                            : "打开评价与优化"
-                  }
-                >
-                  评价与优化
-                </button>
               </div>
             </div>
             {selectedVersion ? (
@@ -2170,7 +2136,7 @@ export default function WritingPanel({ novelId }: Props) {
             )}
           </div>
         ) : activeNo != null ? (
-          <div className="panel flex min-h-0 flex-1 flex-col">
+          <div className="panel flex min-h-0 flex-[3] flex-col">
             <div className="panel-head">
               <h3 className="panel-title">
                 第 {activeNo} 章
@@ -2181,7 +2147,7 @@ export default function WritingPanel({ novelId }: Props) {
             </p>
           </div>
         ) : (
-          <div className="panel flex min-h-0 flex-1 flex-col">
+          <div className="panel flex min-h-0 flex-[3] flex-col">
             <div className="panel-head">
               <h3 className="panel-title">
                 本章正文
@@ -2192,6 +2158,85 @@ export default function WritingPanel({ novelId }: Props) {
             </p>
           </div>
         )}
+
+        {/* ② 评价与优化：右侧常驻内联面板（替代原弹窗），评价师结果与「按评价优化」与正文同屏可见 */}
+        <div className="panel flex min-h-0 flex-[2] flex-col">
+          <div className="panel-head shrink-0">
+            <h3 className="panel-title">
+              <span className="panel-step">②</span>
+              评价与优化
+            </h3>
+            {activeNo != null && (
+              <span className="panel-hint">
+                第 {activeNo} 章
+                {selectedVersion ? ` · v${selectedVersion.version_no} ${sourceLabel(selectedVersion.source)}` : ""}
+              </span>
+            )}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
+            {detail ? (
+              currentReview ? (
+                <ReviewCard
+                  review={currentReview}
+                  onRevise={handleRevise}
+                  revising={revising}
+                  activeVersionId={selectedVersion?.id ?? null}
+                  viewButton={
+                    revising ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowReviseRun(true)}
+                        className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
+                      >
+                        查看生成过程
+                      </button>
+                    ) : undefined
+                  }
+                />
+              ) : (
+                <div className="rounded-lg border border-dashed border-zinc-300 p-5 text-center dark:border-zinc-700">
+                  <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
+                    {selectedVersion ? (
+                      <>
+                        当前选中正文（v{selectedVersion.version_no}
+                        {selectedVersion ? ` ${sourceLabel(selectedVersion.source)}` : ""}）还没有评价。
+                        {isRecentlyGenerated ? (
+                          <>
+                            该版本刚生成，系统通常会在生成后 1-2 分钟内自动评价并出现在这里，可稍候查看；若仍未出现，再点下方手动评价。
+                          </>
+                        ) : (
+                          <>点下方「评价本章」，评价师会对照蓝图、伏笔账本与设定逐项打分。</>
+                        )}
+                      </>
+                    ) : (
+                      "该章还没有选定版本的正文，先在界面生成并选定一版，再回来评价。"
+                    )}
+                  </p>
+                  <div className="mt-2.5 flex items-center justify-center gap-2">
+                    <button
+                      onClick={handleReview}
+                      disabled={reviewing || !selectedVersion}
+                      className="btn btn-primary px-3 py-1.5 text-xs font-medium"
+                    >
+                      {reviewing ? "评价中…" : "评价本章"}
+                    </button>
+                    {reviewing && (
+                      <button
+                        type="button"
+                        onClick={() => setShowReviewRun(true)}
+                        className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
+                      >
+                        查看生成过程
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            ) : (
+              <p className="text-center text-xs text-zinc-400">请先在左侧章节目录选择一章。</p>
+            )}
+          </div>
+        </div>
 
         {/* 联动重写中断：已迁移为右上角全局 error Notification（writing-panel 顶部 rewriteFail 同步 effect 管理） */}
       </section>
@@ -2245,8 +2290,8 @@ export default function WritingPanel({ novelId }: Props) {
         }
       >
         <div className="flex flex-col gap-3">
-          {/* 沿用大纲开关：仅该章有已批大纲时出现；无大纲直接说明靠「本章规划」弹窗（大纲已变选填，不再需要选择写作模式） */}
-          {targetOutline ? (
+          {/* 沿用大纲开关：仅该章有已批大纲时出现（无已批大纲时不显示任何规划提示） */}
+          {targetOutline && (
             <>
               <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900">
                 <span className="flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-300">
@@ -2288,12 +2333,6 @@ export default function WritingPanel({ novelId }: Props) {
                 </div>
               )}
             </>
-          ) : (
-            <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs leading-6 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
-              第 {form.chapter_no} 章还没有已批大纲，无需提前规划。
-              <br />
-              写正文前会先弹出「本章规划」（目标/节奏/视角/节拍/结尾钩子）供你确认，确认后直接写作。
-            </div>
           )}
 
           {/* 自由草稿（未沿用大纲）：章节名称可手动填（带标签，避免高度错位） */}
@@ -2437,101 +2476,7 @@ export default function WritingPanel({ novelId }: Props) {
         </div>
       </Modal>
 
-      {/* ── 评价与优化弹窗 ── */}
-      <Modal
-        open={showReviewModal}
-        title="评价与优化"
-        maxWidth="max-w-2xl"
-        subtitle={
-          detail
-            ? `第 ${detail.chapter_no} 章${(selectedVersion?.title ?? detail.title) ? ` ${selectedVersion?.title ?? detail.title}` : ""} · 当前选中正文：v${selectedVersion?.version_no ?? "?"}${selectedVersion ? ` ${sourceLabel(selectedVersion.source)}` : ""}`
-            : undefined
-        }
-        onClose={() => setShowReviewModal(false)}
-      >
-        {detail ? (
-          <>
-            {currentReview ? (
-              <ReviewCard
-                review={currentReview}
-                onRevise={handleRevise}
-                revising={revising}
-                activeVersionId={selectedVersion?.id ?? null}
-                viewButton={
-                  revising ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowReviseRun(true)}
-                      className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                    >
-                      查看生成过程
-                    </button>
-                  ) : undefined
-                }
-              />
-            ) : (
-              <div className="rounded-lg border border-dashed border-zinc-300 p-5 text-center dark:border-zinc-700">
-                <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
-                  {selectedVersion ? (
-                    <>
-                      当前选中正文（v{selectedVersion.version_no}
-                      {selectedVersion ? ` ${sourceLabel(selectedVersion.source)}` : ""}）还没有评价。
-                      {isRecentlyGenerated ? (
-                        <>
-                          该版本刚生成，系统通常会在生成后 1-2 分钟内自动评价并出现在这里，
-                          可稍候重新打开查看；若仍未出现，再点下方手动评价。
-                        </>
-                      ) : (
-                        <>点下方「评价本章」，评价师会对照蓝图、伏笔账本与设定逐项打分。</>
-                      )}
-                    </>
-                  ) : (
-                    "该章还没有选定版本的正文，先在界面生成并选定一版，再回来评价。"
-                  )}
-                </p>
-                <div className="mt-2.5 flex items-center justify-center gap-2">
-                  <button
-                    onClick={handleReview}
-                    disabled={reviewing || !selectedVersion}
-                    className="btn btn-primary px-3 py-1.5 text-xs font-medium"
-                  >
-                    {reviewing ? "评价中…" : "评价本章"}
-                  </button>
-                  {reviewing && (
-                    <button
-                      type="button"
-                      onClick={() => setShowReviewRun(true)}
-                      className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                    >
-                      查看生成过程
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </>
-        ) : (
-          <p className="text-center text-xs text-zinc-400">请先在左侧章节目录选择一章。</p>
-        )}
-      </Modal>
-
-      {/* ── 版本树弹窗：标题旁版本号点击打开，多级无序列表展示全部版本（新增/重新生成=根，评价优化=子级，可递进） ── */}
-      <Modal
-        open={showVersionModal}
-        title={detail ? `第 ${detail.chapter_no} 章版本` : "版本"}
-        maxWidth="max-w-md"
-        subtitle="新增章节与重新生成正文为平级根节点；「评价优化」的产物挂在被优化版本之下，可一直递进。点击节点切换预览。"
-        onClose={() => setShowVersionModal(false)}
-      >
-        {detail && detail.versions.length > 0 ? (
-          <div className="space-y-3">
-            {/* 版本树：根=新增/重新生成，子=评价优化；节点上已有「当前」徽标与选中高亮 */}
-            <ul className="space-y-1">{renderVersionNodes(null)}</ul>
-          </div>
-        ) : (
-          <p className="py-6 text-center text-xs text-zinc-400">本章还没有任何版本，先去生成正文吧。</p>
-        )}
-      </Modal>
+      {/* 评价与优化、版本树已改为右侧常驻内联面板，不再使用弹窗 */}
 
       {/* ── AI 处理过程弹窗：生成正文 / 评价 / 优化统一复用蓝图、大纲页的公共组件（DeepSeek 同款交互） ── */}
       <AgentStreamModal

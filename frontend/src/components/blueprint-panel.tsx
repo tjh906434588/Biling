@@ -242,10 +242,14 @@ export default function BlueprintPanel({ novelId }: Props) {
     if (run.novelId === novelId && run.status === "running") setShowStreamModal(true);
   }, [run.status, run.novelId, novelId]);
 
-  // 生成结束（在本页完成，或切走后期间完成）→ 刷新版本列表，新版蓝图自动出现
-  const prevStatus = useRef<BlueprintRunStatus | null>(null);
+  // 生成结束（在本页完成，或切走后期间完成）→ 刷新版本列表，新版蓝图自动出现。
+  // 判定用「状态变到 done/error」而非「running→非running」：生成可能经历 running→error→done
+  //（如确认等待期任务被懒清理误标 error、随后 SSE 正常完成覆盖为 done），只认 running 起点
+  // 会让 error→done 这步漏掉 load()，蓝图已落库但版本列表永不刷新。
+  const prevStatus = useRef<BlueprintRunStatus>(run.status);
   useEffect(() => {
-    const justFinished = run.novelId === novelId && prevStatus.current === "running" && run.status !== "running";
+    const own = run.novelId === novelId;
+    const justFinished = own && prevStatus.current !== run.status && (run.status === "done" || run.status === "error");
     if (justFinished) {
       void load();
     }
@@ -255,11 +259,12 @@ export default function BlueprintPanel({ novelId }: Props) {
 
   // 生成结束（本页或后台完成）：刷新版本列表 + 关闭弹窗清空草稿 + 弹 Message 消息提示（居中靠上）。
   // Message 仅蓝图页可见；跨页完成时用户不在本页，由全局 Notification（右上角）提示，两者不重复。
-  const prevRunStatus = useRef<BlueprintRunStatus | null>(null);
+  // 完成判定用「变到 done」而非「running→done」：覆盖 running→error→done（被懒清理误标又正常完成）路径。
+  const prevRunStatus = useRef<BlueprintRunStatus>(run.status);
   useEffect(() => {
     const own = run.novelId === novelId;
     const prev = prevRunStatus.current;
-    if (own && prev === "running" && run.status === "done") {
+    if (own && prev !== "done" && run.status === "done") {
       // Message 消息提示（居中靠上）：完成反馈，含版本号（如"蓝图 v1 已生成完毕"）
       message.success(run.msg ?? "蓝图已生成完毕");
       // 生成完成：自动关闭「生成过程」与「新增蓝图」弹窗，并清空输入草稿（含 localStorage）

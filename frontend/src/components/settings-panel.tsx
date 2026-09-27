@@ -686,6 +686,7 @@ interface FormState {
   type: SettingType;
   name: string;
   role_rank: string;
+  is_background: boolean;
   constitution_text: string;
   dynamic_text: string;
   appear_segments: Seg[];
@@ -696,6 +697,7 @@ const EMPTY_FORM: FormState = {
   type: "character",
   name: "",
   role_rank: "protagonist",
+  is_background: false,
   constitution_text: "",
   dynamic_text: "",
   appear_segments: [],
@@ -974,6 +976,7 @@ export default function SettingsPanel({ novelId }: Props) {
     const dynamic_text = form.dynamic_text.trim();
     const structured: Record<string, unknown> = { constitution_text, dynamic_text };
     if (form.type === "character") structured.role_rank = form.role_rank;
+    if (form.type === "faction") structured.is_background = form.is_background;
     const timing = timingStructured(form.stages, form.appear_segments, stagePlan);
     structured.appear_from = timing.appear_from;
     structured.appear_until = timing.appear_until;
@@ -1024,6 +1027,7 @@ export default function SettingsPanel({ novelId }: Props) {
       type: s.type,
       name: s.name,
       role_rank: typeof st.role_rank === "string" ? st.role_rank : "protagonist",
+      is_background: st.is_background === true,
       constitution_text: con,
       dynamic_text: dyn,
       stages: meta.stages,
@@ -1660,6 +1664,19 @@ export default function SettingsPanel({ novelId }: Props) {
                   </option>
                 ))}
               </select>
+            </label>
+          )}
+          {form.type === "faction" && (
+            <label className="flex shrink-0 cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-zinc-300 accent-amber-600"
+                checked={form.is_background}
+                onChange={(e) => setForm({ ...form, is_background: e.target.checked })}
+              />
+              <span className="text-[11px] font-medium text-zinc-500">
+                背景机构（正文只提名字、无需完整档案，设定自检不再提示补齐）
+              </span>
             </label>
           )}
           <label className="flex shrink-0 flex-col gap-1">
