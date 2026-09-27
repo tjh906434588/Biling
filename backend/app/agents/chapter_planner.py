@@ -93,45 +93,155 @@ SYSTEM_PROMPT = """你是「章节规划师」。在小说家正式写某一章�
 - 每个选项都紧扣本章真实素材（主角身份/当前处境/金手指或系统类型/蓝图走向/最近故事状态的 next_chapter_implications/账本里超期或紧迫的 open 项/未回收伏笔），并且要接住「前面维度已选定的取值」——后面的维度选项必须顺着前面已定的目标/视角/节拍走，前后自洽；不要脱离素材空想或套刻板模板。
 - 演法要匹配主角当前能力与阶段：刚觉醒/刚入职等弱小时期的选项只能安排符合其底牌的小胜或间接反击，禁止"新人当众拆台前辈/上级"这类需要实力与地位支撑的强打脸，也禁止"当众拆穿陌生行家/陌生中介"后再靠对方赏识当场收编的借力打脸，以及"恰好被贵人看中、当场收编/提携"的天降贵人巧合——弱小时期的机会必须靠主角自己的真实行动与底牌争取，大爽点留给主角攒足底牌之后。
 - 维度特化（三维度，每个候选都是一套结构化方案）：
-  - goal（核心事件）的每个选项只描述一件核心事件（谁/做什么/结果），一句话讲完，并携带三个结构化字段："time_slice"（一句话标明该选项所处的时间切片，如"入职第一天"）、"core_conflict"（冲突双方+争的焦点+一个可演的场面）、"protagonist_arc"（主角态度从什么到什么）。禁止用"开局/结尾/悬念"等技法词做总起标签，不得带 chapter_function（节奏归 narrative）；**蓝图 opening_anchor 若声明了第 1 章时间切片且本章就是第 1 章，5 个选项必须锚定该切片、time_slice 完全一致（后续章节按剧情推进自由切换切片，不受此约束）**；**蓝图 opening_anchor 若声明了金手指揭示章且 == 本章章号，"金手指登场/觉醒"就是本章核心事件本身**——5 个选项必须是锚定该事件、落在同一时间切片下的互斥变体（金手指首次显现的不同方式+主角当场的处境与反应），可以写"金手指首次现身+主角反应"；系统弹出的面板内容、天赋清单、操作细则等设定揭示细节归 narrative 的进入方式，goal 只写事件本身。**若本章不是金手指揭示章，goal 聚焦人物驱动的事件，系统在事件中的参与按 narrative 的进入方式安排，不得为凑"系统登场"而偏离核心事件**；
-  - narrative（叙事方案）的每个选项 = 一套完整叙事方案，携带五个结构化字段："pace"（节奏档位+开场切入一句话，如"中速·收紧，悬念开场"）、"chapter_function"（progression|buildup|turning|climax|revelation|resolution|interlude）、"pov"（视角类型）、"tone"（风格基调词）、"entry"（进入方式：关键场面由谁/哪句话/哪个细节触发）。节奏档位用档位词（慢/中/快、平缓/收紧/高张力…），开场切入用切入手法词（日常切入/环境铺陈/悬念开场/冷开场/危机开场…），全书避免开场方式千篇一律——不得每章都用同一种切入方式。**narrative 禁止另写新事件（核心事件已由前序锁定），更禁止把已定事件换成"系统怎么激活"的另一个场景**——判断标准：去掉叙事方案后，作者仍知道"这一章发生了什么"（核心事件已定），只知道"怎么讲"——这才合格。narrative 选项一旦写成"某某场景/事件 + 系统被激活"即为不合格；
-  - execution（执行收尾）的每个选项携带三个结构化字段："beats"（3-4 个一句话节拍，讲清发生什么与情绪，不要太长）、"ending_hook"（四选一，落到「下一章要解决的问题/悬念」上：①具体可执行线索 ②情绪钩子 ③画面悬念 ④弱钩子/过渡式收尾，不写"留下悬念"空话）、"satisfaction"（爽点类型，允许弱回报：若本章是铺垫/过渡章，回报可以是推进感、新信息、关系升温，不必章章强爽点）。execution 同样禁止另写新事件——节拍必须建立在已锁定的核心事件与叙事方案上推进，不能把节拍写成另一个事件的流程。
+  - goal（核心事件）的每个选项只描述一件核心事件（谁/做什么/结果），一句话讲完，并携带三个结构化字段："time_slice"（一句话标明该选项所处的时间切片，如"入职第一天"）、"core_conflict"（冲突双方+争的焦点+一个可演的场面）、"protagonist_arc"（主角态度从什么到什么）。**text 这句话本身就要织入冲突与反应弧**：同一句话里既出现冲突（谁对谁/争什么/哪句转折，如"却/拦/质问/拆穿/两难"），又出现主角的反应（态度变化或动作，如"忍不住/暗下决心/试探/盯着"）——不能 text 只写"事件+系统登场"、把冲突和反应孤零零塞进字段（那样作者看到的选项就是缺冲突缺反应弧的）。禁止用"开局/结尾/悬念"等技法词做总起标签，不得带 chapter_function（节奏归 narrative）；**蓝图 opening_anchor 若声明了第 1 章时间切片且本章就是第 1 章，5 个选项必须锚定该切片、time_slice 完全一致（后续章节按剧情推进自由切换切片，不受此约束）**；**蓝图 opening_anchor 若声明了金手指揭示章且 == 本章章号，"金手指登场/觉醒"就是本章核心事件本身**——5 个选项必须是锚定该事件、落在同一时间切片下的互斥变体（金手指首次显现的不同方式+主角当场的处境与反应），可以写"金手指首次现身+主角反应"；系统弹出的面板内容、天赋清单、操作细则等设定揭示细节归 narrative 的进入方式，goal 只写事件本身。**若本章不是金手指揭示章，goal 聚焦人物驱动的事件，系统在事件中的参与按 narrative 的进入方式安排，不得为凑"系统登场"而偏离核心事件**；
+  - narrative（叙事方案）的每个选项 = 一套完整叙事方案，携带五个结构化字段："pace"（节奏档位+开场切入一句话，如"中速·收紧，悬念开场"）、"chapter_function"（progression|buildup|turning|climax|revelation|resolution|interlude）、"pov"（视角类型）、"tone"（风格基调词）、"entry"（进入方式：关键场面由谁/哪句话/哪个细节触发）。节奏档位用档位词（慢/中/快、平缓/收紧/高张力…），开场切入用切入手法词（日常切入/环境铺陈/悬念开场/冷开场/危机开场…），全书避免开场方式千篇一律——不得每章都用同一种切入方式。**narrative 禁止另写新事件（核心事件已由前序锁定），更禁止把已定事件换成"系统怎么激活"的另一个场景**——判断标准：去掉叙事方案后，作者仍知道"这一章发生了什么"（核心事件已定），只知道"怎么讲"——这才合格。**候选 text 与 entry 必须出现已定核心事件的场景/实体词（人物/地点/关键道具），逐项自查：如果某个候选整体读起来像"另一个事件/另一个场景"，必须重写。**narrative 选项一旦写成"某某场景/事件 + 系统被激活"即为不合格；**叙事配置要与已定事件的走向一致**：事件是温情和解/宽恕/重逢类的，就不配"黑暗/残酷/冷峻/压抑"的基调与惨烈张力；事件是决裂/对峙/惨烈冲突类的，就不配"温馨/甜蜜/轻松"的调性——同一事件的叙事方案应与事件本身同频；
+  - execution（执行收尾）的每个选项携带三个结构化字段："beats"（3-4 个一句话节拍，讲清发生什么与情绪，不要太长）、"ending_hook"（四选一，落到「下一章要解决的问题/悬念」上：①具体可执行线索 ②情绪钩子 ③画面悬念 ④弱钩子/过渡式收尾，不写"留下悬念"空话）、"satisfaction"（爽点类型，允许弱回报：若本章是铺垫/过渡章，回报可以是推进感、新信息、关系升温，不必章章强爽点）。execution 同样禁止另写新事件——节拍必须建立在已锁定的核心事件与叙事方案上推进，不能把节拍写成另一个事件的流程；**beats 必须出现已定核心事件的场景/实体词（同一人物/地点/关键道具在推进，而非凭空换了个场景）。**执行收尾与事件走向一致：温情和解类事件不得配惨败/崩溃/身败名裂式收尾与钩子。
 - 素材不足以判断时，按素材里最明显的推进需求（如超期伏笔、主线冲突）给出选项，不要编造素材里不存在的设定。
 """
 
 
-def options_overlap(options: list[dict]) -> str | None:
-    """检查同一维度 5 个候选是否存在"文本高度雷同"（同一桥段换措辞凑数）。
+# goal 维度「同模板换场景」的桥段模板词典：每类一组行为/事件关键词。
+# 语义级桥段检测用：两个候选若命中同一桥段类（每类 >=2 个关键词），说明它们共用
+# 同一事件模板、只是换了冲突对象/场景词（字面重合度可能很低，抓不到）。
+# 不收录「系统/金手指」类——系统是主角标配，任何桥段都可能带系统参与，收录必误伤。
+_BRIDGE_LEXICON: dict[str, frozenset[str]] = {
+    "识破骗局/陷阱": frozenset({
+        "识破", "看穿", "拆穿", "揭穿", "戳穿", "骗局", "陷阱", "圈套", "把戏", "套路",
+        "障眼法", "蒙骗", "诓", "讹", "诈", "押金", "霸王条款", "暗箱", "造假", "掺假",
+    }),
+    "当众打脸/立威": frozenset({
+        "当众", "打脸", "立威", "震慑", "镇住", "驳斥", "下不来台", "颜面扫地", "压场",
+        "顶撞", "甩脸", "反唇相讥", "拍桌",
+    }),
+    "贵人赏识/提携": frozenset({
+        "赏识", "提携", "招揽", "收编", "引荐", "举荐", "破格", "青眼", "另眼相待",
+        "收徒", "看重",
+    }),
+    "隐藏身份/扮猪吃虎": frozenset({
+        "隐藏", "隐瞒", "藏拙", "扮猪", "装傻", "深藏不露", "低调", "真人不露相",
+        "藏锋", "隐忍",
+    }),
+    "突发事故/危机": frozenset({
+        "突发", "意外", "故障", "事故", "出岔子", "捅娄子", "爆炸", "失火", "出事",
+        "坍塌", "泄漏", "翻车",
+    }),
+    "误会错位/背锅": frozenset({
+        "误会", "误解", "错怪", "冤枉", "背锅", "栽赃", "阴差阳错", "错位", "冒名",
+        "张冠李戴",
+    }),
+    "谈判博弈/赌约": frozenset({
+        "谈判", "谈崩", "抬价", "压价", "讨价还价", "对赌", "赌约", "筹码", "协议",
+        "谈条件", "竞价",
+    }),
+    "考核测试/比试": frozenset({
+        "考核", "测试", "验收", "摸底", "试炼", "比试", "切磋", "挑战", "笔试",
+        "面试", "复试",
+    }),
+}
 
-    返回 None 表示通过；否则返回描述（哪两个选项、什么程度），由调用方据此触发一次
-    自动重新生成。判据分三档：
-      1) 归一化（去标点/数字/中文虚词）后共有实义字 >= 6 且占较短选项的实义字
+
+def _template_lexicon_hit(text: str) -> set[str]:
+    """识别文本命中的桥段模板类（同一类 >=2 个关键词才算命中）。
+
+    返回命中类名集合；空集表示未命中任何桥段模板。用于 goal 维度
+    「同模板换场景」检测：两个候选若命中同一桥段类，说明事件模板同一。
+    """
+    hits: set[str] = set()
+    for cls, words in _BRIDGE_LEXICON.items():
+        if sum(1 for w in words if w in text) >= 2:
+            hits.add(cls)
+    return hits
+
+
+def _shared_skeleton(a: str, b: str) -> tuple[int, float]:
+    """结构骨架共享量：pair 的连续公共子串（>=4 字）总长与占较短方比例。
+
+    骨架 = 剔除「被换掉的场景/实体词」后剩下的句式主干（如"识破X→反手让对方
+    吃哑巴亏"）。占比高说明两候选是同一句式模板换了场景词，此时字面 set 重合
+    可能不达标（实体词不同），需单独检测。
+    """
+    sm = difflib.SequenceMatcher(None, a, b)
+    shared = sum(m.size for m in sm.get_matching_blocks() if m.size >= 4)
+    short = min(len(a), len(b))
+    return shared, (shared / short if short else 0.0)
+
+
+def _option_field_signature(key: str, o: dict) -> str:
+    """候选的结构化字段签名：完全一致即视为凑数/照抄。
+
+    narrative 的区分在 pace/pov/tone/entry/chapter_function，execution 在
+    beats/ending_hook/satisfaction（text 骨架因提示词强制同一句式，天然相似，
+    不能作雷同判据）。goal 维度返回空串（走完整的字面+模板检测）。
+    """
+    if key == "narrative":
+        return "|".join(str(o.get(f) or "") for f in ("pace", "chapter_function", "pov", "tone", "entry"))
+    if key == "execution":
+        beats = "|".join(str(b or "") for b in (o.get("beats") or []))
+        return "|".join([beats, str(o.get("ending_hook") or ""), str(o.get("satisfaction") or "")])
+    return ""
+
+
+def options_overlap(options: list[dict], key: str = "") -> str | None:
+    """检查同一维度 5 个候选是否「相互区分」不足（凑数/雷同）。
+
+    返回 None 表示通过；否则返回描述（哪两个选项、什么程度），由调用方据此触发
+    自动重新生成。判据分两族：
+    一、字面族（所有维度，抓「同义改写复述」）：
+      1) 归一化（去标点/数字/中文虚词）后共有实义字 >= 6 且占较短选项实义字
          比例 >= 40% → 判雷同（比例分母用较短方，避免"系统/天赋"这类设定高频词
          在长文本里堆字导致误伤）；
       2) SequenceMatcher 全局相似度 >= 0.75 → 判雷同；
       3) 全局相似度 >= 0.55 且连续公共子串 >= 6 字 → 判雷同。
-    说明：本函数只抓"字面高度雷同"（同义改写复述）；语义级桥段重复（如"识破骗局"
-    与"识破押金陷阱"用词不同但事件相同）由 SYSTEM_PROMPT 的「禁止复用同一剧情桥段」
-    铁律约束，属提示词层防线。
+    二、模板族（仅 goal 维度，抓「同模板换场景」——字面重合不高但句式/桥段同一）：
+      4) 结构骨架共享占比 >= 45% 且共享骨架 >= 8 字 → 判「同模板换场景」；
+      5) 两候选命中同一桥段模板类（见 _BRIDGE_LEXICON）→ 判「同桥段换场景」。
+    goal 维度额外并入 core_conflict/protagonist_arc 字段参与比对，模板重复更易暴露。
+    narrative/execution 因 5 个候选本就锚定同一核心事件、text 天然共享设定词/实体词，
+    字面族只保留「几乎照抄」（全局相似度 >= 0.75）这一档，跳过 set 重合档与短公共子串
+    档，避免把合理的「同事件同切面变体」误判成雷同。
     """
     texts = [str(o.get("text") or "").strip() for o in options]
     texts = [t for t in texts if t]
     if len(texts) < 2:
         return None
     normed = [_normalize_chars(t) for t in texts]
+    if key == "goal":
+        for idx, o in enumerate(options):
+            extra = "".join(str(o.get(f) or "") for f in ("core_conflict", "protagonist_arc"))
+            if extra.strip():
+                normed[idx] = normed[idx] + _normalize_chars(extra)
+    full_norm = ["".join(n) for n in normed]
     for i in range(len(texts)):
         for j in range(i + 1, len(texts)):
             a, b = texts[i], texts[j]
+            sm = difflib.SequenceMatcher(None, a, b)
+            ratio = sm.ratio()
+            blocks = sm.get_matching_blocks()
+            longest = max((m.size for m in blocks), default=0)
+            if key != "goal":
+                # narrative/execution：text 骨架天然相似（同事件同切面变体），
+                # 只抓「整卡照抄」——text 完全一致或结构化字段签名完全一致
+                if full_norm[i] == full_norm[j]:
+                    return f"选项 {i + 1} 与选项 {j + 1} 完全相同"
+                if _option_field_signature(key, options[i]) == _option_field_signature(key, options[j]):
+                    return f"选项 {i + 1} 与选项 {j + 1} 结构化字段完全相同（凑数）"
+                continue
+            if ratio >= 0.75:
+                return f"选项 {i + 1} 与选项 {j + 1} 高度雷同（相似度 {ratio:.2f}）"
             na, nb = set(normed[i]), set(normed[j])
             common = na & nb
             short = min(len(na), len(nb))
             if len(common) >= 6 and short > 0 and len(common) / short >= 0.4:
                 return f"选项 {i + 1} 与选项 {j + 1} 高度雷同（{len(common)}/{short} 个共有实义字）"
-            sm = difflib.SequenceMatcher(None, a, b)
-            ratio = sm.ratio()
-            longest = max((m.size for m in sm.get_matching_blocks()), default=0)
-            if ratio >= 0.75 or (ratio >= 0.55 and longest >= 6):
+            if ratio >= 0.55 and longest >= 6:
                 return f"选项 {i + 1} 与选项 {j + 1} 高度雷同（相似度 {ratio:.2f}）"
+            shared, sk = _shared_skeleton(full_norm[i], full_norm[j])
+            if shared >= 8 and sk >= 0.45:
+                return f"选项 {i + 1} 与选项 {j + 1} 疑似同模板换场景（结构骨架共享 {shared} 字，占比 {sk:.0%}）"
+            common_tpl = _template_lexicon_hit(full_norm[i]) & _template_lexicon_hit(full_norm[j])
+            if common_tpl:
+                cls = sorted(common_tpl, key=len)[0]
+                return f"选项 {i + 1} 与选项 {j + 1} 疑似同一桥段模板（{cls}），只是换了场景/对象"
     return None
 
 
@@ -240,6 +350,24 @@ def goal_extra_check(blueprint: dict | None, chapter_no: int, options: list[dict
 # 抢了 goal 维度的职责（真实问题：10 维度时代的 pov 候选全是「场景+系统激活+天赋浮现」的事件描述）。
 _POV_MARKERS = ["第一人称", "第三人称", "人称", "全知", "限知", "上帝视角", "主视角", "视角"]
 
+# goal 维度 text 一句话「真含冲突」的启发式标记（fix2）：转折/对立/两难词。
+# 只查 core_conflict/protagonist_arc 字段非空不够——模型会把字段填上但 text 只写"事件+系统登场"，
+# 作者看到的选项仍是缺冲突缺反应弧的。这里要求 text 本身出现冲突表达。
+_GOAL_TEXT_CONFLICT_MARKERS = [
+    "却", "但", "然而", "偏偏", "谁知", "没想到", "反而", "竟然", "拦", "拒", "拒绝",
+    "争执", "对峙", "僵持", "冲突", "矛盾", "质问", "拆穿", "揭穿", "阻止", "反对",
+    "要不要", "进退两难", "犹豫", "挣扎", "迟疑", "推脱", "错位", "违和", "不符",
+    "落空", "碰壁", "被拒", "下不来台", "骑虎难下",
+]
+
+# goal 维度 text 一句话「真含反应弧」的启发式标记（fix2）：主角态度变化/主动行动词。
+_GOAL_TEXT_ARC_MARKERS = [
+    "忍不住", "决定", "暗自", "暗暗", "暗下决心", "试探", "验证", "盯着", "愣住",
+    "心动", "动摇", "咬牙", "攥", "握紧", "心头", "心里", "回过神", "打量",
+    "追问", "留了个心眼", "记下", "怀疑", "确认", "疑惑", "怔", "若有所思",
+    "心惊", "警觉", "好奇", "不甘", "念头", "琢磨",
+]
+
 # pace 维度「节奏档位/开场切入」要素词，分两组：候选必须**各命中至少一个**（档位词 + 切入词），
 # 否则说明没同时给出「节奏档位 + 开场切入方式」这两个要素，只是干巴巴描述事件/场景（抢了 goal 的活）。
 _PACE_LEVEL_MARKERS = [
@@ -249,28 +377,97 @@ _PACE_OPENING_MARKERS = [
     "悬念", "冷开场", "日常", "环境", "铺陈", "危机", "切入", "开场", "起笔", "入手",
 ]
 
+# fix6「前序已定自相矛盾」检测词典：已定核心事件的走向，必须与叙事配置/执行收尾一致。
+# 只对走向明确的 goal 生效（命中正向收束或负向冲突词典），日常/中性事件不触发。
+_GOAL_WARM_RESOLUTION_MARKERS = [
+    "和解", "释怀", "冰释", "和好", "道歉", "原谅", "宽恕", "感激", "感谢", "感动",
+    "温情", "温暖", "治愈", "救赎", "重逢", "携手", "破涕为笑", "重归于好", "尽释前嫌",
+    "拥抱", "交心", "谈心", "敞开心扉", "和好如初",
+]
+_GOAL_HARSH_CONFLICT_MARKERS = [
+    "决裂", "反目", "撕破脸", "决斗", "血战", "搏杀", "生死", "惨败", "崩溃",
+    "身败名裂", "羞辱", "当众出丑", "破产", "重伤", "丧命", "家破", "陷害", "栽赃",
+    "兵戎相见", "你死我活",
+]
+# narrative 配置（tone+pace）与 goal 走向相反的证据词
+_NARRATIVE_COLD_TONE_MARKERS = ["黑暗", "残酷", "冷峻", "压抑", "悲凉", "绝望", "灰暗", "惨淡", "冰冷", "肃杀", "沉重", "阴郁"]
+_NARRATIVE_WARM_TONE_MARKERS = ["治愈", "温情", "温馨", "温暖", "甜蜜", "轻松", "明亮", "暖阳", "柔和"]
+# execution 收尾（ending_hook+satisfaction+beats）与 goal 走向相反的证据词
+_EXECUTION_DIRE_ENDING_MARKERS = ["惨败", "溃败", "崩溃", "身败名裂", "绝望", "彻底失败", "重伤", "丧命", "倾家荡产", "家破人亡", "满盘皆输"]
 
-def dimension_compliance_check(key: str, options: list[dict]) -> str | None:
+
+def _goal_resolution_direction(goal_text: str) -> str:
+    """判定已定核心事件的走向：warm（正向收束）/ harsh（负向冲突）/ ""（中性，不检测）。"""
+    warm = any(m in goal_text for m in _GOAL_WARM_RESOLUTION_MARKERS)
+    harsh = any(m in goal_text for m in _GOAL_HARSH_CONFLICT_MARKERS)
+    if warm and not harsh:
+        return "warm"
+    if harsh and not warm:
+        return "harsh"
+    return ""
+
+
+def _narrative_mood_conflict(direction: str, o: dict) -> str | None:
+    """narrative 候选的 tone+pace 是否与已定事件走向明显相反。"""
+    mood = str(o.get("tone") or "") + str(o.get("pace") or "")
+    if direction == "warm" and any(m in mood for m in _NARRATIVE_COLD_TONE_MARKERS):
+        return f"叙事配置与已定事件的温情走向相反（tone/pace 含『{next(m for m in _NARRATIVE_COLD_TONE_MARKERS if m in mood)}』）"
+    if direction == "harsh" and any(m in mood for m in _NARRATIVE_WARM_TONE_MARKERS):
+        return f"叙事配置与已定事件的冲突走向相反（tone/pace 含『{next(m for m in _NARRATIVE_WARM_TONE_MARKERS if m in mood)}』）"
+    return None
+
+
+def _execution_mood_conflict(direction: str, o: dict) -> str | None:
+    """execution 候选的收尾（钩子+爽点+节拍）是否与已定事件走向明显相反。"""
+    if direction != "warm":
+        return None
+    tail = "".join([
+        str(o.get("ending_hook") or ""),
+        str(o.get("satisfaction") or ""),
+        "".join(str(b or "") for b in (o.get("beats") or [])),
+    ])
+    hit = next((m for m in _EXECUTION_DIRE_ENDING_MARKERS if m in tail), None)
+    if hit:
+        return f"执行收尾与已定事件的温情走向相反（含『{hit}』）"
+    return None
+
+
+def dimension_compliance_check(key: str, options: list[dict], prev_goal: str = "") -> str | None:
     """校验某维度 5 个候选是否"同一层级、同一角度"（内容符合该维度定义）。
 
     与 options_overlap（查字面雷同）互补：这里查"跨层混搭"——把别的维度/别的层级的内容
     混进本维度。返回 None 通过，否则返回原因描述，由调用方据此触发一次自动重新生成。当前覆盖：
       - goal（核心事件）：5 个候选必须落在同一时间切片；每个选项必须带 core_conflict（冲突
         落点）与 protagonist_arc（主角反应弧）字段——候选必须是『事件+冲突+反应弧』的完整方案；
+        且 text 一句话本身要真含冲突与反应表达（不能只靠字段空挂）；
       - narrative（叙事方案）：每个选项必须五要素字段齐备（pace/chapter_function/pov/tone/
-        entry），pace 字段必须同时含节奏档位词与开场切入词；
+        entry），pace 字段必须同时含节奏档位词与开场切入词；且必须锚定【前序已定】核心事件
+        （prev_goal 非空时，候选文本须命中已定事件的锚定 n-gram，禁止另写新事件/新场景）；
+        事件走向明确时，tone/pace 配置不得与事件走向相反（温情事件配冷酷压抑/冲突事件配温馨）；
       - execution（执行收尾）：每个选项必须带 beats（3-4 个非空一句话节拍）+ ending_hook +
-        satisfaction。
+        satisfaction；且节拍必须建立在已定核心事件上推进（prev_goal 非空时同样校验锚定）；
+        温情走向事件的收尾不得配惨败/崩溃类结局。
     """
     if key == "goal":
         for o in options:
+            text = str(o.get("text") or "").strip()
+            if not (
+                any(m in text for m in _GOAL_TEXT_CONFLICT_MARKERS)
+                and any(m in text for m in _GOAL_TEXT_ARC_MARKERS)
+            ):
+                return "goal 维度存在选项的 text 一句话未真含「冲突」（转折/对立/两难：却/拦/质问/拆穿…）与「主角反应弧」（态度变化或行动：忍不住/暗下决心/试探/盯着…）——text 本身要写出冲突与反应，不能只靠 core_conflict/protagonist_arc 字段空挂"
             if not str(o.get("core_conflict") or "").strip():
                 return "goal 维度存在选项缺少 core_conflict（冲突落点：谁对谁、争什么、落在哪个可演的场面）——每个候选必须是『事件+冲突+反应弧』的完整结构化方案"
             if not str(o.get("protagonist_arc") or "").strip():
                 return "goal 维度存在选项缺少 protagonist_arc（主角反应弧：态度从什么到什么）——每个候选必须是『事件+冲突+反应弧』的完整结构化方案"
         return _time_slice_conflict(options)
     if key == "narrative":
+        direction = _goal_resolution_direction(prev_goal) if prev_goal else ""
         for o in options:
+            if prev_goal and not _anchored_on_event(_option_full_text(key, o), prev_goal):
+                return "narrative 维度存在选项未锚定【前序已定】的核心事件（候选文本不含已定事件的场景/实体词）——5 个候选必须全部建立在已定事件之上，只变化节奏/开场/视角/风格/进入，严禁另写一个新事件或把已定事件换成另一个场景"
+            if direction and (conflict := _narrative_mood_conflict(direction, o)):
+                return "narrative 维度存在选项与【前序已定】核心事件自相矛盾：" + conflict + "——同一事件的叙事方案应与事件本身走向一致，不能温情和解配冷酷压抑、冲突对峙配温馨轻快"
             pace_txt = str(o.get("pace") or "").strip()
             if not (
                 any(m in pace_txt for m in _PACE_LEVEL_MARKERS)
@@ -287,7 +484,12 @@ def dimension_compliance_check(key: str, options: list[dict]) -> str | None:
                 return "narrative 维度存在选项缺少 entry（进入方式：由谁/哪句话/哪个细节触发、主角怎么注意到）"
         return None
     if key == "execution":
+        direction = _goal_resolution_direction(prev_goal) if prev_goal else ""
         for o in options:
+            if prev_goal and not _anchored_on_event(_option_full_text(key, o), prev_goal):
+                return "execution 维度存在选项未锚定【前序已定】的核心事件（节拍不含已定事件的场景/实体词）——节拍必须建立在已锁定核心事件上推进，不能把节拍写成另一个事件的流程"
+            if direction and (conflict := _execution_mood_conflict(direction, o)):
+                return "execution 维度存在选项与【前序已定】核心事件自相矛盾：" + conflict + "——执行收尾应与事件本身走向一致，不能温情和解配惨烈失败收尾"
             beats = o.get("beats")
             if not isinstance(beats, list) or not (3 <= len(beats) <= 4):
                 return "execution 维度存在选项未带 beats 字段或节拍数量不在 3-4 个（只写了概述/情绪，没拆成按顺序推进的一句话节拍）"
@@ -302,6 +504,52 @@ def dimension_compliance_check(key: str, options: list[dict]) -> str | None:
     return None
 
 
+# 各维度必填结构化字段的「降级兜底」占位（stream.py 连续 3 次生成仍不合规时，用最小占位
+# 让选项字段齐备供作者参考）。兜底内容明确标注"系统兜底补全"，绝不静默推不合规候选。
+_FALLBACK_FIELD_FILL: dict[str, dict] = {
+    "goal": {
+        "time_slice": "本章",
+        "core_conflict": "围绕该事件所述场面展开的冲突（系统兜底补全，建议自定义）",
+        "protagonist_arc": "主角对该事件的态度变化（系统兜底补全，建议自定义）",
+    },
+    "narrative": {
+        "pace": "中速·收紧，日常切入（系统兜底补全）",
+        "chapter_function": "progression",
+        "pov": "第三人称限知",
+        "tone": "克制写实",
+        "entry": "由事件关键细节触发进入（系统兜底补全）",
+    },
+    "execution": {
+        "beats": ["按已定核心事件推进的节拍（系统兜底补全，建议自定义）"],
+        "ending_hook": "弱钩子·过渡式收尾（系统兜底补全）",
+        "satisfaction": "推进感（系统兜底补全）",
+    },
+}
+
+
+def fallback_repair_options(key: str, options: list[dict], reasons: list[str]) -> list[dict]:
+    """降级兜底：连续多次生成仍不合规时，对候选做字段补齐并打上兜底标记。
+
+    只在缺失/不合法的结构化字段上填最小占位（标注"系统兜底补全"），不修改模型产出的
+    text 正文，并把每个选项标记 fallback=True——调用方据此在前端/确认语中提示作者
+    「这是系统兜底补全，建议自定义」，避免把不合规候选静默推给作者。
+    """
+    fills = _FALLBACK_FIELD_FILL.get(key, {})
+    repaired: list[dict] = []
+    for o in options:
+        item = dict(o)
+        for field, fallback_val in fills.items():
+            if field == "beats":
+                val = item.get("beats")
+                if not (isinstance(val, list) and all(str(b or "").strip() for b in val)):
+                    item[field] = list(fallback_val)
+            elif not str(item.get(field) or "").strip():
+                item[field] = fallback_val
+        item["fallback"] = True
+        repaired.append(item)
+    return repaired
+
+
 # 中文无实义高频字（助词/代词/介词/连词/语气词），归一化时剔除，
 # 避免把"的了在是"这类共同虚词误判为内容雷同
 _NON_SEMANTIC_CHARS = set(
@@ -309,6 +557,45 @@ _NON_SEMANTIC_CHARS = set(
     "与或及对向从用靠给由将正在已经不太也会能给其很最更又再还边里头中后前上下"
     "于为到往和叫做像如但然而因为所以虽然如果就是还是可以应该可能似乎好像那么"
 )
+
+
+def _extract_anchor_ngrams(text: str, n: int) -> set[str]:
+    """从已定核心事件文本提取锚定 n-gram（去虚词后的连续实义片段，如"登记表/志愿/机械"）。
+
+    用于 narrative/execution 候选的「锚定已定事件」校验：候选只要命中至少一个锚定 n-gram，
+    就说明它建立在已定事件之上，而非另写新场景/新事件。
+    """
+    chars = _normalize_chars(text)
+    if len(chars) < n:
+        return set()
+    return {"".join(chars[i:i + n]) for i in range(len(chars) - n + 1)}
+
+
+def _anchored_on_event(candidate_text: str, goal_text: str) -> bool:
+    """候选文本是否命中已定核心事件的锚定词（3 字优先，2 字兜底）。
+
+    goal_text 为空（goal 维度自身/无前序）时返回 True（不校验）。
+    """
+    if not goal_text:
+        return True
+    cand = "".join(_normalize_chars(candidate_text))
+    if not cand:
+        return False
+    if any(g in cand for g in _extract_anchor_ngrams(goal_text, 3)):
+        return True
+    return any(g in cand for g in _extract_anchor_ngrams(goal_text, 2))
+
+
+def _option_full_text(key: str, o: dict) -> str:
+    """拼出候选文本 + 各结构化字段全文，用于锚定校验（beats 列表转文本）。"""
+    parts = [str(o.get("text") or "")]
+    for f in ("entry", "tone", "ending_hook", "satisfaction", "core_conflict", "protagonist_arc", "time_slice", "pace", "pov"):
+        if str(o.get(f) or "").strip():
+            parts.append(str(o[f]))
+    beats = o.get("beats")
+    if isinstance(beats, list):
+        parts.extend(str(b) for b in beats if str(b or "").strip())
+    return "".join(parts)
 
 
 def _normalize_chars(text: str) -> list[str]:
@@ -419,6 +706,20 @@ class ChapterPlannerAgent(Agent[ChapterPlanDimensionProposal]):
                 "若被拒的是 goal 维度且蓝图声明了系统/金手指、本章是开篇章，5 个选项必须全部锚定"
                 "「金手指登场/觉醒」这一核心事件在同一时间切片下的互斥变体，禁止把系统从选项里拿掉。"
             )
+            # 第 3 次生成=定向修复：前两轮都被拒，必须针对被拒原因逐项修正字段/锚定，这是最后一搏
+            if retry.get("repair"):
+                retry_text += (
+                    "\n\n【定向修复·最后一次】这是第三次也是最后一次重试，除上面「换一批」外，你还必须"
+                    "逐项对照被拒原因把问题修掉，确保本轮一次通过："
+                    "①goal 维度：每个选项必须显式携带 time_slice/core_conflict/protagonist_arc 三个字段，"
+                    "且 text 一句话本身就同时含「冲突双方+争的焦点+主角反应」，字段与 text 内容一致；"
+                    "②narrative 维度：每个选项必须五要素字段齐备（pace/chapter_function/pov/tone/entry），"
+                    "pace 字段必须同时含节奏档位词（慢/中/快、平缓/收紧…）与开场切入词（悬念/冷开场/日常…）；"
+                    "③execution 维度：每个选项必须带 3-4 个非空的一句话 beats + ending_hook + satisfaction；"
+                    "④narrative/execution 的 text 必须锚定【前序已定】的核心事件与叙事方案，严禁另写新事件、"
+                    "严禁把已定事件换成另一个场景。若你自认为无法满足，宁可把 5 个选项收窄为同一事件的"
+                    "同切面变体，也不要跨层混搭或另起炉灶。"
+                )
 
         # 维度隔离：除了告诉模型「前面维度已定什么」，还要显式列出本维度不能写的内容
         # （其他维度负责的职责），防止模型把触发机制/具体事件/悬念等混进本维度候选

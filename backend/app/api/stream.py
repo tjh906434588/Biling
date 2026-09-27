@@ -714,6 +714,7 @@ async def _propose_chapter_plan(
     from app.agents.chapter_planner import (
         PLAN_DIMENSIONS,
         dimension_compliance_check,
+        fallback_repair_options,
         goal_extra_check,
         options_overlap,
     )
@@ -800,19 +801,32 @@ async def _propose_chapter_plan(
             )
             return None
 
-        # 2.5) 候选质量校验：①同一维度内雷同（同一桥段换措辞凑数）②内容偏离维度定义
-        # （如把具体事件/系统激活塞进 pace 节奏描述，跨层混搭）③goal 开篇金手指锚定/
-        # 同一时间切片/弱小时期强打脸拦截 → 自动重新生成一次
-        overlap = options_overlap(options)
-        compliance = dimension_compliance_check(key, options)
-        extra = goal_extra_check(goal_blueprint, chapter_no, options) if key == "goal" else None
-        if overlap or compliance or extra:
+        # 2.5) 候选质量校验 + 自动修复链：①同一维度内雷同（同一桥段换措辞凑数）②内容偏离维度定义
+        # （如把具体事件/系统激活塞进 pace 节奏描述，跨层混搭/字段缺失）③goal 开篇金手指锚定/
+        # 同一时间切片/弱小时期强打脸拦截。最多自动修复 3 次（第 2 次=换一批重试，第 3 次=定向修复），
+        # 仍不合规则降级兜底（补全字段+打标记，提示作者可自定义）——绝不把不合规候选静默推给作者。
+        fallback_used = False
+        for _attempt in range(1, 4):
+            overlap = options_overlap(options, key=key)
+            compliance = dimension_compliance_check(key, options, prev_goal=str(selections.get("goal") or ""))
+            extra = goal_extra_check(goal_blueprint, chapter_no, options) if key == "goal" else None
             reason = extra or compliance or overlap
+            if not reason:
+                break  # 合规，使用当前 options
+            if _attempt >= 3:
+                options = fallback_repair_options(key, options, [reason])
+                fallback_used = True
+                logger.warning(
+                    "novel_id=%s 第 %s 个维度（%s）连续 3 次生成不合规（%s），已降级兜底（补全字段+标记）供作者参考",
+                    novel_id, idx + 1, key, reason,
+                )
+                break
             logger.warning(
-                "novel_id=%s 第 %s 个维度（%s）候选不合规：%s，自动重试一次",
+                "novel_id=%s 第 %s 个维度（%s）候选不合规：%s，自动%s",
                 novel_id, idx + 1, key, reason,
+                "定向修复" if _attempt == 2 else "重试一次",
             )
-            params["_dim_retry"] = {"key": key, "reason": reason}
+            params["_dim_retry"] = {"key": key, "reason": reason, "repair": _attempt == 2}
             try:
                 async for sse in run_agent_stream(db, "chapter_planner", novel_id, params, dry_run=True):
                     ev = _parse_sse_event(sse)
@@ -821,31 +835,31 @@ async def _propose_chapter_plan(
                     if ev and ev["name"] == "stored" and ev["data"].get("action") == "dry_run":
                         proposal = ev["data"].get("data") or {}
             except Exception:
-                logger.exception("novel_id=%s 第 %s 个维度（%s）雷同重试失败，沿用上一轮选项", novel_id, idx + 1, key)
+                logger.exception(
+                    "novel_id=%s 第 %s 个维度（%s）%s失败，沿用上一轮选项",
+                    novel_id, idx + 1, key, "定向修复" if _attempt == 2 else "重试",
+                )
                 proposal = None
             finally:
                 params.pop("_dim_retry", None)
-            if proposal:
-                dim_data = proposal.get("dimension") or {}
-                retry_options = [
-                    o for o in (dim_data.get("options") or [])
-                    if isinstance(o, dict) and o.get("id") and str(o.get("text", "")).strip()
-                ]
-                if len(retry_options) == 5:
-                    options = retry_options
-                    overlap2 = options_overlap(options)
-                    compliance2 = dimension_compliance_check(key, options)
-                    extra2 = goal_extra_check(goal_blueprint, chapter_no, options) if key == "goal" else None
-                    if overlap2 or compliance2 or extra2:
-                        logger.warning(
-                            "novel_id=%s 第 %s 个维度（%s）重试后仍不合规（%s），按原样提供给作者（作者可自定义）",
-                            novel_id, idx + 1, key, extra2 or compliance2 or overlap2,
-                        )
-                else:
-                    logger.warning(
-                        "novel_id=%s 第 %s 个维度（%s）重试候选数不是 5（%s），沿用上一轮选项",
-                        novel_id, idx + 1, key, len(retry_options),
-                    )
+            if not proposal:
+                options = fallback_repair_options(key, options, [reason])
+                fallback_used = True
+                break
+            dim_data = proposal.get("dimension") or {}
+            retry_options = [
+                o for o in (dim_data.get("options") or [])
+                if isinstance(o, dict) and o.get("id") and str(o.get("text", "")).strip()
+            ]
+            if len(retry_options) != 5:
+                logger.warning(
+                    "novel_id=%s 第 %s 个维度（%s）重试候选数不是 5（%s），沿用上一轮选项",
+                    novel_id, idx + 1, key, len(retry_options),
+                )
+                options = fallback_repair_options(key, options, [reason])
+                fallback_used = True
+                break
+            options = retry_options
 
         # 3) 请作者在当前维度选择或自定义
         done_lines = [
@@ -866,6 +880,9 @@ async def _propose_chapter_plan(
                     if len(uniq) == 1
                     else f"。注意：候选声明了不同时间切片：{' / '.join(uniq)}，请按同一切片比较"
                 )
+        fallback_note = ""
+        if fallback_used:
+            fallback_note = "（注意：AI 连续多次未能生成合规候选，以下选项为系统兜底补全，建议优先在自定义框输入你的方向）"
         try:
             decision = await request_author_confirmation(
                 db,
@@ -875,7 +892,7 @@ async def _propose_chapter_plan(
                 confirm_key=f"chapter_plan_{task_id}_{key}",
                 question=(
                     f"即将写作第 {chapter_no} 章正文。第 {idx + 1}/{len(PLAN_DIMENSIONS)} 维度「{dim['label']}」"
-                    f"——{dim['hint']}。{slice_note}\n"
+                    f"——{dim['hint']}。{slice_note}{fallback_note}\n"
                     f"前序已定：{prev_txt}。\n"
                     f"选一个方向，或输入你自己的："
                 ),

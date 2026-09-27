@@ -327,6 +327,22 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
                     {opt.desc}
                   </span>
                 ) : null}
+                {opt.core_conflict || opt.protagonist_arc ? (
+                  <span className="mt-1 block space-y-0.5">
+                    {opt.core_conflict ? (
+                      <span className="block text-xs leading-5 text-zinc-600 dark:text-zinc-300">
+                        <span className="font-medium text-zinc-500">核心冲突：</span>
+                        {opt.core_conflict}
+                      </span>
+                    ) : null}
+                    {opt.protagonist_arc ? (
+                      <span className="block text-xs leading-5 text-zinc-600 dark:text-zinc-300">
+                        <span className="font-medium text-zinc-500">主角反应弧：</span>
+                        {opt.protagonist_arc}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : null}
                 {(opt.title || (opt.beats?.length ?? 0) > 0) ? (
                   <span className="mt-2 block space-y-1.5 rounded-md border border-zinc-200 bg-white/70 p-2.5 text-xs leading-5 dark:border-zinc-700 dark:bg-zinc-900/40">
                     {opt.title ? (
@@ -375,7 +391,7 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
                         {opt.ending_hook}
                       </span>
                     ) : null}
-                    {opt.entry || opt.tone || opt.protagonist_arc || opt.core_conflict || opt.satisfaction ? (
+                    {opt.entry || opt.tone || opt.satisfaction ? (
                       <span className="mt-1 block border-t border-zinc-200 pt-1.5 dark:border-zinc-700">
                         <span className="font-medium text-zinc-500">写法要点：</span>
                         <span className="mt-0.5 block pl-4 text-zinc-600 dark:text-zinc-300">
@@ -387,16 +403,6 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
                           {opt.tone ? (
                             <span className="block">
                               风格基调：{opt.tone}
-                            </span>
-                          ) : null}
-                          {opt.protagonist_arc ? (
-                            <span className="block">
-                              主角反应弧：{opt.protagonist_arc}
-                            </span>
-                          ) : null}
-                          {opt.core_conflict ? (
-                            <span className="block">
-                              核心冲突：{opt.core_conflict}
                             </span>
                           ) : null}
                           {opt.satisfaction ? (
