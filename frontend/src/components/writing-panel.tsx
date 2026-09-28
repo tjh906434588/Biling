@@ -19,6 +19,7 @@ import {
   listReviews,
   runAgent,
   selectVersion,
+  updateChapterVersion,
   type AgentRunningTaskResult,
   type Blueprint,
   type ChapterDetail,
@@ -30,6 +31,7 @@ import {
 } from "@/lib/api";
 import InfoTip from "./info-tip";
 import Modal from "./modal";
+import ConfirmDialog from "./confirm-dialog";
 import AgentStreamModal from "./agent-stream-modal";
 import { useElapsed } from "@/lib/use-elapsed";
 import Loading from "@/components/loading";
@@ -515,17 +517,6 @@ function copyText(text: string): Promise<void> {
   return fallback();
 }
 
-/** 版本来源 chip 配色（版本树弹窗用）：初稿=蓝、再稿=紫、修订稿=琥珀、其他=灰。 */
-function sourceChipClass(source: string): string {
-  if (source.startsWith("novelist"))
-    return "bg-sky-50 text-sky-700 ring-sky-500/25 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-500/25";
-  if (source === "regenerate")
-    return "bg-violet-50 text-violet-700 ring-violet-500/25 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/25";
-  if (source === "reviser")
-    return "bg-amber-50 text-amber-700 ring-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/25";
-  return "bg-zinc-100 text-zinc-600 ring-zinc-500/25 dark:bg-zinc-500/10 dark:text-zinc-300 dark:ring-zinc-500/25";
-}
-
 /** 自动增高文本框：高度跟随内容，封顶后内部滚动（用于「本章大纲目标」）。 */
 function AutoTextarea({
   value,
@@ -653,9 +644,59 @@ export default function WritingPanel({ novelId }: Props) {
    *  生成新草稿后不自动切换选中，只弹提示；切章/刷新详情时重置。 */
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
 
+  /** 正文就地编辑（M：作者可直接改当前选中版本正文）。
+   *  - editText：编辑区当前内容（来源=选中版本 content，改动后为本地草稿）；
+   *  - lastSavedTextRef：最近一次已落库的文本（判断「是否有未保存改动」）；
+   *  - saveState：saved=无改动 / dirty=有改动未保存 / saving=正在保存；
+   *  - editTargetRef：当前编辑目标（章节号 + 版本 id），切版本/卸载时据此把旧编辑落盘。 */
+  const [editText, setEditText] = useState("");
+  const editTextRef = useRef("");
+  const lastSavedTextRef = useRef("");
+  const [saveState, setSaveState] = useState<"saved" | "dirty" | "saving">("saved");
+  /** 正文在最近一次评价后是否被修改过：已有评价对应当前内容过期 → 评价栏出现「重新评价」提示。
+   *  编辑即置 true；完成重新评价（评价期间无新增改动）或切换版本后置 false。 */
+  const [reviewStale, setReviewStale] = useState(false);
+  const saveTimerRef = useRef<number | null>(null);
+  const editTargetRef = useRef<{ chapterNo: number; versionId: string } | null>(null);
+
+  /** 立即落盘当前未保存编辑（防抖触发 / AI 操作前 / 切版本 / 卸载时复用）。返回落库后的文本。 */
+  const flushSave = useCallback(async (): Promise<string | null> => {
+    const target = editTargetRef.current;
+    if (!target) return null;
+    const text = editTextRef.current;
+    if (text === lastSavedTextRef.current) return text; // 无改动
+    setSaveState("saving");
+    try {
+      const updated = await updateChapterVersion(novelId, target.chapterNo, target.versionId, { content: text });
+      // 竞态守卫：保存期间用户又改了 → 本次结果不标记 saved（保持 dirty，防抖会再保存），
+      // 且不回填旧文本到详情，避免旧内容覆盖新内容
+      if (editTextRef.current === text) {
+        lastSavedTextRef.current = updated.content;
+        setSaveState("saved");
+        setDetail((d) =>
+          d
+            ? { ...d, versions: d.versions.map((v) => (v.id === target.versionId ? { ...v, content: updated.content } : v)) }
+            : d,
+        );
+      }
+      return updated.content;
+    } catch (e) {
+      setSaveState("dirty");
+      showToast((e as Error).message, "error");
+      return null;
+    }
+  }, [novelId]);
+
   // 弹窗开关：新增章节 / 信息控制 仍用弹窗；评价与优化、版本树已改为右侧常驻内联面板（见下方）
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
+  /** 二次确认弹窗（定稿 / 提取记忆层）：用页面内自定义弹窗替代 window.confirm，
+   *  规避 IDE 内嵌浏览器对原生 confirm 对话框的处理异常（原生弹窗挂起会导致页面卡死/跳转报错）。 */
+  const [confirmDialog, setConfirmDialog] = useState<{
+    kind: "finalize" | "finalize-force" | "extract";
+    /** 定稿前已落盘保存的正文（flushSave 结果）；null=无编辑或保存失败 */
+    savedText: string | null;
+  } | null>(null);
   /** 评价与优化侧栏折叠：折叠后正文恢复全宽阅读，再点窄条展开 */
   const [reviewCollapsed, setReviewCollapsed] = useState(false);
   /** 评价栏宽度（px）：窄/中/宽三档预设切换，xl 起生效。偏好存 localStorage，跨刷新保持。 */
@@ -749,6 +790,86 @@ export default function WritingPanel({ novelId }: Props) {
     (detail?.versions.find((v) => v.is_active) ?? detail?.versions[detail.versions.length - 1] ?? null);
   /** 选中版本是否为已定稿（激活）版本：决定「定稿」/「提取」按钮是否可用。 */
   const selectedIsFinal = selectedVersion?.is_active ?? false;
+
+  // ── 正文就地编辑：镜像 ref + 切版本落盘 + 防抖自动保存 + 卸载兜底 ──
+  /** 编辑区内容镜像到 ref：防抖保存 / AI 操作前落盘读到的永远是最新输入。 */
+  useEffect(() => {
+    editTextRef.current = editText;
+  }, [editText]);
+
+  /** 选中版本变化：先把上一版本未保存的编辑静默落盘，再切换编辑目标到新版本内容。 */
+  useEffect(() => {
+    const old = editTargetRef.current;
+    if (old && editTextRef.current !== lastSavedTextRef.current) {
+      const text = editTextRef.current;
+      void updateChapterVersion(novelId, old.chapterNo, old.versionId, { content: text })
+        .then((v) => {
+          // 期间已切走（editTarget 已换）则不更新 lastSaved，避免把旧文本当新目标已保存
+          if (editTargetRef.current?.versionId === old.versionId) lastSavedTextRef.current = v.content;
+          setDetail((d) =>
+            d
+              ? { ...d, versions: d.versions.map((x) => (x.id === old.versionId ? { ...x, content: v.content } : x)) }
+              : d,
+          );
+        })
+        .catch(() => undefined);
+    }
+    if (saveTimerRef.current != null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (!selectedVersion) {
+      editTargetRef.current = null;
+      lastSavedTextRef.current = "";
+      setEditText("");
+      setSaveState("saved");
+      return;
+    }
+    editTargetRef.current = { chapterNo: detail?.chapter_no ?? 0, versionId: selectedVersion.id };
+    lastSavedTextRef.current = selectedVersion.content;
+    setEditText(selectedVersion.content);
+    setSaveState("saved");
+    // 切换版本后评价基线随之更换：清除「待重新评价」标记，让当前版本按新评价基线重新计算
+    setReviewStale(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVersion?.id]);
+
+  /** 防抖自动保存：停止输入 2s 后自动落盘；无改动不触发。 */
+  useEffect(() => {
+    if (!editTargetRef.current) return;
+    if (editText === lastSavedTextRef.current) return;
+    setSaveState("dirty");
+    // 正文发生改动：已有评价过期，评价栏出现「重新评价」提示（落盘后仍保持，直到重新评价）
+    setReviewStale(true);
+    if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      void flushSave();
+    }, 2000);
+    return () => {
+      if (saveTimerRef.current != null) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editText]);
+
+  /** 卸载兜底：防抖还没到就切页/关面板，把未保存编辑静默落盘。 */
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current != null) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      const target = editTargetRef.current;
+      if (target && editTextRef.current !== lastSavedTextRef.current) {
+        void updateChapterVersion(novelId, target.chapterNo, target.versionId, {
+          content: editTextRef.current,
+        }).catch(() => undefined);
+      }
+    };
+  }, [novelId]);
   /** 目录项显示标题：当前激活章未定稿时跟随选中版本标题（版本切换本地预览联动目录），其余用章级标题。
    *  已定稿章节 c.title 已由定稿动作同步为激活版本标题，无需特判。 */
   const listItemTitle = (c: ChapterListItem) =>
@@ -1143,6 +1264,8 @@ export default function WritingPanel({ novelId }: Props) {
    *  接口已按时间倒序，取第一条即最近一次。 */
   const currentReviews = (reviews ?? []).filter((r) => r.chapter_version_id === selectedVersion?.id);
   const currentReview = currentReviews[0] ?? null;
+  /** 重新评价提示在评价栏顶部展示：正文改动过（reviewStale）且当前版本已有评价时才出现，
+   *  按钮点击直接对当前版本重新评价。 */
   /** 当前选中正文是否「刚生成」：生成后系统通常会在 1-2 分钟内异步自动评价落库，
    *  此时打开弹窗若还没有评价，多半是自动评价还在跑（而非永远没有），提示作者稍候而非误以为要手动点。 */
   const isRecentlyGenerated =
@@ -1353,19 +1476,24 @@ export default function WritingPanel({ novelId }: Props) {
     setSelectedVersionId(versionId);
   }
 
-  /** 顶部「定稿」按钮：将当前选中的草稿版本定稿激活（复用 select_version 接口，同步章级正文/标题/大纲），
-   *  原定稿版本随之变回草稿（同一时间只能定稿一个版本）。 */
+  /** 顶部「定稿」按钮：先落盘草稿区未保存编辑并校验，再弹二次确认（自定义弹窗），确认后执行定稿。
+   *  原已定稿版本随之变回草稿（同一时间只能定稿一个版本）。 */
   async function handleFinalizeSelected() {
+    // 定稿前先落盘正文草稿区未保存的编辑：定稿会同步章级正文，须基于最新内容；落盘失败则中止
+    const savedText = await flushSave();
+    if (savedText == null && editTargetRef.current != null) return;
     if (!detail || !selectedVersion || selectedIsFinal) return;
-    let force = false;
-    // 签约未过签版本：默认拦截定稿，作者确认风险后可强制定稿（逃生口）
-    if (selectedVersion.signing_blocked) {
-      const ok = window.confirm(
-        "该版本签约未过签（评价存在内容红线/抄袭类高危问题）。\n\n强制定稿会把未通过签约检查的正文作为本章正文，请先按评价师建议修改，或确认风险后继续。\n\n仍要强制定稿吗？",
-      );
-      if (!ok) return;
-      force = true;
-    }
+    // 定稿一律需二次确认；签约未过签版本走强制定稿（红字危险弹窗，强制定稿逃生口）
+    setConfirmDialog({ kind: selectedVersion.signing_blocked ? "finalize-force" : "finalize", savedText });
+  }
+
+  /** 二次确认通过后真正执行定稿。 */
+  async function doFinalize() {
+    const cfg = confirmDialog;
+    if (!cfg) return;
+    setConfirmDialog(null);
+    if (!detail || !selectedVersion || selectedIsFinal) return;
+    const force = cfg.kind === "finalize-force";
     try {
       const updated = await selectVersion(novelId, detail.chapter_no, selectedVersion.id, force);
       setDetail(updated);
@@ -1396,6 +1524,9 @@ export default function WritingPanel({ novelId }: Props) {
   }
 
   async function handleExtract() {
+    // 提取前先落盘正文草稿区未保存的编辑：记忆层须基于最新正文内容；落盘失败则中止
+    const savedText = await flushSave();
+    if (savedText == null && editTargetRef.current != null) return;
     if (!activeChapter) {
       showToast("请先在章节目录选择一章", "warning");
       return;
@@ -1414,7 +1545,39 @@ export default function WritingPanel({ novelId }: Props) {
     }
     // 提取记忆层只对已定稿版本开放：草稿正文还没定稿，先定稿再提取
     if (!selectedIsFinal) {
-      showToast("只有已定稿的正文才能提取入记忆层。请先点上方「定稿」再提取。", "warning");
+      showToast("只有已定稿的正文才能提取入记忆层。请先在「本章操作」点「定稿」再提取。", "warning");
+      return;
+    }
+    // 提取记忆层二次确认：确认后才会真正发起提取（自定义弹窗，规避原生 confirm 在内嵌浏览器的异常）
+    setConfirmDialog({ kind: "extract", savedText });
+  }
+
+  /** 二次确认通过后真正执行提取。 */
+  async function doExtract() {
+    const cfg = confirmDialog;
+    if (!cfg) return;
+    setConfirmDialog(null);
+    // 提取前先落盘正文草稿区未保存的编辑：记忆层须基于最新正文内容；落盘失败则中止
+    const savedText = await flushSave();
+    if (savedText == null && editTargetRef.current != null) return;
+    if (!activeChapter) {
+      showToast("请先在章节目录选择一章", "warning");
+      return;
+    }
+    if (!selectedVersion) {
+      showToast("该章尚未选定版本，无法提取。请先完成生成与选定。", "warning");
+      return;
+    }
+    // 旧大纲版本生成的正文只读：不能提取入记忆层（防止把旧版本的人物状态写进记忆、污染当前大纲语境）
+    if (isStaleForActiveOutline) {
+      showToast(
+        "当前正文基于旧版大纲生成，只能查看，不能提取入记忆层。请先基于当前激活大纲重新生成一份正文，再定稿并提取。",
+        "warning",
+      );
+      return;
+    }
+    if (!selectedIsFinal) {
+      showToast("只有已定稿的正文才能提取入记忆层。请先在「本章操作」点「定稿」再提取。", "warning");
       return;
     }
     // 提取时锁定「当前章节 + 当前选中版本」，用于后续判断正文是否被切换过
@@ -1427,7 +1590,7 @@ export default function WritingPanel({ novelId }: Props) {
       await runAgent(
         "extractor",
         novelId,
-        { chapter_no: activeChapter.chapter_no, chapter_text: selectedVersion.content },
+        { chapter_no: activeChapter.chapter_no, chapter_text: savedText ?? selectedVersion.content },
         (ev) => {
           // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
           if (liveNovelRef.current !== novelId || !mountedRef.current) return;
@@ -1478,6 +1641,10 @@ export default function WritingPanel({ novelId }: Props) {
   }
 
   async function handleReview() {
+    // 先把正文草稿区未落盘的编辑保存：评价必须基于后端最新正文（不是本地未保存的旧内容）；
+    // 落盘失败（确有改动）时中止，避免对旧正文评价。
+    const savedText = await flushSave();
+    if (savedText == null && editTargetRef.current != null) return;
     if (!detail) {
       showToast("请先在章节目录选择一章", "warning");
       return;
@@ -1510,7 +1677,7 @@ export default function WritingPanel({ novelId }: Props) {
         novelId,
         {
           chapter_no: detail.chapter_no, // 以详情章节为准（与 selectedVersion/parent_version_id 同源）
-          chapter_text: selectedVersion.content,
+          chapter_text: savedText ?? selectedVersion.content,
           chapter_version_id: selectedVersion.id, // 评价绑定当前选中的版本（后端据此落 quality_reviews.chapter_version_id）
           writing_mode: "draft_free",
           outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
@@ -1553,6 +1720,12 @@ export default function WritingPanel({ novelId }: Props) {
         } catch {
           /* 刷新失败不阻塞完成提示 */
         }
+        // 重新评价后：若评价期间作者没有继续改正文，本次评价对应当前内容 →
+        // 清除「待重新评价」提示；并刷新详情同步版本的签约标记（signing_blocked「未过签」徽标）。
+        if (editTextRef.current === (savedText ?? selectedVersion.content)) {
+          setReviewStale(false);
+        }
+        void getChapter(novelId, activeChapter.chapter_no).then(setDetail).catch(() => undefined);
         showToast(`第 ${activeChapter.chapter_no} 章评价完成，报告已展示在「评价与优化」中。`, "success");
       }
     } catch (e) {
@@ -1659,6 +1832,9 @@ export default function WritingPanel({ novelId }: Props) {
     review: QualityReview,
     authorInput?: { note?: string; disagreements?: Record<number, string> },
   ) {
+    // 先把正文草稿区未落盘的编辑保存：优化基于最新正文；落盘失败（确有改动）时中止
+    const savedText = await flushSave();
+    if (savedText == null && editTargetRef.current != null) return;
     // 章节归属以当前详情（detail）为准：selectedVersion 与 detail 同源，避免目录高亮与详情错位时
     // 把优化产物挂到目录高亮章（旧 bug：详情已是第4章、目录仍高亮第3章 → 修订版写进第3章版本树）。
     if (!detail) {
@@ -1698,7 +1874,7 @@ export default function WritingPanel({ novelId }: Props) {
         {
           chapter_no: detail.chapter_no, // 以详情章节为准（与 selectedVersion/parent_version_id 同源），
           // 避免目录高亮与详情错位时把优化产物写进错误章节的版本树
-          chapter_text: selectedVersion.content,
+          chapter_text: savedText ?? selectedVersion.content,
           writing_mode: useOutline ? "outline_guided" : "draft_free",
           outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
           outline_id: approvedOutline?.id ?? undefined, // 正文-大纲版本关联
@@ -1804,8 +1980,8 @@ export default function WritingPanel({ novelId }: Props) {
                   : v.is_active
                     ? "已定稿版本（点击预览）"
                     : isSel
-                      ? "当前预览的草稿版本（点上方「定稿」可定稿）"
-                      : "点击预览此版本（草稿，定稿需点上方「定稿」）"
+                      ? "当前预览的草稿版本（可在「本章操作」点「定稿」）"
+                      : "点击预览此版本（草稿，可在「本章操作」定稿）"
               }
               className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
                 isSel
@@ -1819,10 +1995,6 @@ export default function WritingPanel({ novelId }: Props) {
                   v.is_active ? "bg-green-500 dark:bg-green-400" : "bg-zinc-300 dark:bg-zinc-600"
                 }`}
               />
-              {/* 来源 chip */}
-              <span className={`shrink-0 rounded px-1.5 py-px text-[11px] font-medium ring-1 ring-inset ${sourceChipClass(v.source)}`}>
-                {sourceLabel(v.source)}
-              </span>
               {/* 版本号 */}
               <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">v{v.version_no}</span>
               {/* 签约未过签标记：评价存在内容红线/抄袭类高危 issue，定稿默认被拒 */}
@@ -2046,6 +2218,50 @@ export default function WritingPanel({ novelId }: Props) {
             )}
           </div>
           <div className="flex flex-col gap-2">
+            {/* 重新生成正文：复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）。
+                生成中不禁用：要能再次打开弹窗查看「查看生成过程」进度；但「新增章节」生成中需禁用——
+                本次是新增而非重新生成，进度只能从「新增章节」入口重开查看；评价 / 提取进行中禁用。 */}
+            <button
+              type="button"
+              onClick={openRegenerateModal}
+              disabled={activeNo == null || (generating && !genIsRegenerateRef.current) || aiBusy}
+              className="btn btn-ghost w-full"
+              title={
+                activeNo == null
+                  ? "请先选择一章"
+                  : aiBusy
+                    ? reviewing
+                      ? "评价进行中，暂不能重新生成正文"
+                      : "提取记忆层中，暂不能重新生成正文"
+                    : generating && !genIsRegenerateRef.current
+                      ? "新增正文生成中，暂不能重新生成正文"
+                      : "复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）"
+              }
+            >
+              重新生成正文
+            </button>
+            {/* 定稿：把当前选中的草稿版本定稿激活（同一时间只能定稿一个版本）；选中已定稿版本时隐藏 */}
+            {!selectedIsFinal && (
+              <button
+                type="button"
+                onClick={() => void handleFinalizeSelected()}
+                disabled={activeNo == null || generating || aiBusy || !selectedVersion}
+                className="btn btn-primary w-full"
+                title={
+                  activeNo == null || !selectedVersion
+                    ? "请先选择一章"
+                    : aiBusy
+                      ? reviewing
+                        ? "评价进行中，暂不能定稿"
+                        : "提取记忆层中，暂不能定稿"
+                      : selectedVersion.signing_blocked
+                        ? "该版本签约未过签（存在内容红线/抄袭类高危问题），定稿需二次确认"
+                        : "将当前选中的草稿版本定稿为本章正文"
+                }
+              >
+                定稿
+              </button>
+            )}
             {/* 评价入口统一在右侧「评价与优化」，本章操作只保留提取与复制 */}
             <button
               className={`relative w-full cursor-pointer rounded-lg border px-3 py-2 text-sm transition-colors ${
@@ -2065,7 +2281,7 @@ export default function WritingPanel({ novelId }: Props) {
                       : !selectedVersion
                         ? "先选定版本再提取"
                         : !selectedIsFinal
-                          ? "只有已定稿的正文才能提取入记忆层，请先点上方「定稿」"
+                          ? "只有已定稿的正文才能提取入记忆层，请先在「本章操作」点「定稿」"
                           : extractPending
                             ? "当前版本尚未提取记忆层，重新提取后才会进入记忆（或已切到新版本）"
                             : "把本章摘要/角色状态/伏笔写进记忆层"
@@ -2129,23 +2345,18 @@ export default function WritingPanel({ novelId }: Props) {
                   第 {detail.chapter_no} 章
                   {(selectedVersion?.title ?? detail.title) ? ` ${selectedVersion?.title ?? detail.title}` : ""}
                 </span>
-                {/* 标题旁版本标识：版本名 · v{n}，点击展开内联版本树（新增/重新生成=根，评价优化=子级） */}
+                {/* 标题旁版本标识：v{n}，点击展开内联版本树（新增/重新生成=根，评价优化=子级） */}
                 <span className="relative inline-flex">
                   <button
                     type="button"
                     onClick={() => setVersionOpen((o) => !o)}
-                    className="ml-1 inline-flex cursor-pointer items-baseline gap-1 rounded-md px-1.5 py-0.5 align-middle transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    className="ml-1 inline-flex cursor-pointer items-baseline rounded-md px-1.5 py-0.5 align-middle transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
                     title="点击查看全部版本（多级版本树，可点击切换预览）"
                   >
                     {selectedVersion ? (
-                      <>
-                        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                          {sourceLabel(selectedVersion.source)}
-                        </span>
-                        <span className="text-xs font-semibold tabular-nums text-zinc-600 dark:text-zinc-300">
-                          · v{selectedVersion.version_no}
-                        </span>
-                      </>
+                      <span className="text-xs font-semibold tabular-nums text-zinc-600 dark:text-zinc-300">
+                        v{selectedVersion.version_no}
+                      </span>
                     ) : (
                       <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">v?</span>
                     )}
@@ -2174,6 +2385,18 @@ export default function WritingPanel({ novelId }: Props) {
                 <span className="ml-1 text-xs font-normal text-zinc-500">
                   {selectedIsFinal ? "已定稿" : "草稿"}
                 </span>
+                {/* 当前章节版本字数：跟随正文实时统计（含就地编辑中的内容） */}
+                {selectedVersion != null && (
+                  <span className="ml-1.5 text-xs font-normal tabular-nums text-zinc-500">
+                    · {editText.length} 字
+                  </span>
+                )}
+                {/* 就地编辑保存状态（无改动时不显示；有未保存改动提醒作者，防抖 2s 自动落盘） */}
+                {selectedVersion && saveState !== "saved" && (
+                  <span className="ml-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                    {saveState === "saving" ? "保存中…" : "已修改·未保存"}
+                  </span>
+                )}
                 {/* 选中版本签约未过签：红色警示，提示需按评价修正或强制定稿 */}
                 {selectedVersion?.signing_blocked && (
                   <span className="ml-1.5 inline-flex items-center gap-1 rounded-md bg-red-600/10 px-1.5 py-0.5 text-xs font-medium text-red-600 ring-1 ring-inset ring-red-600/30 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/30">
@@ -2181,57 +2404,16 @@ export default function WritingPanel({ novelId }: Props) {
                   </span>
                 )}
               </h3>
-              <div className="flex items-center gap-2">
-                {/* 定稿：把当前选中的草稿版本定稿激活（同一时间只能定稿一个版本）；选中已定稿版本时隐藏 */}
-                {!selectedIsFinal && (
-                  <button
-                    type="button"
-                    onClick={() => void handleFinalizeSelected()}
-                    disabled={activeNo == null || generating || aiBusy || !selectedVersion}
-                    className="btn btn-primary px-3 py-1.5 text-xs font-medium"
-                    title={
-                      activeNo == null || !selectedVersion
-                        ? "请先选择一章"
-                        : aiBusy
-                          ? reviewing
-                            ? "评价进行中，暂不能定稿"
-                            : "提取记忆层中，暂不能定稿"
-                          : selectedVersion.signing_blocked
-                            ? "该版本签约未过签（存在内容红线/抄袭类高危问题），定稿需二次确认"
-                            : "将当前选中的草稿版本定稿为本章正文"
-                    }
-                  >
-                    定稿
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={openRegenerateModal}
-                  // 重新生成正文生成中不禁用：要能再次打开弹窗查看「查看生成过程」进度；
-                  // 但「新增章节」生成中需禁用——本次是新增而非重新生成，进度只能从「新增章节」入口重开查看；
-                  // 评价 / 提取进行中禁用（本次操作锁定面板，等完成才解除）
-                  disabled={activeNo == null || (generating && !genIsRegenerateRef.current) || aiBusy}
-                  className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                  title={
-                    activeNo == null
-                      ? "请先选择一章"
-                      : aiBusy
-                        ? reviewing
-                          ? "评价进行中，暂不能重新生成正文"
-                          : "提取记忆层中，暂不能重新生成正文"
-                        : generating && !genIsRegenerateRef.current
-                          ? "新增正文生成中，暂不能重新生成正文"
-                          : "复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）"
-                  }
-                >
-                  重新生成正文
-                </button>
-              </div>
             </div>
             {selectedVersion ? (
-              <div className="reading flex-1 min-h-0 overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50 p-5 whitespace-pre-wrap dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
-                {selectedVersion.content}
-              </div>
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                spellCheck={false}
+                aria-label="本章正文（可直接编辑，停止输入后自动保存）"
+                placeholder="直接在正文上修改，停止输入后自动保存；修改后右侧「评价与优化」会出现「重新评价」按钮。"
+                className="reading w-full flex-1 min-h-0 resize-none overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50 p-5 outline-none focus:border-primary dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              />
             ) : (
               <p className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs text-zinc-400 dark:border-zinc-700">
                 本章还没有已选定的正文版本。
@@ -2288,7 +2470,7 @@ export default function WritingPanel({ novelId }: Props) {
               {activeNo != null && (
                 <span className="panel-hint">
                   第 {activeNo} 章
-                  {selectedVersion ? ` · v${selectedVersion.version_no} ${sourceLabel(selectedVersion.source)}` : ""}
+                  {selectedVersion ? ` · v${selectedVersion.version_no}` : ""}
                 </span>
               )}
               {/* 宽度三档（仅并排时有效）：窄/中/宽一键切换 */}
@@ -2326,7 +2508,23 @@ export default function WritingPanel({ novelId }: Props) {
           </div>
           <div className="@container min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
             {detail ? (
-              currentReview ? (
+              <>
+                {reviewStale && currentReview != null && (
+                  <div className="mb-2.5 flex items-start justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-500/10">
+                    <p className="min-w-0 flex-1 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                      正文已修改，现有评价基于修改前的内容，已不对应当前版本。点击「重新评价」对本版本重新评价。
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleReview}
+                      disabled={reviewing || !selectedVersion}
+                      className="btn btn-primary shrink-0 px-3 py-1 text-xs font-medium"
+                    >
+                      {reviewing ? "评价中…" : "重新评价"}
+                    </button>
+                  </div>
+                )}
+                {currentReview ? (
                 <ReviewCard
                   review={currentReview}
                   onRevise={handleRevise}
@@ -2349,8 +2547,7 @@ export default function WritingPanel({ novelId }: Props) {
                   <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
                     {selectedVersion ? (
                       <>
-                        当前选中正文（v{selectedVersion.version_no}
-                        {selectedVersion ? ` ${sourceLabel(selectedVersion.source)}` : ""}）还没有评价。
+                        当前选中正文（v{selectedVersion.version_no}）还没有评价。
                         {isRecentlyGenerated ? (
                           <>
                             该版本刚生成，系统通常会在生成后 1-2 分钟内自动评价并出现在这里，可稍候查看；若仍未出现，再点下方手动评价。
@@ -2383,6 +2580,8 @@ export default function WritingPanel({ novelId }: Props) {
                   </div>
                 </div>
               )
+              }
+              </>
             ) : (
               <p className="text-center text-xs text-zinc-400">请先在左侧章节目录选择一章。</p>
             )}
@@ -2703,6 +2902,32 @@ export default function WritingPanel({ novelId }: Props) {
         }
         emptyDoneText="优化完成，已生成新草稿版本，请手动定稿。"
       />
+
+      {/* ── 二次确认弹窗（定稿 / 提取记忆层）：页面内自定义弹窗替代 window.confirm ── */}
+      <ConfirmDialog
+        open={confirmDialog != null}
+        title={
+          confirmDialog?.kind === "finalize-force"
+            ? "强制定稿（未过签约检查）"
+            : confirmDialog?.kind === "finalize"
+              ? "确认定稿"
+              : "确认提取到记忆层"
+        }
+        message={
+          confirmDialog?.kind === "finalize-force"
+            ? "该版本签约未过签（评价存在内容红线/抄袭类高危问题）。\n\n强制定稿会把未通过签约检查的正文作为本章正文，请先按评价师建议修改，或确认风险后继续。\n\n仍要强制定稿吗？"
+            : confirmDialog?.kind === "finalize"
+              ? `确认将当前草稿版本（v${selectedVersion?.version_no ?? "?"} · ${sourceLabel(selectedVersion?.source ?? "")}）定稿为本章正文？\n\n原已定稿版本将自动变回草稿（同一时间只能定稿一个版本）。`
+              : "确认提取本章到记忆层？\n\n会把本章摘要、角色当前状态、新埋伏笔等写入记忆层，下一章生成时小说家会自动读到。\n\n每写完一章记得提取一次，否则下一章可能「忘了」刚才发生了什么。"
+        }
+        confirmText={confirmDialog?.kind === "finalize-force" ? "仍要强制定稿" : "确认"}
+        tone={confirmDialog?.kind === "finalize-force" ? "danger" : "primary"}
+        onConfirm={() => {
+          if (confirmDialog?.kind === "extract") void doExtract();
+          else void doFinalize();
+        }}
+        onCancel={() => setConfirmDialog(null)}
+      />
       </div>
     </Loading>
   );
@@ -2759,7 +2984,6 @@ function ReviewCard({
                 }`}
               >
                 v{review.version_no}
-                {review.version_source ? ` ${sourceLabel(review.version_source)}` : ""}
                 {matchesActive ? "" : " · 未选中"}
               </span>
             )}
@@ -2951,9 +3175,7 @@ function ReviewCard({
       ) : (
         <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           <p className="text-[11px] text-zinc-400">
-            这条评价针对 v{review.version_no}
-            {review.version_source ? `（${sourceLabel(review.version_source)}）` : ""}，
-            当前选中的正文不是该版本，评价对不上。先在下方版本列表选中「v{review.version_no}」
+            这条评价针对 v{review.version_no}，当前选中的正文不是该版本，评价对不上。先在下方版本列表选中「v{review.version_no}」
             再优化，或直接对当前选中的正文重新评价。
           </p>
         </div>

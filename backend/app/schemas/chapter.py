@@ -50,6 +50,17 @@ class SelectVersionRequest(BaseModel):
     force: bool = False  # 越过签约未过签拦截强制定稿（作者权威逃生口）
 
 
+class UpdateVersionRequest(BaseModel):
+    """作者手动编辑正文后的自动保存负载：仅更新传入的字段（content/title 均可选）。
+
+    编辑为「就地修改当前选中版本」：不改 source / 不新建版本，评价仍绑定该版本 id，
+    由前端在正文改动后提示作者重新评价，使评价与最新内容对齐。
+    """
+
+    content: Optional[str] = None
+    title: Optional[str] = None
+
+
 class ReviewRead(BaseModel):
     """质量账本（评价师产出）读取：rubric/issues 为原始 JSON。
 

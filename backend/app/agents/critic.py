@@ -315,7 +315,11 @@ class CriticAgent(Agent[ReviewOutput]):
             ),
             ComponentBlock(
                 "setting_check",
-                f"【设定核对清单·程序确定性核对结果，逐条必须回应】\n{check_text}",
+                f"【设定核对清单·程序确定性核对结果，逐条必须回应】\n{check_text}\n"
+                f"说明：面板/界面的固定栏位（如天赋清单、兴趣爱好、适配推荐）属于 UI 结构字段，"
+                f"不是剧情内容要求——面板登场即视为已呈现，栏位值可为「-」，"
+                f"栏位内部如何展示（如隐藏部分项、仅列非默认值、按设定过滤）以设定原文为准，"
+                f"不得因栏目空缺而要求正文补齐或安排动作戏展示。",
                 PRIORITY_REQUIRED,
             ),
             ComponentBlock(

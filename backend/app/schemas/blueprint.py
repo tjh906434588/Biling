@@ -35,3 +35,9 @@ class BlueprintActivateIn(BaseModel):
 class BlueprintUpdateIn(BaseModel):
     """蓝图内容部分更新：content 中出现的键覆盖蓝图现有 content 对应键，未出现的键保持不变。"""
     content: dict[str, Any] = {}
+
+
+class OutlineTemplateOut(BaseModel):
+    """「复制蓝图大纲」模板响应：单一事实来源（后端 blueprint_outline_template.py）。"""
+    version: str
+    text: str

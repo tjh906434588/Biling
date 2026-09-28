@@ -10,7 +10,17 @@ from sqlalchemy.orm import Session
 
 from app.db.models import AgentTask, Blueprint, Novel
 from app.db.session import SessionLocal, get_db
-from app.schemas.blueprint import BlueprintCheckRequest, BlueprintRead, BlueprintUpdateIn
+from app.schemas.blueprint import (
+    BlueprintCheckRequest,
+    BlueprintRead,
+    BlueprintUpdateIn,
+    OutlineTemplateOut,
+)
+from app.services.blueprint_outline_template import (
+    OUTLINE_TEMPLATE,
+    TEMPLATE_VERSION,
+    assert_template_coverage,
+)
 from app.services.file_import import MAX_IMPORT_BYTES, extract_text
 
 logger = logging.getLogger(__name__)
@@ -176,6 +186,17 @@ def blueprint_activation_status(novel_id: uuid.UUID, db: Session = Depends(get_d
 @router.get("/{novel_id}/blueprints/{blueprint_id}", response_model=BlueprintRead)
 def get_blueprint(novel_id: uuid.UUID, blueprint_id: uuid.UUID, db: Session = Depends(get_db)):
     return _get_blueprint(novel_id, blueprint_id, db)
+
+
+@router.get("/blueprints/outline-template", response_model=OutlineTemplateOut)
+def get_outline_template():
+    """返回「复制蓝图大纲」按钮的模板文本（单一事实来源，前端按钮每次从这里拉最新版）。
+
+    调用时顺带做模板与识别机制的一致性校验：识别机制（setting_checker /
+    blueprint_architect）改了而模板没同步时会抛错，防止外部 AI 按旧要求整理导致脱节。
+    """
+    assert_template_coverage()
+    return OutlineTemplateOut(version=TEMPLATE_VERSION, text=OUTLINE_TEMPLATE)
 
 
 @router.post("/{novel_id}/blueprints/{blueprint_id}/activate")

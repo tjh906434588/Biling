@@ -14,6 +14,7 @@ from app.schemas.chapter import (
     ChapterVersionRead,
     ReviewRead,
     SelectVersionRequest,
+    UpdateVersionRequest,
 )
 
 router = APIRouter(prefix="/api/novels", tags=["chapters"])
@@ -86,6 +87,46 @@ def get_chapter(novel_id: uuid.UUID, chapter_no: int, db: Session = Depends(get_
         status=chapter.status,
         versions=[ChapterVersionRead.model_validate(v) for v in versions],
     )
+
+
+@router.patch("/{novel_id}/chapters/{chapter_no}/versions/{version_id}", response_model=ChapterVersionRead)
+def update_version(
+    novel_id: uuid.UUID,
+    chapter_no: int,
+    version_id: uuid.UUID,
+    payload: UpdateVersionRequest,
+    db: Session = Depends(get_db),
+):
+    """作者手动编辑正文的就地自动保存：就地更新当前选中版本（不新建版本）。
+
+    编辑不改变 source / 版本号，评价仍绑定该版本 id；作者改完正文后由前端提示重新评价，
+    使评价与最新内容对齐。若编辑的是已定稿（激活）版本，章级正文/字数同步刷新，
+    保持「章 = 激活版本」的一致性口径。
+    """
+    _get_novel(db, novel_id)
+    chapter = db.execute(
+        select(Chapter).where(
+            Chapter.novel_id == novel_id, Chapter.chapter_no == chapter_no
+        )
+    ).scalar_one_or_none()
+    if chapter is None:
+        raise HTTPException(404, "章节不存在")
+
+    target = db.get(ChapterVersion, version_id)
+    if target is None or target.chapter_id != chapter.id:
+        raise HTTPException(404, "版本不存在")
+
+    if payload.content is not None:
+        target.content = payload.content
+    if payload.title is not None:
+        target.title = payload.title or None
+    # 已定稿版本被就地编辑：章级正文/字数保持与激活版本一致（定稿按钮已隐藏，仍是本章正文）
+    if target.is_active:
+        chapter.content = target.content
+        chapter.word_count = len(target.content)
+    db.commit()
+    db.refresh(target)
+    return ChapterVersionRead.model_validate(target)
 
 
 @router.get("/{novel_id}/reviews", response_model=list[ReviewRead])

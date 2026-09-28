@@ -7,6 +7,7 @@ import {
   deleteBlueprint,
   friendlyTaskError,
   getBlueprintActivationStatus,
+  getOutlineTemplate,
   importBlueprintFile,
   listBlueprints,
   type Blueprint,
@@ -371,12 +372,23 @@ export default function BlueprintPanel({ novelId }: Props) {
     }
   }
 
-  /** 一键复制大纲模板文本（供粘贴进文本框或发给 AI 按模板整理大纲）。 */
+  /** 一键复制大纲模板文本：优先拉取后端单一事实来源（与识别机制同步），失败回退本地缓存。 */
   async function handleCopyOutlineTemplate() {
+    try {
+      const tpl = await getOutlineTemplate();
+      await copyText(tpl.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      message.success(`已复制大纲模板 ${tpl.version}`);
+      return;
+    } catch {
+      // 网络/服务不可用时回退本地缓存模板，保证离线可用
+    }
     try {
       await copyText(OUTLINE_TEMPLATE_TEXT);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+      message.warning("已复制本地缓存模板（拉取最新模板失败）");
     } catch {
       message.error("复制失败，请手动复制模板。");
     }
@@ -988,7 +1000,7 @@ function keywordOutlineCheck(text: string): OutlineSkeletonModule[] {
   });
 }
 
-/** 一键复制的大纲模板文本：给 AI 识别的模板，AI 按此结构把作者信息整理成规范大纲。 */
+/** 大纲模板·本地缓存（离线兜底）：真实单一事实来源在后端 app/services/blueprint_outline_template.py，改模板请改后端。 */
 const OUTLINE_TEMPLATE_TEXT = `请把我的大纲信息，按下面模板整理成规范的全书大纲（保留所有信息、结构化输出）：
 
 一、全书总纲
@@ -1012,6 +1024,10 @@ const OUTLINE_TEMPLATE_TEXT = `请把我的大纲信息，按下面模板整理�
 
 五、世界观/规则（题材相关才写）
 - 世界规则 / 力量体系 / 系统设定：
+- 系统/面板/界面的固定栏位结构（如面板固定展示哪些栏、界面固定字段），统一按「面板固定展示：栏位1+栏位2+栏位3」措辞列出，并注明「栏位值可为「-」」；这是界面结构定义，不是剧情内容要求
+- 剧情内容若要求"某场景/章节必须同时出现一组元素"（硬约束，如战斗必写敌人+地形+道具），用「必须包含：元素A+元素B+元素C」格式写（用+号分隔，别用、号），系统会作为每章必现项核对
+- 涉及明确时间的事实（成立/入职/创业/搬迁/重大事件/人物关系变化）务必写清年份或时间段（如"2000年成立""2010—2022"），系统会转成可核对的硬事实，写作/评价不得与它矛盾
+- 出现机构/组织/单位时尽量写全：成立时间；负责人；人员规模；业务范围；位置布局；时代特征（材料没给的写"待定"）
 
 六、伏笔计划（选填，有具体埋设/回收安排才写）
 - 伏笔描述：埋设章节 → 回收章节

@@ -1,5 +1,9 @@
 """设定确定性核对（评价师用）：从蓝图/设定库抽出「共现组」，检查本章正文是否漏写组内成员。
 
+⚠️ 同步义务：本文件的抽取规则（分隔符、锚点词、UI 结构判定）依赖蓝图/大纲中
+外部 AI 整理出的措辞。**修改本文件的识别规则时，必须同步
+blueprint_outline_template.py 的大纲模板**（让外部 AI 按新规则产出），否则脱节。
+
 ## 为什么需要这一层
 面板固定字段这类规则是「可枚举、可字面匹配」的硬约束，但评价师原本只做**整体印象打分**：
 蓝图动辄 7000+ 字、几十上百条规则，LLM 通读一遍只能抽查自己注意到的几条
@@ -11,6 +15,16 @@
 - 组内**至少一个**成员在正文出现 → 本章确实写到了这个概念域，**触发核对**；
 - 此时组内**其余没出现的**成员才算漏写；
 - 组内一个都没出现（本章压根没写系统面板）→ **不触发**，避免误报。
+
+## UI 结构组 vs 内容必现组
+「面板固定内容：天赋清单+兴趣爱好+适配推荐」这类写法，本质是**系统面板的 UI 栏位结构**
+（面板上固定有哪些栏，栏位值可为「-」），**不是剧情里必须写出的内容**。
+若把它当"内容必须同时出现"的硬约束，会逼模型为凑齐栏位编造具体内容，
+甚至安排动作戏刻意展示某一栏（如"转电风扇证明拆装电器天赋"）。
+因此抽取时区分两类：
+- **内容必现组**：组内成员是剧情内容，缺一判漏写（硬约束）；
+- **UI 结构组**（上下文含「面板/界面/栏位」等字样）：面板登场即视为各栏已呈现，
+  永不判漏写；写前注入时渲染为软性说明，并明确禁止为凑栏位编造内容/安排动作戏。
 
 ## 噪声控制（宁可少报，不可乱报）
 ① 只认 `+` `＋` `/` `／` 这类"清单式"分隔符，不认「、」，避免把散文排比当规则；
@@ -43,6 +57,19 @@ _REQUIRE_MARKERS = (
 )
 _CONTEXT_BEFORE = 14  # 往前看多少字找锚点
 
+# UI 结构组判定：上下文出现这些字样 → 是面板/界面栏位结构（值可为「-」），非剧情内容。
+# 刻意不含「固定内容」这类通用锚点，避免把普通内容必现规则误判成 UI 结构。
+# 判定策略「宁可宽不可窄」：误判成 UI 结构代价极低（最多放宽一条内容规则，正文本就会写到），
+# 漏判代价高（把 UI 结构当硬约束会逼 AI 编造内容/安排动作戏）。
+_STRUCTURE_MARKERS = (
+    # 面板/界面类
+    "面板固定", "面板显示", "面板结构", "面板栏位", "面板界面", "面板展示",
+    "界面固定", "界面结构", "界面栏位", "界面展示",
+    # 通用 UI 词
+    "固定展示", "固定显示", "固定字段", "栏位",
+    "展示区", "显示区", "信息栏", "属性栏", "状态栏", "信息卡", "弹窗",
+)
+
 _STOPWORDS = {
     "可以", "不要", "不能", "需要", "可能", "就是", "还是", "以及", "并且",
     "或者", "但是", "因为", "所以", "如果", "已经", "这个", "那个", "什么", "怎么",
@@ -66,9 +93,13 @@ def _trim_term(term: str, corpus: str) -> Optional[str]:
     return None
 
 
-def _extract_groups(blob: str, corpus: str) -> list[list[str]]:
-    """从一个文本块里抽出「必现清单」组。"""
-    groups: list[list[str]] = []
+def _extract_groups(blob: str, corpus: str) -> list[tuple[list[str], bool]]:
+    """从一个文本块里抽出「必现清单」组。
+
+    返回 [(术语列表, ui_structure)]；ui_structure=True 表示该组是面板/界面栏位结构
+    （值可为「-」），而不是剧情内容必现组。
+    """
+    groups: list[tuple[list[str], bool]] = []
     seen: set[tuple[str, ...]] = set()
     if not blob:
         return groups
@@ -82,6 +113,8 @@ def _extract_groups(blob: str, corpus: str) -> list[list[str]]:
         ctx = blob[max(0, m.start() - _CONTEXT_BEFORE) : m.start() + 12]
         if not any(k in ctx for k in _REQUIRE_MARKERS):
             continue
+        # 上下文含「面板/界面/栏位」等字样 → UI 结构组
+        ui_structure = any(k in ctx for k in _STRUCTURE_MARKERS)
         terms: list[str] = []
         for t in raw_terms:
             fixed = _trim_term(t, corpus)
@@ -95,7 +128,7 @@ def _extract_groups(blob: str, corpus: str) -> list[list[str]]:
         if key in seen:
             continue
         seen.add(key)
-        groups.append(terms)
+        groups.append((terms, ui_structure))
     return groups
 
 
@@ -124,14 +157,16 @@ def _corpus_text(content: Optional[dict], settings) -> str:
 def extract_checklist(
     blueprint_content: Optional[dict],
     settings: list,
-) -> list[tuple[str, list[str], str]]:
+) -> list[tuple[str, list[str], str, bool]]:
     """抽出全部「必现清单」（不判断正文），供写前注入使用。
 
-    返回 [(规则名, 术语列表, 来源)]。共现判断（本章是否涉及该概念域）不在这里做，
+    返回 [(规则名, 术语列表, 来源, ui_structure)]。
+    ui_structure=True 表示该组是面板/界面栏位结构（值可为「-」），不是剧情内容必现组。
+    共现判断（本章是否涉及该概念域）不在这里做，
     因为写之前还没有正文——那一步属于 :func:`check_chapter`。
     """
     corpus = _corpus_text(blueprint_content, settings)
-    out: list[tuple[str, list[str], str]] = []
+    out: list[tuple[str, list[str], str, bool]] = []
 
     # ⑤ 显式清单优先：蓝图 content.setting_checks 免抽取、零噪声
     for item in ((blueprint_content or {}).get("setting_checks") or []):
@@ -139,7 +174,12 @@ def extract_checklist(
             continue
         terms = [str(t) for t in (item.get("terms") or []) if str(t).strip()]
         if len(terms) >= 2:
-            out.append((str(item.get("name") or "显式核对清单"), terms, "explicit"))
+            out.append((
+                str(item.get("name") or "显式核对清单"),
+                terms,
+                "explicit",
+                bool(item.get("ui_structure")),
+            ))
 
     # 自动抽取：蓝图 world_rules（detail 与 constraints 都要扫，硬约束常写在 constraints 里）
     for wr in ((blueprint_content or {}).get("world_rules") or []):
@@ -149,8 +189,8 @@ def extract_checklist(
         blob = " ".join(
             [str(wr.get("detail") or "")] + [str(c) for c in (wr.get("constraints") or [])]
         )
-        for g in _extract_groups(blob, corpus):
-            out.append((name, g, "auto"))
+        for g, ui_structure in _extract_groups(blob, corpus):
+            out.append((name, g, "auto", ui_structure))
 
     # 自动抽取：设定条目
     for s in settings:
@@ -159,8 +199,8 @@ def extract_checklist(
             [str(s.description or "")]
             + [str(st.get(k) or "") for k in ("constitution_text", "dynamic_text")]
         )
-        for g in _extract_groups(blob, corpus):
-            out.append((str(s.name), g, "auto"))
+        for g, ui_structure in _extract_groups(blob, corpus):
+            out.append((str(s.name), g, "auto", ui_structure))
     return out
 
 
@@ -180,16 +220,20 @@ def check_chapter(
     # 自动抽取的组可能抽歪（中文无词边界），要求每个术语在全书语料里够常见才采信
     corpus = _corpus_text(blueprint_content, settings)
     candidates = [
-        (name, terms, src)
-        for name, terms, src in extract_checklist(blueprint_content, settings)
+        (name, terms, src, is_structure)
+        for name, terms, src, is_structure in extract_checklist(blueprint_content, settings)
         if not (src == "auto" and any(corpus.count(t) < MIN_CORPUS_HITS for t in terms))
     ]
 
     items: list[dict] = []
     emitted: set[tuple[str, ...]] = set()
-    for rule_name, terms, source in candidates:
+    for rule_name, terms, source, is_structure in candidates:
         key = tuple(terms)
         if key in emitted:
+            continue
+        # UI 结构组：面板栏位是界面结构而非剧情内容，面板登场即视为各栏已呈现，
+        # 栏位值可为「-」，永不判漏写（也不产出核对项）
+        if is_structure:
             continue
         hits = [t for t in terms if t in text]
         # 共现约束：一个都没出现 → 本章不涉及这个概念域，不算漏
@@ -210,26 +254,47 @@ def check_chapter(
 
 
 def format_required_list(checklist) -> str:
-    """写前注入用：把「必现清单」压成明确的硬约束条款，避免它淹没在蓝图长句里。
+    """写前注入用：把「必现清单」压成明确的条款，避免它淹没在蓝图长句里。
 
     与 :func:`format_for_prompt` 的区别：后者是写后核对结果（含缺失），这是写前清单（不含）。
     之所以需要单独一份——第 2/3 章漏写「兴趣爱好」的根因就是这条规则埋在 288 字
     的 detail 长句中（位于蓝图全文 81% 处），模型注意不到。
+
+    清单分两类渲染：
+    - **内容必现组**：组内成员是剧情内容，缺一判漏写（硬约束）；
+    - **UI 结构组**：面板/界面栏位结构，值可为「-」——渲染为软性说明，
+      并明确禁止为凑齐栏位编造具体内容或安排动作戏刻意展示某一栏。
     """
     if not checklist:
         return ""
-    lines = []
+    content_lines: list[str] = []
+    structure_lines: list[str] = []
     seen: set[tuple[str, ...]] = set()
-    for name, terms, _src in checklist:
+    for name, terms, _src, ui_structure in checklist:
         key = tuple(terms)
         if key in seen:
             continue
         seen.add(key)
-        lines.append(
-            f"- 《{name}》：[{' + '.join(terms)}] 是一组**必须同时出现**的内容。"
-            f"本章只要写到其中任意一项，就必须把剩余各项一并写到；不要挑着写。"
-        )
-    return "\n".join(lines)
+        label = " + ".join(terms)
+        if ui_structure:
+            structure_lines.append(
+                f"- 《{name}》面板栏位结构固定为「{label}」。"
+                f"面板登场即视为各栏已呈现，各栏值可为「-」；"
+                f"禁止为凑齐栏位编造具体内容，更不得安排动作戏刻意展示某一栏；"
+                f"栏位内部如何展示（如隐藏部分项、仅列非默认值、按设定过滤）以设定原文为准，"
+                f"不要把固定维度结构当成必须逐项列出的清单。"
+            )
+        else:
+            content_lines.append(
+                f"- 《{name}》：[{label}] 是一组**必须同时出现**的内容。"
+                f"本章只要写到其中任意一项，就必须把剩余各项一并写到；不要挑着写。"
+            )
+    parts: list[str] = []
+    if content_lines:
+        parts.append("【必现内容组（硬约束）】\n" + "\n".join(content_lines))
+    if structure_lines:
+        parts.append("【面板/界面栏位结构组（软约束，非剧情内容）】\n" + "\n".join(structure_lines))
+    return "\n\n".join(parts)
 
 
 def format_for_prompt(items: list[dict]) -> str:

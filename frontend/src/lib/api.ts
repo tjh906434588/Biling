@@ -218,6 +218,25 @@ export async function getChapter(novelId: string, chapterNo: number): Promise<Ch
   return res.json();
 }
 
+/** 作者手动编辑正文后的就地自动保存：就地更新当前选中版本（不新建版本），返回更新后的版本。 */
+export async function updateChapterVersion(
+  novelId: string,
+  chapterNo: number,
+  versionId: string,
+  data: { content?: string; title?: string },
+): Promise<ChapterVersion> {
+  const res = await fetch(`${BASE}/novels/${novelId}/chapters/${chapterNo}/versions/${versionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw httpError(err.detail, "保存正文失败");
+  }
+  return res.json();
+}
+
 export async function selectVersion(
   novelId: string,
   chapterNo: number,
@@ -476,6 +495,18 @@ export async function listBlueprints(novelId: string, status?: string): Promise<
 export async function getActiveBlueprint(novelId: string): Promise<Blueprint | null> {
   const res = await fetch(`${BASE}/novels/${novelId}/blueprints/active`);
   if (!res.ok) throw new Error("加载 active 蓝图失败");
+  return res.json();
+}
+
+export interface OutlineTemplate {
+  version: string;
+  text: string;
+}
+
+/** 「复制蓝图大纲」模板（后端单一事实来源，与识别机制同步；失败时前端回退本地缓存模板） */
+export async function getOutlineTemplate(): Promise<OutlineTemplate> {
+  const res = await fetch(`${BASE}/novels/blueprints/outline-template`);
+  if (!res.ok) throw new Error("加载大纲模板失败");
   return res.json();
 }
 
