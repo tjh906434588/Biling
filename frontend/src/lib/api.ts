@@ -1,26 +1,48 @@
-// 笔灵前端 API 客户端：直接走 Next.js rewrite 代理（/api/* → 后端 8000）
-const BASE = "/api";
-
-export interface Novel {
-  id: string;
-  title: string;
-  /** 一句话简介（后端字段名是 premise，早期版本误用 description 导致简介永远存不上） */
-  premise?: string | null;
-  /** 蓝图识别文风：导入蓝图时自动覆盖（前端只读） */
-  style_directive?: string | null;
-  /** 手动添加文风：作者手动维护，导入蓝图不会覆盖 */
-  style_directive_manual?: string | null;
-  /** 世界背景类型：realistic=现实年代 | alternate=半架空 | pure_fantasy=纯架空（签约核查口径按类型切换）。
-   *  可空：未选择（不确定可不选，导入蓝图时 AI 按素材推断、作者确认后落库） */
-  background_type?: "realistic" | "alternate" | "pure_fantasy" | null;
-  /** 题材多选（软性写作方向指引）：如 ["都市","重生"]，复合题材可多选 */
-  genres?: string[];
-  /** 时代行业研究（运行时按需生成，作者可改）：机构形态/老板画像/业务/演进/时代雷点 */
-  era_research?: Record<string, unknown> | null;
-  status?: string;
-  created_at?: string;
-  updated_at?: string;
-}
+/**
+ * @file lib/api.ts
+ * 笔灵前端 API 客户端：直接走 Next.js rewrite 代理（/api/* → 后端 8000）。
+ * 领域/API 类型已集中到 @/types/api（此处 `export *` 向后兼容，业务代码仍可从 "@/lib/api" 导入），
+ * 请求前缀 BASE 等共享常量统一维护在 @/constants。
+ */
+import { BASE } from "@/constants/api";
+import type {
+  ActivateBlueprintResult,
+  AgentPrompt,
+  AgentRunningTaskResult,
+  ApproveOutlineResult,
+  AuthorConfirm,
+  Blueprint,
+  BlueprintActivationStatusResult,
+  BlueprintImportResult,
+  CatalogProvider,
+  ChapterDetail,
+  ChapterListItem,
+  ChapterVersion,
+  CustomModelSaveInput,
+  CustomModelSaved,
+  DefaultModel,
+  DetectResult,
+  GraphView,
+  LedgerItem,
+  MemoryReview,
+  ModelRoute,
+  Novel,
+  Outline,
+  OutlineApprovalStatusResult,
+  OutlineSkeletonResult,
+  OutlineTemplate,
+  ProviderKeyStatus,
+  QualityReview,
+  Setting,
+  SettingSource,
+  SettingType,
+  StreamEvent,
+  StreamEventData,
+  StreamStatusResult,
+  StyleProfile,
+  WritingPromptField,
+} from "@/types/api";
+export * from "@/types/api";
 
 export async function listNovels(q?: string): Promise<Novel[]> {
   const url = q ? `${BASE}/novels?q=${encodeURIComponent(q)}` : `${BASE}/novels`;
@@ -85,34 +107,6 @@ export async function createNovel(data: {
 
 // ---------- 设定库（settings CRUD，M1） ----------
 
-export const SETTING_TYPES = [
-  "character",
-  "location",
-  "faction",
-  "world_rule",
-  "item",
-  "concept",
-] as const;
-
-export type SettingType = (typeof SETTING_TYPES)[number];
-
-/** 设定数据来源：blueprint 蓝图导入（按版本存储，仅当前生效蓝图的导入设定可见）| outline 大纲批准时注入（按来源版本切换显示/隐藏）| batch 批量新增 | manual 单个新增 | extraction 正文提取（首次登场即建档） */
-export type SettingSource = "blueprint" | "batch" | "manual" | "outline" | "extraction";
-
-export interface Setting {
-  id: string;
-  novel_id: string;
-  type: SettingType;
-  name: string;
-  source: SettingSource;
-  /** 所属蓝图版本（source="blueprint" 时记录导入它的蓝图；手动/批量设定为 null） */
-  blueprint_id: string | null;
-  description: string | null;
-  structured: Record<string, unknown> | null;
-  is_constitution: boolean;
-  created_at: string;
-}
-
 export async function listSettings(novelId: string, type?: string, q?: string): Promise<Setting[]> {
   const p = new URLSearchParams();
   if (type) p.set("type", type);
@@ -170,42 +164,6 @@ export async function deleteSetting(novelId: string, settingId: string): Promise
 
 // ---------- 章节（生成=草稿 → 手动定稿，版本详情可预览/激活） ----------
 
-export interface ChapterVersion {
-  id: string;
-  version_no: number;
-  source: string;
-  /** 该版本自己的标题（草稿各自独立，定稿时同步回章节）。 */
-  title: string | null;
-  content: string;
-  note: string | null;
-  outline_id: string | null;
-  /** 版本树父节点 id：null=根（新增章节/重新生成正文）；非 null=评价优化产物（多级树）。 */
-  parent_version_id: string | null;
-  is_active: boolean; // true=已定稿（当前激活版本）
-  /** 签约未过签：最新评价存在 severity=high 的红线 issue → true，定稿默认被拒；null=尚无评价。 */
-  signing_blocked: boolean | null;
-  created_at: string;
-}
-
-export interface ChapterListItem {
-  id: string;
-  chapter_no: number;
-  title: string | null;
-  status: string;
-  word_count: number | null;
-  updated_at: string;
-  active_source: string | null;
-  active_content: string | null;
-  extracted_version_id: string | null; // 该章提取入记忆层时对应的正文版本（未提取过为 null）
-}
-
-export interface ChapterDetail {
-  chapter_no: number;
-  title: string | null;
-  status: string;
-  versions: ChapterVersion[];
-}
-
 export async function listChapters(novelId: string): Promise<ChapterListItem[]> {
   const res = await fetch(`${BASE}/novels/${novelId}/chapters`);
   if (!res.ok) throw new Error("加载章节失败");
@@ -257,26 +215,6 @@ export async function selectVersion(
 
 // ---------- 质量账本（评价师产出，quality_reviews） ----------
 
-export interface QualityReview {
-  id: string;
-  chapter_no: number | null;
-  chapter_title: string | null;
-  /** 评价所针对的正文版本；null 表示非章节评价（如 schema 告警）。 */
-  chapter_version_id: string | null;
-  version_no: number | null;
-  version_source: string | null;
-  /** 该版本是否为本章当前激活版本；false → 评价已随版本更替而过期。 */
-  is_current: boolean;
-  overall_score: number | null;
-  rubric:
-    | Record<string, { score?: number; comment?: string; evidence?: string; hooks?: Record<string, number> }>
-    | null;
-  issues: Array<{ severity?: string; type?: string; desc?: string; suggested_fix?: string }> | null;
-  strengths: string[] | null;
-  revision_hints: string[] | null;
-  created_at: string;
-}
-
 /** 某小说的评价列表（可按章过滤），最新在前。 */
 export async function listReviews(novelId: string, chapterNo?: number): Promise<QualityReview[]> {
   const qs = chapterNo != null ? `?chapter_no=${chapterNo}` : "";
@@ -286,19 +224,6 @@ export async function listReviews(novelId: string, chapterNo?: number): Promise<
 }
 
 // ---------- 章节大纲（M2：大纲师产出，draft → approved） ----------
-
-export interface Outline {
-  id: string;
-  novel_id: string;
-  chapter_no: number;
-  version_no: number;
-  title: string | null;
-  content: Record<string, unknown>;
-  status: "draft" | "approved";
-  created_at: string;
-  /** 仅批准响应携带：本次批准时注入设定库的新角色名 */
-  injected_characters?: string[];
-}
 
 export async function listOutlines(novelId: string, status?: string): Promise<Outline[]> {
   const url = status ? `${BASE}/novels/${novelId}/outlines?status=${status}` : `${BASE}/novels/${novelId}/outlines`;
@@ -324,15 +249,6 @@ export async function outlineHasChapter(
   return res.json();
 }
 
-export interface ApproveOutlineResult {
-  /** true=已在后台启动批准注入（前端轮询批准状态直到成功/失败）；false=已生效/无需批准 */
-  running: boolean;
-  task_id: string | null;
-  outline_id: string;
-  chapter_no: number;
-  version_no: number;
-}
-
 export async function approveOutline(novelId: string, outlineId: string): Promise<ApproveOutlineResult> {
   const res = await fetch(`${BASE}/novels/${novelId}/outlines/${outlineId}/approve`, { method: "POST" });
   if (!res.ok) {
@@ -340,25 +256,6 @@ export async function approveOutline(novelId: string, outlineId: string): Promis
     throw httpError(err.detail, "批准大纲失败");
   }
   return res.json();
-}
-
-export interface OutlineApprovalTask {
-  id: string;
-  outline_id: string | null;
-  chapter_no: number | null;
-  version_no: number | null;
-  status: "running" | "done" | "error";
-  msg: string | null;
-  error: string | null;
-  /** 本次批准注入设定库的新角色名（任务完成后携带） */
-  injected_characters: string[];
-  started_at: string | null;
-  updated_at: string | null;
-}
-
-export interface OutlineApprovalStatusResult {
-  running: boolean;
-  task: OutlineApprovalTask | null;
 }
 
 /** 查询该小说最近一次「大纲批准」任务：刷新/切页后恢复「批准中…」按钮状态并轮询到完成。 */
@@ -372,35 +269,6 @@ export async function getOutlineApprovalStatus(novelId: string): Promise<Outline
 }
 
 // ---------- 伏笔账本（M2：大纲师登记 + 手动维护 + 超期视图） ----------
-
-export type LedgerType = "setup" | "thread" | "character_state" | "location_state" | "unresolved_hook";
-
-export type LedgerStatus = "open" | "closed" | "abandoned";
-
-export const LEDGER_TYPE_LABELS: Record<LedgerType, string> = {
-  setup: "埋设伏笔",
-  thread: "线索推进",
-  character_state: "角色状态",
-  location_state: "地点状态",
-  unresolved_hook: "未解钩子",
-};
-
-export interface LedgerItem {
-  id: string;
-  novel_id: string;
-  item_type: LedgerType;
-  description: string;
-  related_entity: string | null;
-  chapter_introduced: number | null;
-  chapter_resolved: number | null;
-  urgency: number | null;
-  target_reveal_chapter: number | null;
-  status: LedgerStatus;
-  confidence: string;
-  created_at: string;
-  overdue: boolean;
-  stale: boolean;
-}
 
 export async function listLedger(
   novelId: string,
@@ -446,43 +314,6 @@ export async function deleteLedger(novelId: string, itemId: string): Promise<voi
 
 // ---------- 蓝图（M3：blueprint_architect 落库 + 激活归档） ----------
 
-export interface Blueprint {
-  id: string;
-  novel_id: string;
-  version: number;
-  parent_id: string | null;
-  content: {
-    title?: string;
-    logline?: string;
-    theme?: string;
-    core_conflict?: string;
-    /** 全书体量规划（作者执行专用） */
-    total_word_count?: string;
-    total_chapters?: string;
-    chapter_word_count?: string;
-    world_rules?: Array<{ name?: string; detail?: string; constraints?: string[] }>;
-    character_arcs?: Array<{ character?: string; personality?: string; start?: string; end?: string; turning_points?: string[] }>;
-    volumes?: Array<{ no?: number; name?: string; focus?: string; chapters_range?: string; word_count?: string; chapter_count?: string }>;
-    foreshadowing_plan?: Array<{ plant_chapter?: number; payoff_chapter?: number; desc?: string }>;
-    subplots?: string[];
-    /** 通用保留区：无法归入既有字段的重要信息（风格/参考/特殊约束等），原样保留 */
-    notes?: string[];
-    /** 导入模式：导入文档与设定库的不一致记录（正常生成恒为空） */
-    blueprint_conflicts?: Array<{
-      item?: string;
-      doc_content?: string;
-      settings_content?: string;
-      resolution?: string;
-    }>;
-  };
-  status: "active" | "inactive";
-  /** 该版本来自的导入文档名（非导入生成则为 null），用于标注可做校验比对 */
-  doc_name?: string | null;
-  /** 激活时设定/文风抽取未成功的提示（仅激活接口可能返回，其余接口恒为空） */
-  extract_warning?: string | null;
-  created_at: string;
-}
-
 export async function listBlueprints(novelId: string, status?: string): Promise<Blueprint[]> {
   const url = status
     ? `${BASE}/novels/${novelId}/blueprints?status=${status}`
@@ -498,24 +329,11 @@ export async function getActiveBlueprint(novelId: string): Promise<Blueprint | n
   return res.json();
 }
 
-export interface OutlineTemplate {
-  version: string;
-  text: string;
-}
-
 /** 「复制蓝图大纲」模板（后端单一事实来源，与识别机制同步；失败时前端回退本地缓存模板） */
 export async function getOutlineTemplate(): Promise<OutlineTemplate> {
   const res = await fetch(`${BASE}/novels/blueprints/outline-template`);
   if (!res.ok) throw new Error("加载大纲模板失败");
   return res.json();
-}
-
-export interface ActivateBlueprintResult {
-  /** true=已在后台启动激活（前端轮询激活状态直到成功/失败）；false=已生效/无需激活 */
-  running: boolean;
-  task_id: string | null;
-  blueprint_id: string;
-  version: number;
 }
 
 export async function activateBlueprint(novelId: string, blueprintId: string): Promise<ActivateBlueprintResult> {
@@ -525,24 +343,6 @@ export async function activateBlueprint(novelId: string, blueprintId: string): P
     throw httpError(err.detail, "激活蓝图失败");
   }
   return res.json();
-}
-
-export interface BlueprintActivationTask {
-  id: string;
-  blueprint_id: string | null;
-  version: number | null;
-  status: "running" | "done" | "error";
-  msg: string | null;
-  error: string | null;
-  /** 激活成功但设定/文风抽取未成功的提示（可手动补充或重新激活重试） */
-  warning: string | null;
-  started_at: string | null;
-  updated_at: string | null;
-}
-
-export interface BlueprintActivationStatusResult {
-  running: boolean;
-  task: BlueprintActivationTask | null;
 }
 
 /** 查询该小说最近一次「蓝图激活」任务：刷新/切页后恢复「激活中…」按钮状态并轮询到完成。 */
@@ -563,12 +363,6 @@ export async function deleteBlueprint(novelId: string, blueprintId: string): Pro
   }
 }
 
-export interface BlueprintImportResult {
-  filename: string;
-  text: string;
-  text_length: number;
-}
-
 /** 导入外部生成的全书大纲（Word/PDF/Markdown）：后端提取文本，返回给前端预览编辑。 */
 export async function importBlueprintFile(novelId: string, file: File): Promise<BlueprintImportResult> {
   const form = new FormData();
@@ -586,22 +380,6 @@ export async function importBlueprintFile(novelId: string, file: File): Promise<
 
 // ---------- AI 生成任务持久化（页面刷新后恢复"生成中"状态） ----------
 
-export interface AgentTaskStatus {
-  id: string;
-  agent: string;
-  status: "running" | "done" | "error";
-  msg: string | null;
-  error: string | null;
-  started_at: string | null;
-  /** 刷新前已流出的文字进度（thinking/draft 累积），刷新后据此恢复流式显示 */
-  progress?: { thinking: string; draft: string };
-}
-
-export interface AgentRunningTaskResult {
-  running: boolean;
-  task: AgentTaskStatus | null;
-}
-
 /** 查询该小说该角色是否有进行中的生成任务（刷新后恢复生成中状态用）。 */
 export async function getAgentRunningTask(
   agent: string,
@@ -615,24 +393,6 @@ export async function getAgentRunningTask(
   return res.json();
 }
 
-export interface StreamTaskInfo {
-  id: string;
-  agent: string;
-  status: "running" | "done" | "error";
-  msg: string | null;
-  error: string | null;
-  chapter_no: number | null;
-  started_at: string | null;
-  updated_at: string | null;
-}
-
-export interface StreamStatusResult {
-  /** 进行中的后台任务（若有） */
-  running: StreamTaskInfo | null;
-  /** 最近一次任务（done/error，供提示"上次生成结果"） */
-  recent: StreamTaskInfo | null;
-}
-
 /** 查询该小说最近的 AI 生成任务（含进行中/刚完成）：刷新或切页回来后恢复状态用。 */
 export async function getStreamStatus(novelId: string): Promise<StreamStatusResult> {
   const res = await fetch(`${BASE}/stream/agents/status?novel_id=${novelId}`);
@@ -641,19 +401,6 @@ export async function getStreamStatus(novelId: string): Promise<StreamStatusResu
     throw httpError(err.detail, "查询生成任务失败");
   }
   return res.json();
-}
-
-export interface OutlineSkeletonModule {
-  id: "scale" | "volumes" | "characters" | "plot" | "pacing" | "differentiators";
-  ok: boolean;
-  reason: string;
-  /** 是否选填建议模块：必填四件套为 false；爽点节奏/差异化卖点为 true（缺失不影响生成） */
-  optional?: boolean;
-}
-
-export interface OutlineSkeletonResult {
-  source: "llm" | "deterministic";
-  modules: OutlineSkeletonModule[];
 }
 
 /** 导入大纲后的骨架语义校验：必填四件套（体量/分卷/人物/主线支线）+ 选填建议（爽点节奏/差异化卖点）。
@@ -685,23 +432,6 @@ export async function checkOutlineSkeleton(
 
 // ---------- 风格画像（M3：学习 + 版本列表） ----------
 
-export interface StyleProfile {
-  id: string;
-  novel_id: string;
-  version: number;
-  traits: {
-    sentence_length?: string;
-    vocabulary?: string;
-    perspective?: string;
-    dialogue_ratio?: string;
-    rhythm?: string;
-    example_fragment?: string;
-  } | null;
-  avoid_list: string[] | null;
-  source_diff_ids: string[] | null;
-  updated_at: string;
-}
-
 export async function listStyleProfiles(novelId: string): Promise<StyleProfile[]> {
   const res = await fetch(`${BASE}/novels/${novelId}/style`);
   if (!res.ok) throw new Error("加载风格画像失败");
@@ -726,28 +456,6 @@ export async function learnStyle(
 
 // ---------- AI 检测（M4：体检，不阻断） ----------
 
-export interface DetectResult {
-  regex_hits: Record<string, number>;
-  density: {
-    sentences: number;
-    avg_sentence_len: number;
-    std_sentence_len: number;
-    short_ratio: number;
-    long_ratio: number;
-    commas_per_sentence: number;
-    transition_density: number;
-    exclamation_ratio: number;
-    dialogue_ratio: number;
-    stopword_density: number;
-  } | null;
-  heuristic_score: number;
-  burstiness: number | null;
-  ppl: number | null;
-  verdict: "likely_human" | "mixed" | "likely_ai" | "unknown";
-  signals: string[];
-  note: string;
-}
-
 export async function detectText(novelId: string, text: string): Promise<DetectResult> {
   const res = await fetch(`${BASE}/novels/${novelId}/detect`, {
     method: "POST",
@@ -763,45 +471,10 @@ export async function detectText(novelId: string, text: string): Promise<DetectR
 
 // ---------- 实体图谱 + 记忆审查（M4） ----------
 
-export interface GraphNode {
-  id: string;
-  label: string;
-  kind: string;
-  group: number;
-  role_rank: string | null;
-}
-
-export interface GraphEdge {
-  id: string;
-  source: string;
-  target: string;
-  label: string;
-  type: "dynamic";
-  confidence: string;
-  chapter_no: number | null;
-}
-
-export interface GraphView {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-}
-
 export async function getGraph(novelId: string): Promise<GraphView> {
   const res = await fetch(`${BASE}/novels/${novelId}/graph`);
   if (!res.ok) throw new Error("加载图谱失败");
   return res.json();
-}
-
-export interface MemoryReview {
-  progress_chapter: number;
-  overdue_foreshadowing: Array<{ id: string; description: string; target_reveal_chapter: number | null; urgency: number | null }>;
-  stale_open_hooks: Array<{ id: string; description: string; chapter_introduced: number | null; since: number }>;
-  character_states: Record<string, { state: string; chapter_no: number; confidence?: string }>;
-  latest_unresolved_hooks: unknown[];
-  setting_aliases: { with_aliases: number; merged_duplicates: number };
-  total_open: number;
-  issues: string[];
-  healthy: boolean;
 }
 
 export async function getMemoryReview(novelId: string): Promise<MemoryReview> {
@@ -811,17 +484,6 @@ export async function getMemoryReview(novelId: string): Promise<MemoryReview> {
 }
 
 // ---------- 模型路由管理（M4） ----------
-
-export interface ModelRoute {
-  id: string;
-  task_type: "setting" | "creation" | "review" | "extract" | "chat";
-  provider: string;
-  model: string;
-  temperature: number | null;
-  max_tokens: number | null;
-  context_window: number | null;
-  is_default: boolean;
-}
 
 export async function listRoutes(): Promise<ModelRoute[]> {
   const res = await fetch(`${BASE}/models/routes`);
@@ -867,60 +529,11 @@ export async function deleteRoute(routeId: string): Promise<void> {
 
 // ---------- 模型接入（API Key + 默认模型，页面配置，实时生效） ----------
 
-export interface ProviderKeyStatus {
-  configured: boolean;
-  source: "db" | "env" | null;
-  base_url: string | null;
-  default_base_url: string;
-}
-
-export interface CatalogModel {
-  id: string;
-  label: string;
-}
-
-export interface CatalogProvider {
-  provider: string;
-  label: string;
-  base_url: string;
-  key_url: string | null;
-  models: CatalogModel[];
-  /** 该服务商的多种配置方式（如火山方舟：ark-code-latest 自动 / model-name 指定模型名），弹窗内切换后模型与 base_url 跟着变。 */
-  config_modes?: Array<{
-    key: string;
-    label: string;
-    base_url: string;
-    hint?: string;
-    models: CatalogModel[];
-  }>;
-  configured: boolean;
-  source: "db" | "env" | null;
-  note?: string;
-  custom?: boolean;
-  api_format?: string;
-  /** 该服务商已接入的模型清单（一个 Key 可接入多个模型，其中一个是默认）。 */
-  enabledModels?: { model: string; label: string }[];
-}
-
 /** 预置模型目录：服务商 + 官方地址 + 推荐模型 + Key 状态（对齐后端 MODEL_CATALOG + 自定义模型）。 */
 export async function listModelCatalog(): Promise<CatalogProvider[]> {
   const res = await fetch(`${BASE}/models/catalog`);
   if (!res.ok) throw new Error("加载模型目录失败");
   return res.json();
-}
-
-export interface CustomModelSaveInput {
-  label: string;
-  api_format: "openai" | "anthropic";
-  base_url: string;
-  model_id: string;
-  api_key: string;
-}
-
-export interface CustomModelSaved {
-  provider: string;
-  model: string;
-  label: string;
 }
 
 /** 「添加模型」弹窗自定义配置：新增一个自定义模型（自动写 Key + 清单）。 */
@@ -940,11 +553,6 @@ export async function saveCustomModel(input: CustomModelSaveInput): Promise<Cust
 export async function deleteCustomModel(provider: string): Promise<void> {
   const res = await fetch(`${BASE}/models/custom/${encodeURIComponent(provider)}`, { method: "DELETE" });
   if (!res.ok) throw new Error("删除自定义模型失败");
-}
-
-export interface DefaultModel {
-  provider: string;
-  model: string;
 }
 
 export async function getDefaultModel(): Promise<DefaultModel | null> {
@@ -1034,94 +642,6 @@ export async function probeProvider(
   }
   const data = await res.json();
   return data.models ?? [];
-}
-
-// SSE 事件类型（对应后端 pipeline 事件流）
-export type StreamEvent =
-  | "context_ready"
-  | "version_start"
-  | "thinking_delta"
-  | "stream_delta"
-  | "stream_end"
-  | "schema_validate"
-  | "setting_warning"
-  | "stored"
-  | "notify"
-  | "author_confirm"
-  | "stream_error";
-
-/** 设定写后自检命中的疑似漏项（SSE setting_warning）。 */
-export interface SettingGap {
-  rule: string;
-  group: string[];
-  present: string[];
-  missing: string[];
-  source: string;
-  /** 命中类型：org_archive_gap=机构档案缺维度（设定卡本身未定档，非本章正文漏写）；缺省=正文必现清单漏写。 */
-  kind?: string;
-}
-
-export interface StreamEventData {
-  event: StreamEvent;
-  data: unknown;
-}
-
-/** 作者确认请求里的一个候选选项（radio 卡片）。
- * 章节规划采用「逐维度流式咨询」：每次确认只带一个维度的 5 个选项，
- * 选项用 text 展示（选中后作为该维度取值）；作者也可自定义输入该维度。 */
-export interface AuthorConfirmOption {
-  id: string;
-  label?: string;
-  desc?: string;
-  /** 选项展示文本（章节规划逐维度选项用 text 字段；兼容其它确认的 label 展示） */
-  text?: string;
-  /** 章节规划（novelist 写正文前咨询「本章规划」）：标题/目标/节奏功能/视角/节拍/结尾钩子 + 写法要点 */
-  title?: string;
-  goal?: string;
-  chapter_function?: string;
-  pov?: string;
-  beats?: string[];
-  ending_hook?: string;
-  /** 写法要点（作者选定的"关键场景怎么演"，novelist 照此定向写）： */
-  entry?: string; // 核心事件如何进入/点燃
-  tone?: string; // 本章风格基调
-  protagonist_arc?: string; // 主角态度弧线
-  core_conflict?: string; // 核心冲突具体形态
-  satisfaction?: string; // 爽点/阅读回报类型
-}
-
-/** 场景卡片确认里的一个字段（场景规划）：label + 5 个候选选项，作者逐字段单选/自定义。 */
-export interface AuthorConfirmField {
-  /** location | participants | goal | conflict | outcome */
-  field: string;
-  label: string;
-  hint?: string;
-  options: AuthorConfirmOption[];
-}
-
-/** 生成流程内作者确认请求（SSE author_confirm / GET confirm 轮询恢复）。 */
-export interface AuthorConfirm {
-  id: string;
-  novel_id: string;
-  /** 所属小说标题（跨小说通知时展示书名；SSE 实时事件里可能没有） */
-  novel_title?: string | null;
-  /** 发起确认的角色（outliner / era_researcher …） */
-  agent: string;
-  task_id: string | null;
-  confirm_key: string;
-  /** pending | answered | dismissed */
-  status: string;
-  question: string;
-  options: AuthorConfirmOption[];
-  /** 场景卡片确认（场景规划）：非空时按「场景卡片」渲染（逐字段单选+自定义） */
-  fields?: AuthorConfirmField[];
-  /** 场景写法提案确认：前端额外提供「都不满意，重新生成」按钮（回传 __regenerate__） */
-  regenerable?: boolean;
-  /** 是否允许作者自定义输入（大纲方向咨询时开启） */
-  allow_custom: boolean;
-  answer?: string | null;
-  answer_meta?: { label?: string | null; note?: string } | null;
-  created_at?: string | null;
 }
 
 /**
@@ -1294,18 +814,6 @@ export async function commitAgent(
 }
 
 // ---------- 每部小说独立的写作指令（各创作/评审角色的可配置 System Prompt 片段） ----------
-
-export type WritingPromptField = "mindset" | "style_rules" | "forbidden" | "check_standard";
-
-export interface AgentPrompt {
-  key: string;
-  name: string;
-  /** 是否有自定义记录（false = 当前为内置默认） */
-  configured: boolean;
-  /** 当前生效的字段（默认值或覆盖后的值；无 check_standard 的角色字段更少） */
-  fields: Record<WritingPromptField, string>;
-  updated_at: string | null;
-}
 
 export async function listPrompts(novelId: string): Promise<AgentPrompt[]> {
   const res = await fetch(`${BASE}/prompts?novel_id=${novelId}`);

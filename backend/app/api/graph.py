@@ -17,6 +17,7 @@ from app.schemas.graph import GraphEdge, GraphNode, GraphView, RelationRead
 
 router = APIRouter(prefix="/api/novels", tags=["graph"])
 
+# 实体类型 → 图谱分组序号（前端按组着色/布局；未识别类型归入 other 组 0）
 _KIND_GROUP = {
     "character": 1,
     "location": 2,
@@ -99,6 +100,7 @@ def get_graph(novel_id: uuid.UUID, db: Session = Depends(get_db)):
 
 @router.get("/{novel_id}/graph/relations", response_model=list[RelationRead])
 def list_relations(novel_id: uuid.UUID, db: Session = Depends(get_db)):
+    """关系原始列表（全部行，按创建时间升序；含被版本过滤隐藏的旧关系）。"""
     if db.get(Novel, novel_id) is None:
         raise HTTPException(404, "项目不存在")
     return db.execute(
@@ -108,6 +110,7 @@ def list_relations(novel_id: uuid.UUID, db: Session = Depends(get_db)):
 
 @router.delete("/{novel_id}/graph/relations/{rel_id}", status_code=204)
 def delete_relation(novel_id: uuid.UUID, rel_id: uuid.UUID, db: Session = Depends(get_db)):
+    """手动删除一条关系（提取师误抽取时的纠错入口）。"""
     row = db.get(EntityRelation, rel_id)
     if row is None or row.novel_id != novel_id:
         raise HTTPException(404, "关系不存在")

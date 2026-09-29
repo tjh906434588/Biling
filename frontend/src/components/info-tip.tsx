@@ -1,3 +1,9 @@
+/**
+ * @file info-tip.tsx
+ * 问号图标 + 悬停/聚焦弹出解释气泡（Tooltip）。
+ * 核心机制：弹层始终 createPortal 渲染到 body 并按图标实时位置 fixed 定位，
+ * 避免被容器 overflow 裁剪/挤压；页面滚动或视口变化时自动关闭防止错位。
+ */
 "use client";
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -25,10 +31,14 @@ interface Props {
  *   <InfoTip side="right">按钮在侧栏时，向右侧展开</InfoTip>
  */
 export default function InfoTip({ children, side = "bottom", align = "right", width = "w-64" }: Props) {
+  // 问号图标容器引用：弹层按它的实际位置计算坐标
   const triggerRef = useRef<HTMLSpanElement | null>(null);
+  // 弹层元素引用：测量尺寸用于定位与视口边缘收敛
   const tipRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  // 是否已完成客户端挂载：SSR 阶段不渲染弹层（createPortal 依赖 document.body）
   const [mounted, setMounted] = useState(false);
+  // 弹层 fixed 坐标；null = 尚未测量（首帧 invisible，避免闪现错位）
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => setMounted(true), []);
@@ -36,13 +46,13 @@ export default function InfoTip({ children, side = "bottom", align = "right", wi
   const show = () => setOpen(true);
   const hide = () => {
     setOpen(false);
-    setPos(null);
+    setPos(null); // 同时清空坐标：下次打开重新按图标当前位置计算，避免沿用旧位置
   };
 
   // 打开期间页面滚动 / 视口变化 → 关闭，避免 fixed 定位的弹层留在原地错位
   useEffect(() => {
     if (!open) return;
-    window.addEventListener("scroll", hide, true);
+    window.addEventListener("scroll", hide, true); // true=捕获阶段：内部容器滚动也能触发关闭
     window.addEventListener("resize", hide);
     return () => {
       window.removeEventListener("scroll", hide, true);

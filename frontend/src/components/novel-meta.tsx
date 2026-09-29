@@ -1,23 +1,22 @@
 "use client";
 
 /**
+ * @file novel-meta.tsx
  * 小说元信息选择器（共享）：世界背景类型单选 + 题材多选。
  * 首页新建/编辑小说与工作台「设定」页复用同一套组件与文案，避免两处定义漂移。
- * 采用紧凑的「分段按钮 / 标签」内联选择，点击即选、再点取消；默认不选，
+ * 核心机制：紧凑的「分段按钮 / 标签」内联选择，点击即选、再点取消；默认不选，
  * 导入蓝图时由 AI 按素材推断、弹窗引导作者确认。
  */
 import { useState } from "react";
 import type { Novel } from "@/lib/api";
-
-// 世界背景类型：决定签约核查口径（realistic 对照真实时代 / alternate 现实框架+虚构 / pure_fantasy 只查设定账本自洽）。
-// 默认不选；不确定可不选，导入蓝图时 AI 按素材推断、作者确认后落库。
-export const BACKGROUND_TYPES: { value: Exclude<Novel["background_type"], null>; label: string; hint: string }[] = [
-  { value: "realistic", label: "现实年代", hint: "有真实世界参照，核查对照时代细节（如 2000 年扩招、机构命名）" },
-  { value: "alternate", label: "半架空", hint: "现实框架 + 虚构元素，虚构部分以设定账本为准" },
-  { value: "pure_fantasy", label: "纯架空", hint: "无现实参照（玄幻/仙侠/奇幻），只核查设定账本内部自洽" },
-];
+import { BACKGROUND_TYPES, GENRE_PRESETS } from "@/constants";
 
 /* 世界背景类型：分段按钮单选；点击已选项可取消（回到未选择），默认不选 */
+/**
+ * 世界背景类型选择器（分段按钮单选，点已选项可取消回未选择）。
+ * @param value 当前值；undefined = 未选择。
+ * @param onChange 回传新值（取消选择时为 undefined）。
+ */
 export function BackgroundTypePicker({
   value,
   onChange,
@@ -25,6 +24,7 @@ export function BackgroundTypePicker({
   value: Novel["background_type"];
   onChange: (v: Novel["background_type"]) => void;
 }) {
+  /** 当前选中的类型条目，用于展示其说明文案 */
   const current = BACKGROUND_TYPES.find((t) => t.value === value) ?? null;
   return (
     <div className="flex flex-col gap-1.5">
@@ -55,31 +55,12 @@ export function BackgroundTypePicker({
   );
 }
 
-// 常见题材预置（软性写作方向指引，可多选；区别于背景类型的硬性核查口径）
-export const GENRE_PRESETS = [
-  "都市",
-  "玄幻",
-  "仙侠",
-  "奇幻",
-  "科幻",
-  "历史",
-  "同人",
-  "重生",
-  "穿越",
-  "系统",
-  "悬疑",
-  "灵异",
-  "军事",
-  "游戏",
-  "推理",
-  "武侠",
-  "言情",
-  "甜宠",
-  "校园",
-  "职场",
-];
-
 /* 题材多选：预置标签 + 自定义输入，点击即选、再点取消；默认不选 */
+/**
+ * 题材多选：预置标签 + 自定义输入，点击即选、再点取消。
+ * @param value 已选题材数组。
+ * @param onChange 回传更新后的题材数组。
+ */
 export function GenrePicker({
   value,
   onChange,
@@ -87,10 +68,13 @@ export function GenrePicker({
   value: string[];
   onChange: (v: string[]) => void;
 }) {
+  /** 自定义题材输入框的临时文本 */
   const [custom, setCustom] = useState("");
+  /** 切换某个题材的选中态（选中 ⇄ 取消）。 */
   const toggle = (g: string) => {
     onChange(value.includes(g) ? value.filter((x) => x !== g) : [...value, g]);
   };
+  /** 把输入框内容添加为自定义题材（空值或已存在时忽略）。 */
   const addCustom = () => {
     const g = custom.trim();
     if (!g || value.includes(g)) return;

@@ -90,6 +90,8 @@ class NovelistAgent(Agent[NovelChapter]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配写作上下文：按优先级组件化注入蓝图/大纲/设定/记忆/前文/风格/必现清单等，
+        交由 token 预算器按 context_window 裁剪（硬约束组件永不剔除）。"""
         novel = get_novel(self.db, novel_id)
         style = get_latest_style_profile(self.db, novel_id)
 
@@ -422,4 +424,5 @@ class NovelistAgent(Agent[NovelChapter]):
         )
 
     def parse_output(self, text: str) -> NovelChapter:
+        """把 LLM 返回的章节正文 JSON 解析为 NovelChapter。"""
         return NovelChapter.model_validate_json(text.strip())

@@ -1,3 +1,10 @@
+/**
+ * @file prompts-modal.tsx
+ * 写作指令编辑弹窗：为当前小说的各创作/评审角色配置结构化 System Prompt 片段
+ * （心态与定位 / 具体要求 / 绝对禁止 / 检验标准）。
+ * 核心机制：指令按小说独立存储、按角色切换编辑草稿，留空字段不传给 AI；
+ * 「恢复默认」回到角色内置指令；草稿变化时各 textarea 高度自动自适应。
+ */
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -37,15 +44,19 @@ export default function PromptsModal({
   novelId: string;
 }) {
   const [agents, setAgents] = useState<AgentPrompt[]>([]);
+  /** 当前编辑的角色 key（默认首个角色） */
   const [activeKey, setActiveKey] = useState("novelist");
+  /** 当前角色的四段指令草稿，保存前不落库 */
   const [draft, setDraft] = useState<Record<WritingPromptField, string>>({ ...EMPTY_FIELDS });
   const [saving, setSaving] = useState(false);
   // 打开弹窗时数据加载中：遮罩过渡，加载完成后解除
   const [loading, setLoading] = useState(false);
+  /** 记录已加载/切换过指令的角色 key，用于跟踪当前草稿对应的角色 */
   const loadedForRef = useRef<string | null>(null);
 
   const active = agents.find((a) => a.key === activeKey) ?? null;
 
+  /** 拉取当前小说的全部角色指令，默认选中首个角色并载入其草稿。 */
   async function load() {
     setLoading(true);
     try {
@@ -80,6 +91,7 @@ export default function PromptsModal({
     return () => clearTimeout(t);
   }, [draft]);
 
+  /** 切换到另一角色：载入其已保存的指令作为当前草稿。 */
   function switchAgent(key: string) {
     const a = agents.find((x) => x.key === key);
     if (!a) return;
@@ -95,6 +107,7 @@ export default function PromptsModal({
     el.style.height = `${el.scrollHeight}px`;
   }
 
+  /** 保存当前角色的指令草稿（留空字段不传给 AI；想恢复初始值点「恢复默认」）。 */
   async function handleSave() {
     if (!active) return;
     setSaving(true);
@@ -111,6 +124,7 @@ export default function PromptsModal({
     }
   }
 
+  /** 恢复当前角色的内置默认指令。 */
   async function handleReset() {
     if (!active) return;
     setSaving(true);

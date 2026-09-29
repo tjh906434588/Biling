@@ -52,6 +52,7 @@ class StyleLearnerAgent(Agent[StyleLearningOutput]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配风格学习上下文：把用户「原文→改文」diff 序列压成文本，供提炼作品风格偏好。"""
         diffs: list[StyleDiff] = params.get("diffs") or []
         diff_text = "\n\n".join(
             f"--- diff #{d.id} ---\n【原文】{d.original}\n【改文】{d.edited}" for d in diffs
@@ -70,6 +71,7 @@ class StyleLearnerAgent(Agent[StyleLearningOutput]):
         )
 
     def parse_output(self, text: str) -> StyleLearningOutput:
+        """把 LLM 返回的风格画像 JSON 解析为 StyleLearningOutput。"""
         return StyleLearningOutput.model_validate_json(text.strip())
 
 

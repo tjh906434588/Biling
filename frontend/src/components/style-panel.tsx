@@ -1,3 +1,9 @@
+/**
+ * @file style-panel.tsx
+ * 风格/文风面板：展示与维护小说的全局文风描述，并浏览按版本保存的风格画像。
+ * 核心机制：文风分「蓝图识别（只读，导入蓝图时提炼）」与「手动添加（作者维护，
+ * 导入蓝图不覆盖）」两部分，每次生成正文时都会读取；风格画像按版本保存，最新一版生效。
+ */
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -11,6 +17,7 @@ interface Props {
   novelId: string;
 }
 
+/** 风格画像中展示的五项特质（key → 中文标签），按此顺序渲染。 */
 const TRAIT_FIELDS: Array<[keyof NonNullable<StyleProfile["traits"]>, string]> = [
   ["sentence_length", "句式长短"],
   ["vocabulary", "用词倾向"],
@@ -19,6 +26,10 @@ const TRAIT_FIELDS: Array<[keyof NonNullable<StyleProfile["traits"]>, string]> =
   ["rhythm", "节奏结构"],
 ];
 
+/**
+ * 风格/文风面板主组件。
+ * @param novelId 当前小说 id。
+ */
 export default function StylePanel({ novelId }: Props) {
   const [profiles, setProfiles] = useState<StyleProfile[]>([]);
   // 数据加载中：遮罩过渡，加载完成后解除
@@ -32,6 +43,7 @@ export default function StylePanel({ novelId }: Props) {
   const [draftManual, setDraftManual] = useState("");
   const { ensureReady } = useAiStatus();
 
+  /** 加载文风描述（蓝图/手动）与风格画像；文风描述读取失败不阻塞画像加载。 */
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -39,7 +51,7 @@ export default function StylePanel({ novelId }: Props) {
         const novel = await getNovel(novelId);
         setBlueprintDirective(novel.style_directive ?? "");
         setManualDirective(novel.style_directive_manual ?? "");
-      } catch (e) {
+      } catch {
         // 风格画像仍可加载，文风描述读取失败不阻塞
       }
       try {
@@ -56,11 +68,13 @@ export default function StylePanel({ novelId }: Props) {
     void load();
   }, [load]);
 
+  /** 进入手动文风编辑：把当前值填入草稿。 */
   const startEdit = useCallback(() => {
     setDraftManual(manualDirective);
     setEditingManual(true);
   }, [manualDirective]);
 
+  /** 保存手动文风：写入后更新展示并退出编辑态。 */
   async function handleSaveManualDirective() {
     setSavingDirective(true);
     try {
@@ -76,6 +90,7 @@ export default function StylePanel({ novelId }: Props) {
     }
   }
 
+  /** 最新一版风格画像（后端按版本倒序返回，第 0 个即最新），用于标记「当前生效」。 */
   const latest = profiles[0] ?? null;
 
   return (

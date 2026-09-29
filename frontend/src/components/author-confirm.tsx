@@ -1,3 +1,9 @@
+/**
+ * @file author-confirm.tsx
+ * 作者确认机制：AI 生成流程在确认点暂停，向作者弹窗「三选一 / 自定义 / 跳过」，答复后生成继续。
+ * 核心机制：模块级 store（跨 tab 常驻，刷新后经 GET /confirm 轮询恢复）+ SSE author_confirm
+ * 事件实时推入；生成过程弹窗内嵌展示时全局弹窗自动让位，避免重复打扰。
+ */
 "use client";
 
 /** 生成流程内的作者确认机制：模块级 store + 全局弹窗宿主。
@@ -21,17 +27,7 @@ import {
   type AuthorConfirm,
   type AuthorConfirmField,
 } from "@/lib/api";
-
-/** 角色名 → 展示名（确认弹窗标题用）。 */
-const AGENT_LABELS: Record<string, string> = {
-  outliner: "大纲师",
-  era_researcher: "时代·行业研究员",
-  blueprint_architect: "蓝图师",
-  blueprint_prechecker: "蓝图质检师",
-  chapter_planner: "章节规划师",
-  scene_planner: "场景规划师",
-  novelist: "小说家",
-};
+import { AGENT_LABELS, CONFIRM_POLL_INTERVAL } from "@/constants";
 
 /** 节奏功能英文 → 中文（规划详情展示用）。 */
 const FUNCTION_LABELS: Record<string, string> = {
@@ -46,7 +42,9 @@ const FUNCTION_LABELS: Record<string, string> = {
 
 type ConfirmEntry = AuthorConfirm;
 
+/** 订阅者集合：弹窗宿主 / 内嵌宿主订阅队列变化以重渲染。 */
 const listeners = new Set<() => void>();
+/** 待确认队列（模块级共享，跨 tab 常驻；SSR 服务端快照恒为空）。 */
 let queue: ConfirmEntry[] = [];
 
 /** 已随「生成过程弹窗」内嵌展示过的确认 id：这些确认不再作为独立全局弹窗弹出。
@@ -58,6 +56,7 @@ const inlineShownIds = new Set<string>();
 const EMPTY_CONFIRM_SNAPSHOT: ConfirmEntry[] = [];
 const EMPTY_INLINE_SNAPSHOT: ReadonlyMap<string, number> = new Map();
 
+/** 通知所有订阅者：队列已变化。 */
 function emit() {
   listeners.forEach((l) => l());
 }
@@ -73,6 +72,7 @@ export function getAuthorConfirms(): ConfirmEntry[] {
   return queue;
 }
 
+/** 写入一条确认：新确认追加到队尾，已存在则合并字段，并通知订阅者。 */
 function upsert(confirm: AuthorConfirm) {
   const i = queue.findIndex((c) => c.id === confirm.id);
   if (i >= 0) {
@@ -181,6 +181,7 @@ interface ConfirmDialogProps {
   onSettled: (id: string) => void;
 }
 
+/** 单条确认的全局弹窗外壳：Modal + 确认面板；点 ✕ = 跳过（通知后端解除阻塞，避免轮询重新推回）。 */
 function ConfirmDialog({ confirm, onSettled }: ConfirmDialogProps) {
   if (!confirm) return null;
   return (
@@ -212,19 +213,14 @@ interface ConfirmPanelProps {
  * 选定后后端带着前面的选择再生成下一个维度——一次只面对一个问题。
  * 既可作为全局确认弹窗的内容，也可内嵌进生成过程弹窗（embedded）随生成过程一起展示。 */
 export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPanelProps) {
-  // 场景卡片确认（场景规划）：一张卡 = 一个场景的五字段，逐字段单选/自定义
-  if ((confirm.fields?.length ?? 0) > 0) {
-    return <SceneCardPanel confirm={confirm} onSettled={onSettled} embedded={embedded} />;
-  }
-
   const [selected, setSelected] = useState<string | null>(null);
   const [custom, setCustom] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [gone, setGone] = useState(false);
+  const [gone, setGone] = useState(false); // 已被其他入口处理（404/409）：静默收起，不弹错误
   const customRef = useRef<HTMLInputElement | null>(null);
 
-  // 每条确认打开时重置表单
+  // 每条确认打开时重置表单（放在条件返回之前，保证 hooks 调用顺序稳定）
   useEffect(() => {
     setSelected(null);
     setCustom("");
@@ -233,6 +229,11 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
     setGone(false);
   }, [confirm.id]);
 
+  // 场景卡片确认（场景规划）：一张卡 = 一个场景的五字段，逐字段单选/自定义
+  if ((confirm.fields?.length ?? 0) > 0) {
+    return <SceneCardPanel confirm={confirm} onSettled={onSettled} embedded={embedded} />;
+  }
+
   // 已被其他入口处理掉（如刷新恢复时后端已 answered）
   if (gone) return null;
 
@@ -240,6 +241,7 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
   const answer = selected ?? (custom.trim() || "");
   const canSubmit = !busy && answer.length > 0;
 
+  /** 提交答复（AI 建议选项或自定义输入）；404/409 = 后端已处理，静默收起不报错。 */
   async function submit() {
     if (!canSubmit) return;
     setBusy(true);
@@ -255,6 +257,7 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
     }
   }
 
+  /** 跳过此确认：通知后端解除阻塞，生成流程继续。 */
   async function skip() {
     setBusy(true);
     try {
@@ -532,6 +535,7 @@ function SceneCardPanel({ confirm, onSettled, embedded = false }: ConfirmPanelPr
 
   const allFilled = fields.length > 0 && fields.every((f) => fieldValue(f).length > 0);
 
+  /** 提交所有字段的选定/自定义内容（__fields__ 协议，后端拼进场景执行清单）。 */
   async function submit() {
     if (!allFilled || busy) return;
     setBusy(true);
@@ -548,6 +552,7 @@ function SceneCardPanel({ confirm, onSettled, embedded = false }: ConfirmPanelPr
     }
   }
 
+  /** 跳过此确认：通知后端解除阻塞，生成流程继续。 */
   async function skip() {
     setBusy(true);
     try {
@@ -682,9 +687,6 @@ function SceneCardPanel({ confirm, onSettled, embedded = false }: ConfirmPanelPr
   );
 }
 
-/** 确认轮询间隔（ms）：太长会延误提醒，太短徒增请求。 */
-const CONFIRM_POLL_INTERVAL = 3000;
-
 /**
  * 全局作者确认提醒中心（挂载在根布局，不依赖任何小说上下文）：
  * - 跨小说轮询所有待确认请求，无论作者正在哪部小说/哪个页面；
@@ -697,6 +699,7 @@ const CONFIRM_POLL_INTERVAL = 3000;
 export function ConfirmNotifier() {
   const pathname = usePathname();
   const router = useRouter();
+  // 当前工作台小说 id（从 /workspace/[id] 路径解析；null = 不在工作台页面）
   const [currentNovel, setCurrentNovel] = useState<string | null>(null);
   /** confirm id → 已弹出的右上角通知 id（其他小说；防止每轮重复提醒，用户手动关掉则不再弹） */
   const notifiedRef = useRef(new Map<string, number>());

@@ -1,3 +1,8 @@
+/**
+ * @file loading.tsx
+ * 全站统一的加载遮罩：数据未就绪时在容器上方盖半透明遮罩 + 旋转图标，并天然拦截点击。
+ * 核心机制：遮罩 absolute 覆盖外层相对定位容器；loading=false 时遮罩整体不渲染，内容直接可交互。
+ */
 "use client";
 
 import type { ReactNode } from "react";

@@ -62,6 +62,7 @@ class SchemaValidationError(Exception):
 
 
 def _event(name: str, data: dict) -> str:
+    """把事件名 + 数据格式化为一条 SSE 事件文本（data 序列化为 JSON）。"""
     return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 

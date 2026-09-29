@@ -14,6 +14,7 @@ class StyleDiff(BaseModel):
 
 
 class StyleLearnIn(BaseModel):
+    """风格学习入参：用户对 AI 成稿的一处或多处手动修改（句子级 diff 列表）。"""
     diffs: list[StyleDiff] = Field(..., min_length=1)
 
 
@@ -33,6 +34,7 @@ class StyleLearningOutput(BaseModel):
 
 
 class StyleProfileRead(BaseModel):
+    """风格画像版本读取：画像 traits / 规避写法 / 引用的编辑 diff。"""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -45,6 +47,7 @@ class StyleProfileRead(BaseModel):
 
 
 class StyleLearnResult(BaseModel):
+    """学习结果：新画像版本号 + 更新后的 traits/avoid_list/来源 diff。"""
     version: int
     traits: dict
     avoid_list: list[str]

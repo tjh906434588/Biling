@@ -50,6 +50,7 @@ class DirectionProposerAgent(Agent[DirectionProposal]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配方向提案上下文：复用大纲师同一套素材，仅替换 system prompt 为方向提案指令。"""
         # 复用大纲师的素材组装（与正式大纲生成同一套上下文，保证提案与产出一致），
         # 仅替换 system prompt 为方向提案指令，输出协议不同。
         base: ContextPack = OutlinerAgent(self.db).build_context(novel_id, params)
@@ -67,4 +68,5 @@ class DirectionProposerAgent(Agent[DirectionProposal]):
         )
 
     def parse_output(self, text: str) -> DirectionProposal:
+        """把 LLM 返回的 3 个方向候选 JSON 解析为 DirectionProposal。"""
         return DirectionProposal.model_validate_json(text.strip())

@@ -162,6 +162,7 @@ DEFAULT_FIELDS: dict[str, dict[str, str]] = {
 
 
 def _defaults_for(agent_key: str) -> dict[str, str]:
+    """取该角色的内置默认字段（未知角色回退小说家默认值）。"""
     return DEFAULT_FIELDS.get(agent_key) or DEFAULT_FIELDS["novelist"]
 
 
@@ -172,6 +173,7 @@ def _role_fields(agent_key: str) -> tuple[str, ...]:
 
 
 def _scope_for(novel_id) -> str:
+    """按小说 id 生成配置作用域 key（prompts 表 scope 列，如 novel:{novel_id}）。"""
     return f"novel:{novel_id}"
 
 

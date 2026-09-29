@@ -59,6 +59,7 @@ _OPTIONAL_IDS = {"pacing", "differentiators"}
 
 
 def _deterministic_check(text: str) -> dict:
+    """确定性回退：按关键词模式初筛六个骨架模块，返回 {source, modules}。"""
     modules = []
     for mid, pats in _PATTERNS.items():
         ok = any(re.search(p, text) for p in pats)

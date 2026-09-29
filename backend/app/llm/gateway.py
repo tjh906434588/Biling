@@ -177,6 +177,7 @@ async def _mock_stream(
 
 
 def _chunk(text: str, size: int) -> list[str]:
+    """按固定长度把文本切成若干块（Mock 流按块模拟流式输出效果）。"""
     return [text[i : i + size] for i in range(0, len(text), size)]
 
 

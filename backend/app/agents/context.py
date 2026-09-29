@@ -28,6 +28,7 @@ DEFAULT_OUTPUT_RESERVE = 8192
 
 
 def get_novel(db: Session, novel_id: uuid.UUID) -> Optional[Novel]:
+    """按 id 取小说行（无则 None）。"""
     return db.get(Novel, novel_id)
 
 
@@ -395,6 +396,7 @@ def get_recent_story_states(db: Session, novel_id: uuid.UUID, limit: int = 3) ->
 
 
 def get_recent_chapters(db: Session, novel_id: uuid.UUID, limit: int = 2) -> list[Chapter]:
+    """最近 limit 章已定稿（status=complete）的章节，章号降序（最新在前）。"""
     return list(
         db.execute(
             select(Chapter)
@@ -454,6 +456,7 @@ def format_memory_prompt(content: dict | None) -> str:
 
 
 def get_latest_style_profile(db: Session, novel_id: uuid.UUID) -> Optional[StyleProfile]:
+    """取最新一版风格画像（无则 None）。"""
     return db.execute(
         select(StyleProfile)
         .where(StyleProfile.novel_id == novel_id)
@@ -556,6 +559,7 @@ def format_blueprint_for_prompt(content: dict | None) -> str:
 
 
 def format_settings_for_prompt(settings: list[Setting]) -> str:
+    """把设定条目渲染为提示词文本：宪法/动态文本分条，其余字段与实体卡分行展示。"""
     if not settings:
         return "（暂无设定条目）"
     lines = []

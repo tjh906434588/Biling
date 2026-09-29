@@ -113,6 +113,8 @@ class BlueprintPrecheckerAgent(Agent[BlueprintPrecheck]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配质检上下文：注入导入文档与项目设置（世界背景类型/题材），供文档内部疑点
+        与背景/题材符合性核查使用。"""
         novel = get_novel(self.db, novel_id)
         import_source = (params.get("import_source") or "").strip()
         if not import_source:
@@ -139,4 +141,5 @@ class BlueprintPrecheckerAgent(Agent[BlueprintPrecheck]):
         )
 
     def parse_output(self, text: str) -> BlueprintPrecheck:
+        """把 LLM 返回的疑点清单 JSON 解析为 BlueprintPrecheck。"""
         return BlueprintPrecheck.model_validate_json(text.strip())

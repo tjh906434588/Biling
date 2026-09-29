@@ -8,6 +8,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# 支持导入的文件扩展名（大小写不敏感，按后缀路由到对应提取器）
 SUPPORTED_EXTS = {".md", ".markdown", ".txt", ".docx", ".pdf"}
 MAX_IMPORT_BYTES = 10 * 1024 * 1024  # 10MB
 
@@ -27,6 +28,7 @@ def extract_text(filename: str, data: bytes) -> str:
 
 
 def _decode_text(data: bytes) -> str:
+    """按常见编码依次尝试解码文本文件（UTF-8 带 BOM → UTF-8 → GB18030）。"""
     for enc in ("utf-8-sig", "utf-8", "gb18030"):
         try:
             return data.decode(enc)
@@ -36,6 +38,7 @@ def _decode_text(data: bytes) -> str:
 
 
 def _extract_docx(data: bytes) -> str:
+    """提取 Word(.docx) 纯文本：段落 + 表格单元格（大纲常用表格呈现分卷/伏笔计划）。"""
     from docx import Document
 
     doc = Document(io.BytesIO(data))
@@ -50,6 +53,7 @@ def _extract_docx(data: bytes) -> str:
 
 
 def _extract_pdf(data: bytes) -> str:
+    """提取 PDF 纯文本：逐页拼接 extract_text 结果。"""
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))

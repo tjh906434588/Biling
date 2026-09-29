@@ -1,3 +1,10 @@
+/**
+ * @file layout.tsx
+ * Next.js 根布局：应用外壳（字体、全局样式、meta / viewport）。
+ * 核心机制：全局挂载 AI 状态 Provider（AiStatusProvider）与三套悬浮提示体系
+ * （Message 居中 / Notification 右上角 / 作者确认提醒），所有页面共享同一上下文与提示通道；
+ * 字体用 Geist 拉丁子集 + CSS 中文字体回退，避免引入体积巨大的中文字体包。
+ */
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -18,6 +25,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+/** 全局 SEO / 浏览器标签页元信息：标题模板、描述、应用名 */
 export const metadata: Metadata = {
   title: {
     default: "笔灵 Biling · AI 小说写作伙伴",
@@ -28,6 +36,7 @@ export const metadata: Metadata = {
   applicationName: "笔灵 Biling",
 };
 
+/** 移动端视口设置 + 主题色：让浏览器地址栏/状态栏融入纸色背景 */
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
@@ -38,6 +47,7 @@ export const viewport: Viewport = {
   ],
 };
 
+/** 根布局组件：包裹全局 Provider 与悬浮提示宿主，children 为当前路由页面 */
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html

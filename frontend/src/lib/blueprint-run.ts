@@ -1,17 +1,20 @@
+/**
+ * @file blueprint-run.ts
+ * 蓝图生成任务的模块级 store：与组件生命周期解耦，生成不因切换页面而中断。
+ * 核心机制：蓝图页是工作台的某个 tab，切换 tab 时组件会卸载、本地 state 随之丢失，
+ * 但后端 SSE 请求仍在跑——把生成状态提升到模块级（listeners/setState + useSyncExternalStore 订阅）后，
+ * 切页不中断、回来自动恢复显示；页面刷新后由 tryResumeBlueprintRun 轮询后端 agent_tasks 恢复
+ * 「生成中」状态与结果；startBlueprintRun 另配轮询看门狗，兜底 SSE 结束帧丢失导致卡死的场景。
+ */
 "use client";
 
-/** 蓝图生成任务的模块级 store：与组件生命周期解耦。
- *
- * 为什么需要它：蓝图页是工作台的某个 tab，切到别的 tab 时组件会卸载，本地 state 随之丢失，
- * 但 SSE 请求仍在后端继续跑。把生成状态提升到模块级（useSyncExternalStore 订阅）后：
- * - 生成不因切换页面而中断；
- * - 回到蓝图页时流式输出、进度、结果自动恢复显示。
- */
 import { friendlyRunError, friendlyTaskError, getAgentRunningTask, getStreamStatus, runAgent, type AgentRunningTaskResult, type AuthorConfirm } from "./api";
 import { pushAuthorConfirm } from "@/components/author-confirm";
 
+/** 生成任务的四态：idle 空闲 / running 生成中 / done 完成 / error 失败 */
 export type BlueprintRunStatus = "idle" | "running" | "done" | "error";
 
+/** 蓝图生成任务的模块级运行状态（跨组件、跨页面保持） */
 export interface BlueprintRunState {
   /** 正在/最近一次生成所属的小说 id；null 表示当前没有任务 */
   novelId: string | null;
@@ -28,8 +31,10 @@ export interface BlueprintRunState {
   startedAt: number | null;
 }
 
+/** 订阅者集合：组件挂载时订阅、卸载时退订，状态每次变更都逐个通知（useSyncExternalStore 用法） */
 const listeners = new Set<() => void>();
 
+/** 模块级状态本体：刻意不放进 React state，组件卸载/刷新也不丢失 */
 let state: BlueprintRunState = {
   novelId: null,
   status: "idle",
@@ -40,11 +45,13 @@ let state: BlueprintRunState = {
   startedAt: null,
 };
 
+/** 合并更新模块级状态，并广播给所有订阅者触发重渲染 */
 function setState(patch: Partial<BlueprintRunState>) {
   state = { ...state, ...patch };
   listeners.forEach((l) => l());
 }
 
+/** 订阅状态变更；返回取消订阅函数（供 useSyncExternalStore 的 subscribe 使用） */
 export function subscribeBlueprintRun(listener: () => void): () => void {
   listeners.add(listener);
   return () => {
@@ -52,10 +59,12 @@ export function subscribeBlueprintRun(listener: () => void): () => void {
   };
 }
 
+/** 读取当前模块级状态快照（供 useSyncExternalStore 取当前值） */
 export function getBlueprintRun(): BlueprintRunState {
   return state;
 }
 
+/** 通用延时工具（毫秒），用于轮询节奏控制 */
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** 页面刷新后恢复：若后端有该小说的进行中蓝图任务，置 running 并轮询到结束。
@@ -107,7 +116,22 @@ export async function tryResumeBlueprintRun(novelId: string): Promise<boolean> {
         if (r.task && r.task.status === "error") {
           apply({ status: "error", errMsg: friendlyTaskError(r.task.error, "生成任务后台失败。") });
         } else {
-          apply({ status: "done", msg: r.task?.msg ?? "生成完成。" });
+          // 任务已结束：/tasks 只返回 running 任务（结束后 task 为 null），
+          // 需借 /status 的 recent 判断本角色任务是否失败，避免失败被误报为完成
+          let taskError: string | null = null;
+          try {
+            const st = await getStreamStatus(novelId);
+            if (st.recent && st.recent.agent === "blueprint_architect" && st.recent.status === "error") {
+              taskError = st.recent.error;
+            }
+          } catch {
+            /* 查询失败按完成处理 */
+          }
+          if (taskError) {
+            apply({ status: "error", errMsg: friendlyTaskError(taskError, "生成任务后台失败。") });
+          } else {
+            apply({ status: "done", msg: r.task?.msg ?? "生成完成。" });
+          }
         }
         break;
       }
@@ -216,7 +240,13 @@ export function startBlueprintRun(
             // 蓝图落库：把带版本号的完成文案写进状态，蓝图页完成提示（Message）据此显示"蓝图 vX 已生成完毕"
             apply({ msg: `蓝图 v${d.version} 已生成完毕` });
           } else if (ev.event === "schema_validate" && d.status !== "ok") {
-            apply({ msg: "蓝图 schema 校验失败，可重试。" });
+            // schema 校验失败：后端只发 schema_validate{error}+stored{alert} 即关闭流（不发 stream_error），必须在这里主动标记失败
+            failed = true;
+            apply({ errMsg: "蓝图 schema 校验失败（AI 输出未通过格式校验），可重试。", status: "error" });
+          } else if (ev.event === "stored" && d.action === "alert") {
+            // 落库告警（schema_error）：同样视为失败
+            failed = true;
+            apply({ errMsg: "蓝图 schema 校验失败（AI 输出未通过格式校验），可重试。", status: "error" });
           } else if (ev.event === "stream_error") {
             failed = true;
             apply({ errMsg: d.message ?? "AI 生成蓝图出错，请稍后重试。", status: "error" });

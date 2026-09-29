@@ -33,6 +33,7 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """应用启动/关闭钩子：启动建表迁移、litellm 预导入、清理僵尸生成任务。"""
     # M0 开发便利：启动时建表；正式迁移走 alembic upgrade head
     Base.metadata.create_all(bind=engine)
     # M2 尾巴：为既有 SQLite 表幂等补列（aliases/merged_into_id、since_chapter 等）

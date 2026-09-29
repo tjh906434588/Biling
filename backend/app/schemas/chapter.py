@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ChapterVersionRead(BaseModel):
+    """章节版本读取：版本信息 + 正文 + 版本树/签约标记等。"""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -25,6 +26,7 @@ class ChapterVersionRead(BaseModel):
 
 
 class ChapterListItem(BaseModel):
+    """章节列表项：章信息 + 当前激活版本摘要（正文/来源/提取状态）。"""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -39,6 +41,7 @@ class ChapterListItem(BaseModel):
 
 
 class ChapterDetail(BaseModel):
+    """章节详情：章级信息 + 全部版本列表（版本树/双版本展示用）。"""
     chapter_no: int
     title: Optional[str]
     status: str
@@ -46,6 +49,7 @@ class ChapterDetail(BaseModel):
 
 
 class SelectVersionRequest(BaseModel):
+    """定稿请求：选中某版本为激活版；force=越过签约未过签拦截强制定稿。"""
     version_id: uuid.UUID
     force: bool = False  # 越过签约未过签拦截强制定稿（作者权威逃生口）
 

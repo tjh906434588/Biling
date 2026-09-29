@@ -1,15 +1,28 @@
+/**
+ * @file confirm-dialog.tsx
+ * 全站统一的确认弹窗：替换浏览器原生 confirm，用于删除等危险操作的二次确认。
+ * 纯受控组件（open 由父组件控制），确认/取消通过回调通知父组件，自身无状态与副作用。
+ */
 "use client";
 
 import type { ReactNode } from "react";
 
 interface ConfirmDialogProps {
+  /** 是否显示弹窗（受控，由父组件决定开合） */
   open: boolean;
+  /** 标题 */
   title: string;
+  /** 正文内容（支持 JSX；white-space-pre-line 保留换行） */
   message?: ReactNode;
+  /** 确认按钮文字，默认「确认」 */
   confirmText?: string;
+  /** 取消按钮文字，默认「取消」 */
   cancelText?: string;
+  /** 确认按钮风格：danger=红色警示（默认）/ primary=主色 */
   tone?: "danger" | "primary";
+  /** 点击确认按钮的回调 */
   onConfirm: () => void;
+  /** 点击取消按钮的回调 */
   onCancel: () => void;
 }
 

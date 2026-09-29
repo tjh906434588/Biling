@@ -124,6 +124,8 @@ class SettingExtractorAgent(Agent[ConceptExtraction]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配设定抽取上下文：注入导入文档、已有设定摘要（避免重复抽取）、
+        蓝图分卷/时间线与年代研究（辅助判断设定生效阶段）。"""
         novel = get_novel(self.db, novel_id)
         existing = format_settings_for_prompt(get_settings_snapshot(self.db, novel_id))
         doc_name = (params.get("doc_name") or "导入的大纲文档").strip()
@@ -153,4 +155,5 @@ class SettingExtractorAgent(Agent[ConceptExtraction]):
         )
 
     def parse_output(self, text: str) -> ConceptExtraction:
+        """把 LLM 返回的概念抽取 JSON 解析为 ConceptExtraction。"""
         return ConceptExtraction.model_validate_json(text.strip())

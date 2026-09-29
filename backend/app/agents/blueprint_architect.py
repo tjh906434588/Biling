@@ -3,6 +3,10 @@
 ⚠️ 同步义务：本 agent 解析外部 AI 整理出的材料字段（timeline 时间事实、
 机构档案六维、world_rules 清单式措辞）。**修改本文件的字段解析规则时，必须同步
 blueprint_outline_template.py 的大纲模板**（让外部 AI 按新字段产出），否则脱节。
+
+题材无关原则：本 agent 与模板一样**不新增题材专有字段**。任何题材（系统流/重生流/
+纯现实等）都靠通用字段容纳：特殊能力归 world_rules 金手指类规则、归类不了的内容
+进 notes（通用保留区）、无对应内容留空数组。遇新题材只改措辞泛化，不改结构。
 """
 import uuid
 from sqlalchemy.orm import Session
@@ -47,7 +51,7 @@ SYSTEM_PROMPT = """你是「蓝图师」，把作者的设定与脑洞整理成�
 - character_arcs：材料明确给出某角色性格/特质时写入 personality（如"踏实肯干、共情力强"），没给则省略该键；主角等核心角色务必完整收录。
 - volumes 的 no 用数字、chapters_range 用"开始-结束"字符串；foreshadowing_plan 的 plant_chapter/payoff_chapter 用数字章号。
 - world_rules 中核心不可变规则在 detail 开头标注（宪法·不可变）并写明约束；随剧情演变的规则在 detail 开头标注（随剧情演变）。
-- world_rules 中凡描述系统/面板/界面的**固定栏位结构**（面板固定展示哪些栏、界面固定字段）的规则，措辞统一为「面板固定展示：栏位1+栏位2+栏位3」并写明「栏位值可为「-」」；此类条目属于**界面结构定义**，不是剧情内容必现项——正文只要面板登场即视为各栏已呈现，禁止为凑齐栏位编造具体内容，更不得安排动作戏刻意展示某一栏。
+- world_rules 中凡描述**固定展示结构**（系统面板、游戏界面、报表/属性栏等"固定展示哪些栏/字段"的设定）的规则，措辞统一为「固定展示：栏位1+栏位2+栏位3」；此类条目属于**界面结构定义**，不是剧情内容必现项——正文只要该结构登场即视为各栏已呈现，禁止为凑齐栏位编造具体内容，更不得安排动作戏刻意展示某一栏。
 - world_rules 中若存在"每章/某场景必须同时出现一组剧情内容"的硬约束（如战斗必写敌人+地形+道具），保持「必须包含：元素A+元素B+元素C」清单式措辞（用+号分隔，勿改成、号或散文），系统会按"必现清单"逐章核对漏写。
 - subplots：输入材料中明确列出的"长效支线 / 可穿插支线 / 长线副线"必须全部收录，一条不落；没有则留空数组。
 - foreshadowing_plan：输入材料中有具体埋/揭安排的伏笔必须收录；若材料只有支线描述没有具体章号，把这些支线放进 subplots，不要硬造章号。
@@ -58,6 +62,8 @@ SYSTEM_PROMPT = """你是「蓝图师」，把作者的设定与脑洞整理成�
   - status：established（确立，该时间段内此状态成立）/ changed（演变，状态发生改变）/ ended（终结）。
   timeline 的作用是让"2000年开始打工、2010年自主创业"这类散文时间线变成**可核对的数据**，后续写作/评价不得与它矛盾。材料没有明确时间的，不写进 timeline（宁可少收，不可捏造时间）。
 - notes（通用保留区，最重要）：输入材料中**凡是无法干净归入 title/logline/theme/core_conflict/world_rules/character_arcs/volumes/foreshadowing_plan/subplots/timeline 任何一个字段的重要信息**——包括但不限于风格取向、文风基调、对标作品、创作参考、叙事节奏、题材标签、特殊约束、时间线规则等，无论它在材料里叫什么名字——**必须逐条原文（或尽量保留原意）收录进 notes，一条不落**；没有则留空数组。这是防丢失的兜底字段，宁可多收不可漏收。
+- 题材相关原则（防硬凑，任何题材通用）：world_rules、character_arcs、volumes、foreshadowing_plan、timeline、机构档案等均为**题材相关**字段——材料没有对应内容时留空数组或省略该键（如无系统题材可不含"面板栏位"类规则、无重生题材不必写重生规则），**不得为了凑结构硬造设定，也不得套用其他题材的模板**；特殊能力（系统/重生/透视/读心等）统一归入 world_rules 的金手指类规则，不单独造字段。
+- 内容继承规则（导入/整理防丢失）：以材料为完整事实源，逐条保留全部实质设定（数值、规则、人物画像、约束逻辑等），**不得删除、合并或压缩为一句结论**；并列枚举/分类清单（如多类人才画像、多级等级档位、多项数值档位）必须逐项原文保留，可拆成多条 world_rules 或 notes，禁止压缩成类别名一句话；凡任何字段都归类不了的重要内容，一律原文进 notes。
 - opening_anchor（开篇锚点，蓝图级硬决策）：根据本书类型与作者要求，明确第 1 章落在哪个时间切片（first_chapter_slice，如写实事业流"入职第一天"、快节奏爽文"穿越当天"）与金手指/系统首次揭示的章节号（golden_finger_reveal_chapter，数字；本书无金手指填 0）。材料里已有明确安排原样保留；没有时按题材惯例与节奏规则给出。此声明是下游所有角色（大纲师/章节规划师/小说家）开篇节奏的唯一依据，必须给出一个确定的切片与章号，不得留空。
 - 机构档案（新增）：输入材料中出现机构/组织/单位等实体（faction）时，**必须把它展开成完整档案**，以 notes 条目写出，格式：
   `机构档案·{机构名}：成立时间={值}；负责人={值}；人员规模={值}；业务范围={值}；位置布局={值}；时代特征={值}`
@@ -86,6 +92,8 @@ IMPORT_SYSTEM_NOTE = """
 - 文档若给出每卷体量（如"25万字"）或每卷章数（如"85章"）或总章数规划，必须写入对应 volumes 的 word_count / chapter_count / chapters_range，不要丢失；
 - 文档若列出"长效支线 / 可穿插支线 / 长线副线"等，必须逐条写入 subplots 字段；
 - 文档中的风格取向、文风基调、对标作品、创作参考、叙事节奏、题材标签等**无法归入既有字段**的重要内容，逐条原文收录进 notes（通用保留区），一条不落；
+- 以导入文档为完整事实源，逐条保留全部实质设定（数值、规则、人物画像、约束逻辑等），**不得删除、合并或压缩为一句结论**；并列枚举/分类清单（如多类人才画像、多级等级档位、多项数值档位）必须逐项原文保留，可拆成多条 world_rules 或 notes，禁止压缩成类别名一句话；任何字段都归类不了的内容一律原文进 notes（通用保留区兜底）；
+- 题材相关字段（world_rules/character_arcs/volumes/timeline 等）无对应内容时留空，**不得为了凑结构硬造设定或套用其他题材模板**；
 - 文档中未提及的字段留空数组，不要凭空捏造；
 - 书名/一句话/主题/核心冲突若文档未明确给出，用文档已有内容做最贴切的概括。
 """
@@ -100,9 +108,16 @@ IMPORT_SYSTEM_NOTE_FRESH = """
 - 文档若给出每卷体量（如"25万字"）或每卷章数（如"85章"）或总章数规划，必须写入对应 volumes 的 word_count / chapter_count / chapters_range，不要丢失；
 - 文档若列出"长效支线 / 可穿插支线 / 长线副线"等，必须逐条写入 subplots 字段；
 - 文档中的风格取向、文风基调、对标作品、创作参考、叙事节奏、题材标签等**无法归入既有字段**的重要内容，逐条原文收录进 notes（通用保留区），一条不落；
+- 以导入文档为完整事实源，逐条保留全部实质设定（数值、规则、人物画像、约束逻辑等），**不得删除、合并或压缩为一句结论**；并列枚举/分类清单（如多类人才画像、多级等级档位、多项数值档位）必须逐项原文保留，可拆成多条 world_rules 或 notes，禁止压缩成类别名一句话；任何字段都归类不了的内容一律原文进 notes（通用保留区兜底）；
+- 题材相关字段（world_rules/character_arcs/volumes/timeline 等）无对应内容时留空，**不得为了凑结构硬造设定或套用其他题材模板**；
 - 文档中未提及的字段留空数组，不要凭空捏造；
 - 书名/一句话/主题/核心冲突若文档未明确给出，用文档已有内容做最贴切的概括。
 """
+
+
+# 导入模式输出预算：蓝图 JSON 需复述整个导入文档 + 设定库 + timeline + notes，体量远超普通生成，
+# 默认 8192 token 容易在字符串中间截断导致 JSON 非法；单独调大输出上限降低截断概率。
+IMPORT_MAX_TOKENS = 16384
 
 
 class BlueprintArchitectAgent(Agent[Blueprint]):
@@ -134,6 +149,8 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配蓝图生成上下文：读小说与设定快照，按「普通/导入/全新开始」模式组装
+        system prompt（含节奏/题材特化/导入约束段）与 user 材料（含作者疑点处理意见、年代研究）。"""
         novel = get_novel(self.db, novel_id)
         settings_snapshot = get_settings_snapshot(self.db, novel_id)
         # 开篇与金手指兑现节奏：按本书背景类型 × 题材条件注入（写实事业流→克制兑现；其余→通用平台节奏）
@@ -161,9 +178,12 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
                 note = IMPORT_SYSTEM_NOTE_FRESH
             material = settings_block + f"导入的大纲文档（作者从外部生成）：\n{import_source}"
             system_prompt = SYSTEM_PROMPT + rhythm + storytelling_block + note
+            # 导入模式输出体量巨大，放宽输出 token 上限，避免 JSON 中途被截断
+            max_tokens = IMPORT_MAX_TOKENS
         else:
             material = format_settings_for_prompt(settings_snapshot)
             system_prompt = SYSTEM_PROMPT + rhythm + storytelling_block
+            max_tokens = None
         user_content = (
             f"项目：《{novel.title if novel else novel_id}》\n"
             f"项目前提：{novel.premise if novel and novel.premise else '（未填）'}\n"
@@ -190,7 +210,19 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
                 else:
                     lines.append(f"作者处理意见：{decision_text}")
             if lines:
-                user_content += "\n\n【作者对整理疑点的处理意见（必须遵守，逐条执行；意见优先于文档原文）】\n" + "\n".join(lines)
+                has_apply = any(
+                    isinstance(r, dict)
+                    and r.get("decision") == "apply"
+                    and r.get("suggestion")
+                    for r in resolutions
+                )
+                user_content += (
+                    "\n\n【作者对整理疑点的处理意见（必须遵守，逐条执行；意见优先于文档原文）】\n"
+                    + ("统一要求：疑点针对的设定在文档中可能有多处相关表述（如概率与等级含义、前文与后文、总述与分述），"
+                       "凡涉及该设定的所有表述都必须按对应处理意见统一改写，禁止只改一处而让其他位置的旧说法继续与意见矛盾；"
+                       "按意见替换后，原文中与之冲突的表述一并删除，不得新旧并存。\n" if has_apply else "统一要求：疑点仅按作者处理意见逐条执行，未给出改写意见的（保持原文）维持原文不变。\n")
+                    + "\n".join(lines)
+                )
         # 年代×行业研究（运行时按需生成，落库 novel.era_research；无研究或纯架空则空）
         era_block = format_era_research_for_prompt(novel.era_research if novel else None)
         if era_block:
@@ -205,7 +237,9 @@ class BlueprintArchitectAgent(Agent[Blueprint]):
             ],
             meta={"params": params},
             temperature=self.temperature,
+            max_tokens=max_tokens,
         )
 
     def parse_output(self, text: str) -> Blueprint:
+        """把 LLM 返回的蓝图 JSON 解析为 Blueprint（Pydantic 校验）。"""
         return Blueprint.model_validate_json(text.strip())

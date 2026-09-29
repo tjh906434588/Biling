@@ -48,6 +48,8 @@ def list_outlines(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
+    """大纲列表：缺省只返回每章「当前生效」版（批准版优先，否则取最新草稿）；
+    ?status=approved 时原样返回全部批准版（同章最多一个）。"""
     if db.get(Novel, novel_id) is None:
         raise HTTPException(404, "项目不存在")
     stmt = select(Outline).where(Outline.novel_id == novel_id)

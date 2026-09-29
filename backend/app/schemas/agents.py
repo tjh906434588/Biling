@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ConceptItem(BaseModel):
+    """概念师从对话中捕捉到的单条设定候选（确认转正后落设定库）。"""
     # type 与设定库类型（Setting.type）一一对应，保证确认转正时一定可以落库
     type: str = Field(..., pattern="^(character|location|faction|world_rule|item|concept)$")
     name: str
@@ -20,6 +21,7 @@ class ConceptItem(BaseModel):
 
 
 class ConceptExtraction(BaseModel):
+    """概念师整体输出：抽取出的概念列表 + 需向作者追问的问题。"""
     concepts: list[ConceptItem]
     follow_up_questions: list[str] = []
 
@@ -28,12 +30,14 @@ class ConceptExtraction(BaseModel):
 
 
 class WorldRule(BaseModel):
+    """世界观规则条目：规则名 / 说明 / 硬性约束（写作不可违背）。"""
     name: str
     detail: str
     constraints: list[str] = []
 
 
 class CharacterArc(BaseModel):
+    """角色弧光条目：从起点到终点的成长脉络 + 转折点。"""
     character: str
     # 性格/特质（材料未明确给出可省略；主角等核心角色务必收录）
     personality: Optional[str] = None
@@ -43,6 +47,7 @@ class CharacterArc(BaseModel):
 
 
 class Volume(BaseModel):
+    """分卷条目：卷号 / 卷名 / 重点 / 章节范围。"""
     no: int
     name: str
     focus: str
@@ -54,6 +59,7 @@ class Volume(BaseModel):
 
 
 class ForeshadowingPlan(BaseModel):
+    """伏笔计划条目：埋设章 / 回收章 / 说明。"""
     plant_chapter: int
     payoff_chapter: int
     desc: str
@@ -120,6 +126,7 @@ class OpeningAnchor(BaseModel):
 
 
 class Blueprint(BaseModel):
+    """蓝图师完整输出：全书总纲、世界观规则/角色弧/分卷/伏笔计划/时间线等。"""
     title: str
     logline: str
     theme: str
@@ -250,6 +257,7 @@ class OutlineSkeletonCheck(BaseModel):
 
 # ---------- 大纲师 ----------
 
+# 章节节奏功能合法枚举（chapter_function 字段的取值集合，提示词据此约束 LLM 输出）
 CHAPTER_FUNCTIONS = [
     "progression", "buildup", "turning", "climax",
     "revelation", "resolution", "interlude",
@@ -257,6 +265,7 @@ CHAPTER_FUNCTIONS = [
 
 
 class Beat(BaseModel):
+    """单个节拍：本章剧情的推进单元（场景/过场），含视角与长度提示。"""
     beat_no: int
     type: str = "scene"
     pov: str
@@ -266,12 +275,14 @@ class Beat(BaseModel):
 
 
 class Conflict(BaseModel):
+    """本章冲突条目：冲突类型 / 与谁冲突 / 赌注（可演场面）。"""
     type: str
     with_: str = Field(..., alias="with")
     stakes: str
 
 
 class PlantItem(BaseModel):
+    """本章埋设的伏笔条目：伏笔内容 / 回收提示 / 最晚回收章。"""
     desc: str
     payoff_hint: str
     latest_payoff_chapter: Optional[int] = None
@@ -280,11 +291,13 @@ class PlantItem(BaseModel):
 
 
 class ResolveItem(BaseModel):
+    """本章回收的伏笔条目：指向账本行 id + 回收方式。"""
     ledger_id: uuid.UUID
     how: str
 
 
 class ThreadUpdate(BaseModel):
+    """线索状态更新条目：某条线索推进到的新状态。"""
     thread: str
     new_state: str
 
@@ -301,6 +314,7 @@ class CharacterRef(BaseModel):
 
 
 class ChapterOutlineData(BaseModel):
+    """单章大纲数据：目标/节奏功能/视角/节拍/冲突/伏笔动作等。"""
     no: int
     title: str
     goal: str
@@ -316,6 +330,7 @@ class ChapterOutlineData(BaseModel):
 
 
 class ChapterOutline(BaseModel):
+    """大纲师单章输出包装：携带一份 ChapterOutlineData。"""
     chapter: ChapterOutlineData
 
 
@@ -335,28 +350,33 @@ class NovelChapter(BaseModel):
 
 
 class KeyEvent(BaseModel):
+    """本章关键事件：一句话描述 + 重要程度。"""
     event: str
     importance: str = "medium"
 
 
 class CharacterState(BaseModel):
+    """本章角色状态变化：角色 / 变化后的状态 / 置信度。"""
     character: str
     state: str
     confidence: str = "high"
 
 
 class WorldStateChange(BaseModel):
+    """世界状态变化条目：某条规则/设定发生了什么改变。"""
     rule: str
     change: str
 
 
 class ForeshadowingItem(BaseModel):
+    """本章新埋的伏笔：内容 / 回收提示 / 建议回收章。"""
     desc: str
     hint: Optional[str] = None
     suggested_payoff_chapter: Optional[int] = None
 
 
 class ResolvedForeshadowing(BaseModel):
+    """本章回收的伏笔引用（只带账本行 id）。"""
     ledger_id: uuid.UUID
 
 
@@ -372,6 +392,7 @@ class AdvancedForeshadowing(BaseModel):
 
 
 class UnresolvedHook(BaseModel):
+    """本章遗留的未解钩子：悬念描述 + 起始章。"""
     hook: str
     since_chapter: Optional[int] = None
 
@@ -429,6 +450,7 @@ class NewCharacter(BaseModel):
 
 
 class StoryStateExtract(BaseModel):
+    """提取师整体输出：本章故事状态快照（摘要/事件/状态/伏笔/关系/新人物等）。"""
     summary: str
     key_events: list[KeyEvent] = []
     character_states: list[CharacterState] = []
@@ -458,12 +480,14 @@ class ChronicleArc(BaseModel):
 
 
 class ChronicleCharacterGoal(BaseModel):
+    """编年中的角色当前目标条目。"""
     character: str
     goal: str  # 当前目标
     progress: str  # 推进到哪一步
 
 
 class ChronicleForeshadowing(BaseModel):
+    """编年中的尚未回收伏笔条目。"""
     desc: str  # 伏笔内容
     since_chapter: int  # 埋设章
     hint: str = ""  # 回收提示
@@ -485,12 +509,14 @@ class ChronicleOutput(BaseModel):
 
 
 class RubricDimension(BaseModel):
+    """单个评分维度：得分 / 评语 / 原文证据。"""
     score: int = Field(..., ge=0, le=100)
     comment: str
     evidence: str = Field(..., min_length=1, description="强制原文引用，空视为无效输出")
 
 
 class Rubric(BaseModel):
+    """评分细则：各维度 RubricDimension（蓝图遵循/一致性/人物声线/节奏/文风/伏笔回收/读者追读）。"""
     blueprint_adherence: RubricDimension
     consistency: RubricDimension
     character_voice: RubricDimension
@@ -504,6 +530,7 @@ class Rubric(BaseModel):
 
 
 class Issue(BaseModel):
+    """评价发现的问题条目：严重度 / 类型 / 描述 / 建议修复 / 关联伏笔。"""
     severity: str = Field(..., pattern="^(high|medium|low)$")
     type: str
     desc: str
@@ -512,6 +539,7 @@ class Issue(BaseModel):
 
 
 class ReviewOutput(BaseModel):
+    """评价师整体输出：总分 / 分维度评分 / 问题清单 / 亮点 / 修改建议。"""
     overall_score: int = Field(..., ge=0, le=100)
     rubric: Rubric
     issues: list[Issue] = []

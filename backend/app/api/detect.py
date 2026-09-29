@@ -17,11 +17,13 @@ router = APIRouter(prefix="/api/novels", tags=["detect"])
 
 
 class DetectIn(BaseModel):
+    """通用文本检测入参：待检测的正文文本。"""
     text: str = Field(..., min_length=1)
 
 
 @router.post("/{novel_id}/detect")
 def detect_text(novel_id: uuid.UUID, payload: DetectIn, db: Session = Depends(get_db)):
+    """通用文本 AI 生成检测（体检性质，返回检测密度等指标，不设硬阈值、不阻断写作）。"""
     if db.get(Novel, novel_id) is None:
         raise HTTPException(404, "项目不存在")
     return detect(payload.text)

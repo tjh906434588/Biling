@@ -1,3 +1,11 @@
+/**
+ * @file modal.tsx
+ * 全站统一 Modal 容器：遮罩 + 标题栏 + 内容区 + 可选 footer，靠上显示、标题栏可拖拽。
+ * 核心机制：pointer 事件实现拖拽（带视口限位），内容区支持 fill / fullHeight / regionScroll
+ * 三种高度/滚动策略。
+ * 分工：Modal=通用大容器（弹窗宿主）；ConfirmDialog=轻量确认弹窗（替代原生 confirm）；
+ * Message / Notification=无遮罩的悬浮提示，不走 Modal。
+ */
 "use client";
 
 import {
@@ -47,8 +55,11 @@ export default function Modal({
   fullHeight = false,
   regionScroll = false,
 }: ModalProps) {
+  // 拖拽偏移量（transform 位移）；每次打开重置回初始位置
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  // 弹窗面板引用：拖拽限位需要它的宽高
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // 拖拽会话缓存：按下时的指针坐标 + 基准偏移，move 时据此计算增量
   const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
 
   // 每次打开回到顶部初始位置
@@ -58,13 +69,15 @@ export default function Modal({
 
   if (!open) return null;
 
+  /** 标题栏按下：记录拖拽起点并捕获指针（关闭按钮等交互元素除外）。 */
   function onHeaderPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
     // 关闭按钮等交互元素不触发拖拽
     if ((e.target as HTMLElement).closest("button")) return;
     dragRef.current = { startX: e.clientX, startY: e.clientY, baseX: offset.x, baseY: offset.y };
-    e.currentTarget.setPointerCapture(e.pointerId);
+    e.currentTarget.setPointerCapture(e.pointerId); // 捕获指针：拖出标题栏后仍持续收到 move，直到松开
   }
 
+  /** 拖动中：按指针增量更新偏移，并限位保证弹窗始终有一部分留在视口内。 */
   function onHeaderPointerMove(e: ReactPointerEvent<HTMLDivElement>) {
     const d = dragRef.current;
     if (!d) return;
@@ -77,6 +90,7 @@ export default function Modal({
     setOffset({ x, y });
   }
 
+  /** 松开 / 取消指针：结束拖拽会话。 */
   function endDrag() {
     dragRef.current = null;
   }

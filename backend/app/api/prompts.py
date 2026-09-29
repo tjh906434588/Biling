@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api/prompts", tags=["prompts"])
 
 
 def _read_agent(key: str, novel_id: UUID, db: Session) -> AgentPromptRead:
+    """组装某角色的当前生效值：未配置返回内置默认，已配置返回保存内容（含清空的空字段）。"""
     row = (
         db.query(PromptTemplate)
         .filter(PromptTemplate.key == key, PromptTemplate.scope == _scope_for(novel_id))

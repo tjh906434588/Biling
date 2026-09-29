@@ -50,12 +50,14 @@ _COUNT_SCALE_WINDOW = 15
 
 
 def _find_kw(text: str, pos: int, kws: tuple, before: int, after: int) -> bool:
+    """判断位置 pos 前后窗口内是否出现关键词组中的任意一个（实体归属/锚点判定用）。"""
     lo = max(0, pos - before)
     hi = min(len(text), pos + after)
     return any(k in text[lo:hi] for k in kws)
 
 
 def _snippet(text: str, pos: int, radius: int = 18) -> str:
+    """截取位置 pos 附近的原文片段（去除换行）作为冲突证据，供前端/评价师定位。"""
     lo = max(0, pos - radius)
     hi = min(len(text), pos + radius + 4)
     return text[lo:hi].replace("\n", " ")
@@ -141,6 +143,7 @@ def check_entity_facts(chapter_text: str, facts: list[dict]) -> list[dict]:
 
 
 def _check_year_conflict(text: str, f: dict) -> Optional[dict]:
+    """扫描正文年份：命中「成立类锚点词 + 附近实体归属」的冲突年份即返回候选冲突。"""
     for m in _YEAR_RE.finditer(text):
         y = int(m.group(1))
         if y == f["expected"]:
@@ -158,6 +161,7 @@ def _check_year_conflict(text: str, f: dict) -> Optional[dict]:
 
 
 def _check_count_conflict(text: str, f: dict) -> Optional[dict]:
+    """扫描正文量级：单位一致且落在实体/规模语境窗口内的不同数字视为候选冲突。"""
     for m in _COUNT_RE.finditer(text):
         n = int(m.group(1))
         if n == f["expected"] or m.group(2) != f["unit"]:

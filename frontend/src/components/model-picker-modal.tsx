@@ -1,9 +1,14 @@
+/**
+ * @file model-picker-modal.tsx
+ * 模型选择/配置弹窗：从自定义模型或预设服务商目录接入模型、测试连接、设为默认或移除。
+ * 核心机制：三步视图（来源列表 → 服务商详情 / 自定义表单）；每个模型独立保存 API Key；
+ * 点「添加」前自动探测连接（Key + 当前模型），成功才落库，可选同时设为默认并关闭弹窗。
+ */
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import {
   addAccessModel,
-  deleteCustomModel,
   probeProvider,
   removeAccessModel,
   saveCustomModel,
@@ -27,11 +32,16 @@ type View = "list" | "custom" | CatalogProvider;
 
 /** 参考 TRAE「添加模型」弹窗：自定义模型置顶 + 预设服务商列表 + 详情表单（选模型→填Key→保存即用）。 */
 export default function ModelPickerModal({ open, catalog, defaultModel, initialProvider, onClose, onSaved }: Props) {
+  /** 当前所处视图：来源列表 / 自定义表单 / 某个服务商详情 */
   const [view, setView] = useState<View>("list");
+  /** 来源列表搜索关键词（按服务商名或模型 id 过滤） */
   const [query, setQuery] = useState("");
+  /** 当前选中（或手输）的模型 ID */
   const [modelId, setModelId] = useState("");
+  /** 是否使用「其他模型」手输模式（不限于预置下拉列表） */
   const [useOther, setUseOther] = useState(false);
   const [apiKey, setApiKey] = useState("");
+  /** 任一保存/探测/删除操作进行中，禁用按钮防重复提交 */
   const [busy, setBusy] = useState(false);
   const [probeModels, setProbeModels] = useState<string[] | null>(null);
   /** 当前服务商 Key 是否已通过「测试连接」，用于按钮状态展示。 */
@@ -50,49 +60,7 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
     api_key: "",
   });
 
-  useEffect(() => {
-    if (open) {
-      setQuery("");
-      setProbeModels(null);
-      if (initialProvider) {
-        openProvider(initialProvider);
-      } else {
-        setView("list");
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  // API Key 变了，之前的连接结果失效：撤销「已连接」并清掉探测结果/提示
-  useEffect(() => {
-    setConnected(false);
-    setProbeModels(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return catalog;
-    return catalog.filter(
-      (p) => p.label.toLowerCase().includes(q) || p.models.some((m) => m.id.toLowerCase().includes(q)),
-    );
-  }, [catalog, query]);
-
-  const activeProvider: CatalogProvider | null = view !== "list" && view !== "custom" ? view : null;
-
-  // 多配置方式服务商（如火山方舟）：模型列表与 base_url 随所选配置方式联动
-  const activeModes = activeProvider?.config_modes ?? null;
-  const currentMode = activeModes ? (activeModes.find((m) => m.key === configMode) ?? activeModes[0]) : null;
-  const modeModels = currentMode ? currentMode.models : (activeProvider?.models ?? []);
-  const modeBaseUrl = currentMode ? currentMode.base_url : activeProvider?.base_url;
-
+  /** 进入某服务商详情：预选默认配置方式与首个模型，重置连接态为未连接。 */
   const openProvider = (p: CatalogProvider) => {
     setView(p);
     // 默认选中「Agent Plan 订阅（model-name）」配置方式（对应 TRAE 常用配法），无则取第一个
@@ -107,11 +75,57 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
     setEnabled(p.enabledModels ?? []);
   };
 
+  useEffect(() => {
+    if (open) {
+      setQuery("");
+      setProbeModels(null);
+      if (initialProvider) {
+        openProvider(initialProvider);
+      } else {
+        setView("list");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // 弹窗打开期间监听 Esc 键关闭
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  // API Key 变了，之前的连接结果失效：撤销「已连接」并清掉探测结果/提示
+  useEffect(() => {
+    setConnected(false);
+    setProbeModels(null);
+  }, [apiKey]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return catalog;
+    return catalog.filter(
+      (p) => p.label.toLowerCase().includes(q) || p.models.some((m) => m.id.toLowerCase().includes(q)),
+    );
+  }, [catalog, query]);
+
+  /** 当前打开详情的服务商；list/custom 视图下为 null */
+  const activeProvider: CatalogProvider | null = view !== "list" && view !== "custom" ? view : null;
+
+  // 多配置方式服务商（如火山方舟）：模型列表与 base_url 随所选配置方式联动
+  const activeModes = activeProvider?.config_modes ?? null;
+  const currentMode = activeModes ? (activeModes.find((m) => m.key === configMode) ?? activeModes[0]) : null;
+  const modeModels = currentMode ? currentMode.models : (activeProvider?.models ?? []);
+  const modeBaseUrl = currentMode ? currentMode.base_url : activeProvider?.base_url;
+
+  /** 进入自定义配置表单，重置为全新空表单。 */
   const openCustom = () => {
     setView("custom");
     setCust({ label: "", api_format: "openai", base_url: "", model_id: "", api_key: "" });
   };
 
+  /** 该模型是否当前默认模型（用于展示「默认」标记、隐藏「设为默认」按钮）。 */
   const isDefault = (model: string) =>
     defaultModel != null &&
     activeProvider != null &&
@@ -140,6 +154,7 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
     }
   };
 
+  /** 测试连接入口：校验 Key 非空后探测，期间锁住按钮防重复提交。 */
   const testConnect = async () => {
     if (!activeProvider || busy) return;
     if (!apiKey.trim()) {

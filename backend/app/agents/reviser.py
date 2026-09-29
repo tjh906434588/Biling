@@ -106,6 +106,8 @@ class ReviserAgent(Agent[NovelChapter]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配修订上下文：注入当前正文/评价报告/作者否决与批注/AI 检测体检等组件，
+        保留原情节走向，只修评价指出的问题。"""
         novel = get_novel(self.db, novel_id)
         style = get_latest_style_profile(self.db, novel_id)
 
@@ -395,4 +397,5 @@ class ReviserAgent(Agent[NovelChapter]):
         )
 
     def parse_output(self, text: str) -> NovelChapter:
+        """把 LLM 返回的修订版章节 JSON 解析为 NovelChapter。"""
         return NovelChapter.model_validate_json(text.strip())

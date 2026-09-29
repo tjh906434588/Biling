@@ -17,6 +17,10 @@ router = APIRouter(prefix="/api/novels", tags=["memory"])
 
 @router.get("/{novel_id}/memory-review")
 def memory_review(novel_id: uuid.UUID, db: Session = Depends(get_db)):
+    """记忆层一致性体检：超期/悬置伏笔、角色状态链（as-of 最新章）、设定别名/合并状况。
+
+    仅体检展示、不阻断写作；返回 issues 列表与 healthy 布尔供前端预警横幅展示。
+    """
     if db.get(Novel, novel_id) is None:
         raise HTTPException(404, "项目不存在")
 

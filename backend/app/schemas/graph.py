@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class RelationRead(BaseModel):
+    """实体关系行读取（图谱列表展示）。"""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -22,6 +23,7 @@ class RelationRead(BaseModel):
 
 
 class GraphNode(BaseModel):
+    """图谱节点：实体（按设定库类型归为 character/location 等）。"""
     id: str  # 实体名
     label: str
     kind: str = "entity"  # character|location|faction|world_rule|item|concept|other
@@ -30,6 +32,7 @@ class GraphNode(BaseModel):
 
 
 class GraphEdge(BaseModel):
+    """图谱边：两个实体之间的关系（引用 entity_relations 行 id）。"""
     id: uuid.UUID  # entity_relations 行 id
     source: str
     target: str
@@ -40,5 +43,6 @@ class GraphEdge(BaseModel):
 
 
 class GraphView(BaseModel):
+    """图谱整体视图：节点 + 边的集合（前端力导向图渲染）。"""
     nodes: list[GraphNode]
     edges: list[GraphEdge]

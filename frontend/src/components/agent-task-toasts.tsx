@@ -1,22 +1,19 @@
+/**
+ * @file agent-task-toasts.tsx
+ * 全局 AI 后台任务完成通知：轮询感知后台任务结束，跨 tab 常驻提醒（挂在工作台外层）。
+ * 核心机制：每 3 秒轮询 /stream/status，对比上轮与当前「运行中任务」判定完成事件；
+ * 仅离开发起页或页面刚加载恢复的任务才弹通知（发起页自身 UI 不重复打扰），
+ * 完成时派发 biling:agent-task-done 事件供当前面板刷新数据。
+ */
 "use client";
 
 import { useEffect, useRef } from "react";
 import { friendlyTaskError, getStreamStatus, type StreamStatusResult, type StreamTaskInfo } from "@/lib/api";
+import { AGENT_LABELS } from "@/constants";
 import { notification } from "@/components/notification";
 import { message } from "@/components/message";
 
-/** AI 角色 → 中文标签（后台任务悬浮框用，与各面板的叫法保持一致）。 */
-const AGENT_LABELS: Record<string, string> = {
-  blueprint_architect: "蓝图师",
-  blueprint_activation: "蓝图激活",
-  outliner: "大纲师",
-  novelist: "小说家",
-  reviser: "修订师",
-  critic: "评价师",
-  extractor: "记忆层",
-  setting_extractor: "设定抽取",
-};
-
+/** 后台任务展示名：如「蓝图师·第 3 章」（通知标题用）。 */
 function taskLabel(t: StreamTaskInfo): string {
   return `${AGENT_LABELS[t.agent] ?? t.agent}${t.chapter_no != null ? `·第 ${t.chapter_no} 章` : ""}`;
 }

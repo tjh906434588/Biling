@@ -92,6 +92,11 @@ class _ConfirmAwareTimeout:
 
 # 与前端 writing-panel 的 summarizeOutline 同构：把已批大纲压成评价对照摘要
 def _summarize_outline(o: Outline) -> str:
+    """把已批准大纲压成评价对照摘要文本，供自动评价（critic）作为对照依据。
+
+    与前端 writing-panel 的 summarizeOutline 保持同构，确保自动评价与手动评价看到的
+    大纲依据一致；输出目标/节拍/写法要点/伏笔埋设与回收等关键骨架信息。
+    """
     c = o.content or {}
     parts: list[str] = []
     if c.get("goal"):
@@ -1476,9 +1481,12 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
                 if plan:
                     from app.services.pipeline import persist_chapter_plan
 
+                    # 记录正文失败时要回滚的大纲快照（本次会插入 approved 并降级旧批准版）
+                    _snapshot_chapter_plans()
                     outline_id = persist_chapter_plan(
                         task_db, payload.novel_id, payload.params.get("chapter_no"), plan
                     )
+                    plan_outline_id = str(outline_id)
                     payload.params["outline_id"] = str(outline_id)
                     payload.params["outline"] = _plan_to_outline_text(plan)
                     payload.params["chapter_function"] = plan.get("chapter_function") or "progression"
@@ -1499,10 +1507,82 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
             except Exception:
                 logger.exception("novel_id=%s 本章规划前置异常（不阻断生成）", payload.novel_id)
 
+        # 蓝图前置研究写入快照：蓝图整体失败（如 schema 校验失败）时回滚这些副作用，
+        # 保持「蓝图导入要么整体成功、要么整体失败」的原子语义——失败后不得残留
+        # 时代行业研究 / 背景类型 / 题材等半套设定，否则作者会看到「蓝图失败但设定却有数据」。
+        from app.db.models import Novel
+
+        prereq_snapshot: dict | None = None
+
+        def _snapshot_blueprint_prereq() -> dict:
+            """拍下蓝图前置研究将要改动的 Novel 字段，供整体失败时回滚。"""
+            n = task_db.get(Novel, payload.novel_id)
+            return {
+                "era_research": n.era_research if n else None,
+                "background_type": n.background_type if n else None,
+                "genres": list(n.genres) if n and n.genres is not None else None,
+            }
+
+        def _restore_blueprint_prereq() -> None:
+            """蓝图整体失败时恢复前置研究写入的 Novel 字段（保持「要么整体成功要么整体失败」）。"""
+            if prereq_snapshot is None:
+                return
+            n = task_db.get(Novel, payload.novel_id)
+            if n is None:
+                return
+            n.era_research = prereq_snapshot["era_research"]
+            n.background_type = prereq_snapshot["background_type"]
+            n.genres = prereq_snapshot["genres"]
+            task_db.commit()
+
+        # 正文前置规划（approved 大纲）回滚快照：正文整体失败时恢复该章大纲原状——
+        # persist_chapter_plan 会插入新 approved 大纲并把同章旧 approved 降回 draft，
+        # 若正文生成失败而大纲残留，作者会看到「正文失败但大纲却显示已批准/旧版被降级」的错位。
+        plan_snapshot: dict | None = None
+        plan_outline_id: str | None = None
+
+        def _snapshot_chapter_plans() -> None:
+            """拍下本章大纲各版本当前状态，供正文失败时回滚（persist_chapter_plan 会插入/降级版本）。"""
+            nonlocal plan_snapshot
+            from app.db.models import Outline
+
+            chapter_no = payload.params.get("chapter_no")
+            rows = task_db.query(Outline).filter(
+                Outline.novel_id == payload.novel_id, Outline.chapter_no == chapter_no
+            ).all()
+            plan_snapshot = {str(r.id): r.status for r in rows}
+
+        def _restore_chapter_plans() -> None:
+            """正文整体失败时恢复本章大纲：删除本次新插入的 approved 版，恢复被降级的旧批准版。"""
+            if plan_snapshot is None:
+                return
+            from app.db.models import Outline
+
+            chapter_no = payload.params.get("chapter_no")
+            rows = task_db.query(Outline).filter(
+                Outline.novel_id == payload.novel_id, Outline.chapter_no == chapter_no
+            ).all()
+            # ① 删除本次前置规划新插入的 approved 大纲
+            if plan_outline_id:
+                for r in rows:
+                    if str(r.id) == plan_outline_id:
+                        task_db.delete(r)
+                        break
+            # ② 恢复被 persist_chapter_plan 降级为 draft 的旧批准版
+            for r in task_db.query(Outline).filter(
+                Outline.novel_id == payload.novel_id, Outline.chapter_no == chapter_no
+            ).all():
+                if plan_snapshot.get(str(r.id)) == "approved" and r.status != "approved":
+                    r.status = "approved"
+            task_db.commit()
+
         # 蓝图生成前置：首次自动研究「年代×行业」（运行时按需，替代内置知识包）。
         # 非 dry_run（dry_run 是调试沙箱不落库）；研究失败/已存在/纯架空时内部自行跳过。
         # 研究结论以 author_confirm 弹窗交给作者确认（on_pending 实时通知在线前端弹窗）。
         if agent == "blueprint_architect" and not payload.dry_run:
+            # 前置研究会在确认后落库 novel.era_research（apply_fix 还会改写背景类型/题材），
+            # 先拍快照：本次蓝图若整体失败，由 _restore_blueprint_prereq 恢复原值
+            prereq_snapshot = _snapshot_blueprint_prereq()
             try:
                 material = (payload.params or {}).get("import_source") or ""
                 if not material:
@@ -1552,21 +1632,36 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
                             pass
                 except Exception:
                     logger.exception("novel_id=%s 蓝图导入质检前置异常（不阻断生成）", payload.novel_id)
-        async for sse in run_agent_stream(
-            task_db,
-            agent,
-            payload.novel_id,
-            payload.params,
-            temperature=payload.temperature,
-            max_tokens=payload.max_tokens,
-            dry_run=payload.dry_run,
-            task_id=task.id,  # 心跳：生成期间定期刷新 updated_at，供懒清理判死僵尸任务
-        ):
-            _update_progress(task.id, sse)  # 累积流式文字，供刷新后恢复显示
-            try:
-                queue.put_nowait(sse)
-            except asyncio.QueueFull:
-                pass  # 连接已断/消费慢：丢弃事件，生成照常跑完并落库
+        try:
+            async for sse in run_agent_stream(
+                task_db,
+                agent,
+                payload.novel_id,
+                payload.params,
+                temperature=payload.temperature,
+                max_tokens=payload.max_tokens,
+                dry_run=payload.dry_run,
+                task_id=task.id,  # 心跳：生成期间定期刷新 updated_at，供懒清理判死僵尸任务
+            ):
+                _update_progress(task.id, sse)  # 累积流式文字，供刷新后恢复显示
+                try:
+                    queue.put_nowait(sse)
+                except asyncio.QueueFull:
+                    pass  # 连接已断/消费慢：丢弃事件，生成照常跑完并落库
+        except Exception:
+            # 主产出整体失败：回滚前置环节写入的副作用，
+            # 保持「全部成功才算完成，任一失败即整体失败」的原子语义
+            if agent == "blueprint_architect":
+                try:
+                    _restore_blueprint_prereq()
+                except Exception:
+                    logger.exception("novel_id=%s 蓝图前置研究回滚失败", payload.novel_id)
+            if agent == "novelist":
+                try:
+                    _restore_chapter_plans()
+                except Exception:
+                    logger.exception("novel_id=%s 正文前置规划大纲回滚失败", payload.novel_id)
+            raise
         if not payload.dry_run:
             try:
                 _schedule_auto_reviews(task_db, payload.novel_id, agent, payload.params, task.created_at)
@@ -1620,6 +1715,8 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
     asyncio.create_task(background_run())
 
     async def sse():
+        """SSE 转发循环：从队列取事件逐个 yield；客户端断开（CancelledError）时只退出
+        转发循环，后台任务继续跑完并落库（刷新页面不中断生成）。"""
         try:
             while True:
                 item = await queue.get()

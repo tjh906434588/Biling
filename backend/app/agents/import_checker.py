@@ -45,6 +45,7 @@ class ImportCheckerAgent(Agent[BlueprintCheck]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配核对上下文：注入导入大纲文档与蓝图全文，要求逐节比对防丢失。"""
         doc_text = params.get("doc_text", "")
         blueprint_text = params.get("blueprint_text", "")
         user_content = (
@@ -68,6 +69,7 @@ class ImportCheckerAgent(Agent[BlueprintCheck]):
         )
 
     def parse_output(self, text: str) -> BlueprintCheck:
+        """把 LLM 返回的逐节比对结果 JSON 解析为 BlueprintCheck（容忍代码围栏/夹带说明文字）。"""
         raw = text.strip()
         # 容忍 LLM 输出包在 markdown 代码围栏里、或首尾夹带多余说明文字：提取 JSON 主体再解析
         if not raw.startswith("{"):

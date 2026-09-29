@@ -1,3 +1,9 @@
+"""检查 backend/biling.db 中每本小说的时代研究数据。
+
+用法：python scripts/check_era.py
+查询 novels 表的 background_type / genres / era_research，逐本打印原始
+era_research 并尝试解析 JSON，输出字段列表与 scope_issues。
+"""
 import json
 import sqlite3
 

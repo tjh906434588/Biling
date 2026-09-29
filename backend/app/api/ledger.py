@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api/novels", tags=["ledger"])
 
 
 def _get_novel(db: Session, novel_id: uuid.UUID) -> Novel:
+    """按 id 取小说，不存在抛 404（各路由的前置校验）。"""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise HTTPException(404, "项目不存在")
@@ -28,6 +29,7 @@ def _current_progress(db: Session, novel_id: uuid.UUID) -> int:
 
 
 def _to_read(row: PlotLedger, progress: int) -> LedgerRead:
+    """账本行 → 读模型：按当前已写进度计算 overdue（超期未回收）与 stale（久未处理）标记。"""
     r = LedgerRead.model_validate(row)
     active = row.status in ("open", "progressing", "deferred")
     r.overdue = (
@@ -92,6 +94,7 @@ def list_overdue(novel_id: uuid.UUID, db: Session = Depends(get_db)):
 def update_ledger(
     novel_id: uuid.UUID, item_id: uuid.UUID, payload: LedgerUpdate, db: Session = Depends(get_db)
 ):
+    """更新账本条目的可编辑字段（状态/目标揭示章/优先级等）；置 closed 时自动记录回收章节号。"""
     row = db.get(PlotLedger, item_id)
     if row is None or row.novel_id != novel_id:
         raise HTTPException(404, "账本条目不存在")

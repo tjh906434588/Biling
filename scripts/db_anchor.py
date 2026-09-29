@@ -1,3 +1,9 @@
+"""调试 backend/biling.db 的 blueprints 表：检查开篇锚点与金手指相关伏笔。
+
+用法：python scripts/db_anchor.py
+逐条打印 blueprint 的 opening_anchor、foreshadowing_plan 中含
+"金手指/系统/觉醒/天赋"的条目，以及 notes 摘要。
+"""
 import json
 import sqlite3
 

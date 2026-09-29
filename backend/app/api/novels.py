@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api/novels", tags=["novels"])
 
 @router.post("", response_model=NovelRead)
 def create_novel(payload: NovelCreate, db: Session = Depends(get_db)):
+    """新建小说项目（标题/一句话梗概/背景类型/题材）。"""
     novel = Novel(
         title=payload.title,
         premise=payload.premise,
@@ -36,11 +37,13 @@ def create_novel(payload: NovelCreate, db: Session = Depends(get_db)):
 
 @router.get("", response_model=list[NovelRead])
 def list_novels(db: Session = Depends(get_db)):
+    """小说项目列表（按最近更新倒序）。"""
     return db.execute(select(Novel).order_by(Novel.updated_at.desc())).scalars().all()
 
 
 @router.get("/{novel_id}", response_model=NovelRead)
 def get_novel(novel_id: uuid.UUID, db: Session = Depends(get_db)):
+    """单个小说项目详情（含风格指令 style_directive 等设置）。"""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise HTTPException(404, "项目不存在")
@@ -49,6 +52,7 @@ def get_novel(novel_id: uuid.UUID, db: Session = Depends(get_db)):
 
 @router.patch("/{novel_id}", response_model=NovelRead)
 def update_novel(novel_id: uuid.UUID, payload: NovelUpdate, db: Session = Depends(get_db)):
+    """部分更新小说项目字段（标题/梗概/背景类型/题材/风格指令等）。"""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise HTTPException(404, "项目不存在")
@@ -172,6 +176,7 @@ def list_settings(
 
 @router.post("/{novel_id}/settings", response_model=SettingRead)
 def create_setting(novel_id: uuid.UUID, payload: SettingCreate, db: Session = Depends(get_db)):
+    """新建设定条目（手动录入，source=manual）。"""
     if db.get(Novel, novel_id) is None:
         raise HTTPException(404, "项目不存在")
     setting = Setting(novel_id=novel_id, **payload.model_dump())
@@ -185,6 +190,7 @@ def create_setting(novel_id: uuid.UUID, payload: SettingCreate, db: Session = De
 def update_setting(
     novel_id: uuid.UUID, setting_id: uuid.UUID, payload: SettingUpdate, db: Session = Depends(get_db)
 ):
+    """部分更新设定条目（名称/类型/描述/结构化/别名等，含别名合并维护）。"""
     setting = db.get(Setting, setting_id)
     if setting is None or setting.novel_id != novel_id or setting.deleted_at is not None:
         raise HTTPException(404, "设定不存在")

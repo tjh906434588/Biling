@@ -1,6 +1,9 @@
 /**
+ * @file novel-cover.tsx
  * 书封：按书名确定性地生成一枚「传统色封面」。
  * 同一个书名永远得到同一套配色，不需要上传封面图也能让书架像书店。
+ * 核心机制：FNV-1a 哈希书名并叠加书架序号 seed，从 8 套传统色板中取一套，
+ * 同名恒得同色、相邻书架错开配色；字号随书名长度递减，保证竖排不溢出。
  */
 const PALETTES = [
   { from: "#2b3c58", to: "#1a2537", ink: "#f1ece1" }, // 藏青
@@ -13,6 +16,7 @@ const PALETTES = [
   { from: "#3a4a5e", to: "#242e3c", ink: "#edf1f5" }, // 青金
 ];
 
+/** FNV-1a 哈希：把字符串映射成稳定非负整数，同名永远同值（用于从色板中选色）。 */
 function hash(text: string): number {
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) {
@@ -31,6 +35,12 @@ function titleSize(len: number): number {
   return 14;
 }
 
+/**
+ * 小说封面组件（纯展示、无交互，供书架等场景复用）。
+ * @param title 书名；为空时回退显示「未命名」。
+ * @param seed 书架中的序号，让相邻几本书错开配色，避免一排都是蓝。
+ * @param className 附加到容器上的类名（由调用方控制尺寸等）。
+ */
 export default function NovelCover({
   title,
   seed = 0,
@@ -41,6 +51,7 @@ export default function NovelCover({
   seed?: number;
   className?: string;
 }) {
+  /** 由书名哈希（叠加 seed）选中的色板：from/to 为渐变底色，ink 为文字色 */
   const p = PALETTES[(hash(title) + seed * 3) % PALETTES.length];
   const clean = title.trim() || "未命名";
   const size = titleSize(clean.length);

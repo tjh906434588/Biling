@@ -52,6 +52,7 @@ def _finish_activation(
 
 
 def _get_blueprint(novel_id: uuid.UUID, blueprint_id: uuid.UUID, db: Session) -> Blueprint:
+    """按 id 取蓝图并校验归属该小说（跨小说访问或不存在时抛 404）。"""
     bp = db.get(Blueprint, blueprint_id)
     if bp is None or bp.novel_id != novel_id:
         raise HTTPException(404, "蓝图不存在")
@@ -130,6 +131,7 @@ def list_blueprints(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
+    """蓝图版本列表（按版本号倒序，最新在前）；?status= 可按状态过滤（active/inactive）。"""
     if db.get(Novel, novel_id) is None:
         raise HTTPException(404, "项目不存在")
     stmt = select(Blueprint).where(Blueprint.novel_id == novel_id)
@@ -185,6 +187,7 @@ def blueprint_activation_status(novel_id: uuid.UUID, db: Session = Depends(get_d
 
 @router.get("/{novel_id}/blueprints/{blueprint_id}", response_model=BlueprintRead)
 def get_blueprint(novel_id: uuid.UUID, blueprint_id: uuid.UUID, db: Session = Depends(get_db)):
+    """单个蓝图版本详情：查看/对比某版本时返回其完整 content。"""
     return _get_blueprint(novel_id, blueprint_id, db)
 
 

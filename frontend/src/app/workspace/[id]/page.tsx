@@ -1,9 +1,18 @@
+/**
+ * @file workspace/[id]/page.tsx
+ * 工作台主页：侧栏工具面板 + 主画布，按 tab 切换蓝图/写作/设定等十个功能区。
+ * 核心机制：tab 与 URL 双向同步（replaceState，刷新/复制链接保持），初始 tab 在 SSR 首帧直接从 URL 读取；
+ * tools 调试页以沙箱模式（dry_run）运行 AI 角色，产出不落库，确认后点「加入正式库」才写入；
+ * 首次进入弹路径引导通知（localStorage 记已读）；全局挂 AI 后台任务悬浮框与作者确认弹窗，跨 tab 常驻。
+ */
 "use client";
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { use, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { runAgent, commitAgent, listNovels, type StreamEventData } from "@/lib/api";
+import { AGENTS, GUIDE_STEPS } from "@/constants";
+import type { Tab } from "@/types/workspace";
 import { AiNotReadyBanner, CostHint, useAiStatus } from "@/lib/ai-status";
 import SettingsPanel from "@/components/settings-panel";
 import WritingPanel, { hideWorkspaceNotifs, showWorkspaceNotifs } from "@/components/writing-panel";
@@ -20,146 +29,6 @@ import AuthorConfirmHost from "@/components/author-confirm";
 import { notification, removeNotification } from "@/components/notification";
 import { message } from "@/components/message";
 
-/* 六角色表单 schema：作者填中文表单，运行前自动转成后端认识的 params
- * 文本/数字/长文本不预填内容，只给占位提示（placeholder）；下拉框需有选中项故带 default。 */
-type ParamType = "text" | "textarea" | "number" | "select";
-
-interface ParamSpec {
-  key: string; // 传给后端的字段名
-  label: string; // 中文标签
-  placeholder?: string; // 输入框占位提示（不预填内容）
-  type: ParamType;
-  default?: string | number; // 仅 select 使用（下拉框必须有选中项）
-  optional?: boolean;
-  required?: boolean; // 必填：为空时阻止运行并提示
-  options?: { value: string; label: string }[];
-}
-
-const AGENTS: Record<string, { name: string; desc: string; params: ParamSpec[] }> = {
-  blueprint_architect: {
-    name: "蓝图师",
-    desc: "搭建整部作品的世界蓝图（规则/人物弧光/分卷/伏笔计划）",
-    params: [
-      {
-        key: "requirements",
-        label: "创作要求",
-        placeholder: "例如：悬疑奇幻，主题是记忆与身份，主角是记忆被篡改的占卜师之子",
-        type: "textarea",
-        required: true,
-      },
-    ],
-  },
-  outliner: {
-    name: "大纲师",
-    desc: "为某一章产出细化大纲（节拍/冲突/伏笔处理）",
-    params: [
-      { key: "chapter_no", label: "章节号", placeholder: "如 1（留空则排下一章）", type: "number" },
-      {
-        key: "chapter_titles",
-        label: "已写章节标题",
-        placeholder: "如：雨夜铜币, 通缉令…（逗号分隔，可留空）",
-        type: "text",
-        optional: true,
-      },
-    ],
-  },
-  novelist: {
-    name: "小说家",
-    desc: "按大纲生成章节正文（单版本，生成即定稿，见「写作」页）",
-    params: [
-      { key: "chapter_no", label: "章节号", placeholder: "如 1（留空则排下一章）", type: "number" },
-      { key: "title", label: "章名", placeholder: "如 雨夜铜币", type: "text" },
-      { key: "pov", label: "视角角色", placeholder: "如 林澈（这章跟谁走）", type: "text" },
-      {
-        key: "chapter_function",
-        label: "章节功能",
-        type: "select",
-        default: "buildup",
-        options: [
-          { value: "buildup", label: "铺垫" },
-          { value: "progression", label: "推进" },
-          { value: "climax", label: "高潮" },
-          { value: "turning", label: "转折" },
-          { value: "interlude", label: "过渡" },
-        ],
-      },
-      {
-        key: "writing_mode",
-        label: "写作模式",
-        type: "select",
-        default: "draft_free",
-        options: [
-          { value: "draft_free", label: "自由初稿（写到哪算哪）" },
-          { value: "outline_guided", label: "按大纲走（完成目标）" },
-        ],
-      },
-      {
-        key: "outline",
-        label: "本章大纲",
-        placeholder: "粘贴本章大纲（留空则自由续写）…",
-        type: "textarea",
-      },
-      {
-        key: "goal",
-        label: "本章目标",
-        placeholder: "如 引入铜币并建立通缉危机（可留空）",
-        type: "text",
-        optional: true,
-      },
-    ],
-  },
-  extractor: {
-    name: "提取师",
-    desc: "从章节正文提取故事状态，写入记忆层（真实入库 story_state）",
-    params: [
-      { key: "chapter_no", label: "章节号", placeholder: "如 1", type: "number" },
-      {
-        key: "chapter_text",
-        label: "本章正文",
-        placeholder: "粘贴本章正文，AI 从中提取故事状态…",
-        type: "textarea",
-        required: true,
-      },
-      {
-        key: "prev_state",
-        label: "上一章状态",
-        placeholder: "上一章故事状态（可留空）",
-        type: "textarea",
-        optional: true,
-      },
-    ],
-  },
-  critic: {
-    name: "评价师",
-    desc: "对照蓝图/伏笔账本评价章节质量，反哺小说家",
-    params: [
-      {
-        key: "outline",
-        label: "本章大纲",
-        placeholder: "粘贴本章大纲（对照评价用）…",
-        type: "textarea",
-      },
-      {
-        key: "chapter_text",
-        label: "待评价的正文",
-        placeholder: "粘贴待评价的章节正文…",
-        type: "textarea",
-        required: true,
-      },
-      {
-        key: "writing_mode",
-        label: "写作模式",
-        type: "select",
-        default: "draft_free",
-        options: [
-          { value: "draft_free", label: "自由初稿" },
-          { value: "outline_guided", label: "按大纲走" },
-        ],
-      },
-    ],
-  },
-};
-
 /** 生成某角色的初始表单值：文本类留空，下拉框取默认选中项 */
 function defaultForm(agent: string): Record<string, string> {
   const obj: Record<string, string> = {};
@@ -169,9 +38,8 @@ function defaultForm(agent: string): Record<string, string> {
   return obj;
 }
 
+/** 角色 key 列表（tools 页角色选择栏的渲染顺序） */
 const AGENT_KEYS = Object.keys(AGENTS);
-
-type Tab = "write" | "settings" | "outline" | "ledger" | "blueprint" | "style" | "detect" | "graph" | "models" | "tools";
 
 /** 会调用 AI（消耗 Token）的 tab：只有这些页面需要显示"AI 未接入"横幅。
  *  设定/账本/检测/关系图等纯本地功能不在此列。 */
@@ -191,6 +59,7 @@ const ICONS: Record<string, ReactNode> = {
   tools: <path d="M4 17l6-6-6-6M12 19h8" />,
 };
 
+/** 侧栏导航分组：分组名 + 若干 [tab, 标签, 图标] 项 */
 const NAV_GROUPS: { label: string; items: [Tab, string, keyof typeof ICONS][] }[] = [
   {
     label: "创作",
@@ -217,8 +86,10 @@ const NAV_GROUPS: { label: string; items: [Tab, string, keyof typeof ICONS][] }[
     ],
   },
 ];
+/** 展平后的全部导航项（窄屏横向标签条直接遍历渲染） */
 const FLAT_TABS = NAV_GROUPS.flatMap((g) => g.items);
 
+/** 按名称渲染导航图标（从 ICONS 查表取内联 SVG path） */
 function NavIcon({ name }: { name: keyof typeof ICONS }) {
   return (
     <svg
@@ -236,6 +107,7 @@ function NavIcon({ name }: { name: keyof typeof ICONS }) {
   );
 }
 
+/** SSE 事件日志条目（tools 页「事件流」面板的数据源） */
 interface LogItem {
   id: number;
   event: string;
@@ -243,15 +115,7 @@ interface LogItem {
   kind: "info" | "ok" | "err" | "delta";
 }
 
-/** 首次进入工作台的路径引导步骤：点步骤跳转对应页面（通知保持常驻），✕ 关闭后不再出现。
- *  大纲+章节合并后：写作直接由蓝图出发，写正文前弹「本章规划」确认，不再单独排大纲。 */
-const GUIDE_STEPS: [Tab, string, string][] = [
-  ["blueprint", "蓝图", "读设定，定全书骨架"],
-  ["write", "写作", "写正文前确认本章规划，直接生成"],
-];
-
-/**
- * 首次进入工作台时的路径引导：右上角 Notification（常驻，duration=0）。
+/** 首次进入工作台的路径引导：右上角 Notification（常驻，duration=0）。
  * - 只有工作台页面才提醒：离开工作台路由时自动隐藏（不标记已读），回来重新展示；工作台内切 tab 常驻。
  * - 不自动消失、不被其他通知顶掉，只有点 ✕ 才关闭（标记已读，之后不再出现）。
  * - 点步骤按钮跳转对应页面（切 tab），通知保持常驻不关闭。
@@ -319,6 +183,7 @@ function FirstRunGuide({ novelId, onGo }: { novelId: string; onGo: (t: Tab) => v
   return null;
 }
 
+/** 工作台主页组件：tab 切换 + 各功能区面板挂载 + tools 调试运行器 */
 export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const searchParams = useSearchParams();
@@ -327,22 +192,32 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
     const t = searchParams.get("tab");
     return t && FLAT_TABS.some(([k]) => k === t) ? (t as Tab) : "blueprint";
   });
+  // 以下状态均服务于 tools 调试页：当前角色、其表单值、运行中标志
   const [agent, setAgent] = useState("novelist");
   const [formValues, setFormValues] = useState<Record<string, string>>(() => defaultForm("novelist"));
   const [running, setRunning] = useState(false);
+  /** SSE 事件日志（tools 页「事件流」面板数据源） */
   const [logs, setLogs] = useState<LogItem[]>([]);
+  /** 运行完成的结构化结果（JSON 字符串，绿色面板展示） */
   const [result, setResult] = useState<string | null>(null);
+  /** 顶栏书名：由 id 反查小说列表得到，避免显示一串 UUID */
   const [novelTitle, setNovelTitle] = useState<string>("");
   // 调试页恒为沙箱：运行只生成不写正式库，用户确认满意后点「加入正式库」才落库
   const [commitItems, setCommitItems] = useState<
     { source?: string; output: Record<string, unknown> }[] | null
   >(null);
   const [committing, setCommitting] = useState(false);
+  /** 运行中实时累积的生成文本（蓝色滚动预览框） */
   const [liveText, setLiveText] = useState("");
+  /** 写作指令配置弹窗开关 */
   const [showPrompts, setShowPrompts] = useState(false);
+  /** 实时预览框 DOM 引用（liveText 变化时自动滚到底部） */
   const liveBoxRef = useRef<HTMLDivElement | null>(null);
+  /** 最近一次运行实际传给后端的 params（「加入正式库」时原样复用） */
   const lastParamsRef = useRef<Record<string, unknown>>({});
+  /** 当前运行的 AbortController（「停止」按钮触发中断） */
   const abortRef = useRef<AbortController | null>(null);
+  /** 日志自增序号（React key，保证唯一） */
   const logSeq = useRef(0);
   const { ensureReady } = useAiStatus();
 
@@ -382,16 +257,22 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
     window.history.replaceState(null, "", url.toString());
   }, [tab]);
 
+  /** 切换调试角色：重置表单值为该角色默认值，并清空上一角色的调试产出 */
   const selectAgent = (key: string) => {
     setAgent(key);
     setFormValues(defaultForm(key));
     setCommitItems(null);
   };
 
+  /** 追加一条 SSE 事件日志（id 自增，保证每条 key 唯一） */
   const pushLog = useCallback((kind: LogItem["kind"], event: string, data: string) => {
     setLogs((prev) => [...prev, { id: ++logSeq.current, event, data, kind }]);
   }, []);
 
+  /**
+   * 以沙箱模式运行当前角色：AI 就绪校验 → 必填项校验 → 表单转后端 params → SSE 流式输出。
+   * 产出不落库（dry_run），需用户确认后点「加入正式库」才写入正式库。
+   */
   async function handleRun() {
     try {
       ensureReady();
@@ -450,6 +331,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
         liveBuf += d.delta;
         setLiveText(liveBuf);
       } else if (ev.event === "version_start") {
+        // 新版本开始：在流式文本里插入版本分隔线，区分多个产出版本
         liveBuf += `\n—— 版本 ${(ev.data as { version: string }).version} ——\n`;
         pushLog("info", ev.event, s);
       } else if (ev.event === "schema_validate") {
@@ -472,6 +354,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
             setCommitItems([{ source: undefined, output: d.data }]);
           }
         } else {
+          // 正式落库：整包事件数据即最终结果
           parsed = ev.data;
         }
       } else if (ev.event === "stream_error") {
@@ -504,12 +387,14 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
     }
   }
 
+  /** 停止当前运行：中断 SSE 流并复位运行状态 */
   function handleStop() {
     abortRef.current?.abort();
     setRunning(false);
   }
 
   /* 导航项：宽屏侧栏用（图标+文字），窄屏标签条用（仅文字） */
+  /** 侧栏导航项渲染：图标 + 文字（宽屏用），激活项带左侧高亮竖条 */
   const sideItem = ([k, label, icon]: [Tab, string, keyof typeof ICONS]) => {
     const active = tab === k;
     return (
@@ -537,6 +422,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
     );
   };
 
+  /** 顶部标签条导航项渲染：仅文字（窄屏用，可横向滚动） */
   const stripItem = ([k, label]: [Tab, string, keyof typeof ICONS]) => {
     const active = tab === k;
     return (

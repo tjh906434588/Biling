@@ -42,6 +42,7 @@ AGENT_NAMES = list(REGISTRY.keys())
 
 
 def get_agent(db: Session, name: str) -> Agent:
+    """按角色名实例化对应 Agent；未知角色抛 KeyError（带可用角色清单）。"""
     if name not in REGISTRY:
         raise KeyError(f"未知角色：{name}（可选：{', '.join(AGENT_NAMES)}）")
     return REGISTRY[name](db)

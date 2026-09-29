@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ConceptCardRead(BaseModel):
+    """概念卡片读取：用户原话 + 结构化抽取结果 + 状态。"""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID

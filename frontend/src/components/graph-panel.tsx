@@ -1,3 +1,10 @@
+/**
+ * @file graph-panel.tsx
+ * 关系图谱面板：展示角色/势力的关系网络图，以及各角色的最新状态记忆回顾。
+ * 核心机制：力导向布局（Fruchterman-Reingold）在纯前端计算节点坐标；
+ * 同一对实体的多条关系合并为一条线展示（同义关系归一化，仅展示层合并），
+ * 支持拖拽节点/平移/滚轮缩放/全屏，边标签做节点与标签双重防重叠。
+ */
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -147,14 +154,20 @@ function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], w: number, h: numbe
   return sim;
 }
 
+/** 交互式关系图：负责布局、渲染、拖拽/平移/缩放与边标签防重叠。 */
 function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  /** 节点 id → 世界坐标（力导向布局产出，拖拽节点时手动更新） */
   const [pos, setPos] = useState<Record<string, { x: number; y: number }>>({});
+  /** 视图变换：平移 (x,y) + 缩放 k，把世界坐标映射到屏幕 */
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  /** 当前悬浮的节点，驱动其关系详情的浮层展示 */
   const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
+  /** 正在拖拽的节点 id；null = 未在拖拽 */
   const drag = useRef<{ id: string } | null>(null);
+  /** 空白处平移的起点记录（按下时的指针坐标 + 当时的视图偏移），用于计算增量平移 */
   const pan = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
 
   /* 测量容器尺寸（1:1 像素坐标，屏幕/世界坐标换算简单） */
@@ -200,6 +213,7 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  /** 按下：命中节点则开始拖节点，否则开始平移空白处；均捕获指针以便连续跟踪。 */
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     const p = toLocal(e);
     const nodeId = (e.target as Element).closest("[data-node]")?.getAttribute("data-node");
@@ -232,6 +246,7 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
 
   const onWheel = (e: React.WheelEvent<SVGSVGElement>) => {
     const p = toLocal(e);
+    // 以指针位置为锚点缩放（每次 ±10%，范围 0.25x–3x），保证缩放中心不漂移
     setView((v) => {
       const k2 = Math.min(3, Math.max(0.25, v.k * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
       return { x: p.x - ((p.x - v.x) / v.k) * k2, y: p.y - ((p.y - v.y) / v.k) * k2, k: k2 };
@@ -507,10 +522,15 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
   );
 }
 
+/**
+ * 关系图谱面板主组件：并行加载图谱与角色状态回顾。
+ * @param novelId 当前小说 id。
+ */
 export default function GraphPanel({ novelId }: { novelId: string }) {
   const [graph, setGraph] = useState<GraphView>({ nodes: [], edges: [] });
   const [memory, setMemory] = useState<MemoryReview | null>(null);
   const [loading, setLoading] = useState(true);
+  /** 是否全屏展示图谱（全屏时只留关闭按钮） */
   const [fullscreen, setFullscreen] = useState(false);
 
   /* 图谱只展示角色与势力；两端均为这两类的边才显示，避免悬空线。
@@ -528,6 +548,7 @@ export default function GraphPanel({ novelId }: { novelId: string }) {
     return { nodes: nodes.filter((n) => connectedIds.has(n.id)), edges };
   }, [graph]);
 
+  /** 并行加载关系图与角色状态记忆；任一失败仅弹错误提示，不阻塞另一份数据。 */
   const load = useCallback(async () => {
     setLoading(true);
     try {

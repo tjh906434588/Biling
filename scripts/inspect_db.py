@@ -1,3 +1,8 @@
+"""快速查看 backend/biling.db 各表最新记录：blueprints / agent_tasks / novels / author_confirms。
+
+用法：在项目根目录执行 python scripts/inspect_db.py（内部以相对路径 backend/biling.db 连接）
+分别打印四张表按创建时间倒序的最新若干行。
+"""
 import sqlite3
 
 conn = sqlite3.connect("backend/biling.db")

@@ -1,12 +1,13 @@
+/**
+ * @file ai-status.tsx
+ * AI 接入状态：全局统一判断"AI 是否可用"，并给出未接入横幅、Token 消耗标注。
+ * 核心机制：ready 的标准是任一服务商已配置可用凭据（服务商 Key / 环境变量 / 已接入模型的独立 Key
+ * 任一存在即视为就绪，未设默认模型时后端自动回退选择）；未就绪时所有 AI 功能不可用，
+ * 各调用点在执行前调用 ensureReady() 抛出带指引的错误。AI 状态经 React Context 提供给全应用，
+ * AiNotReadyBanner 以右上角常驻 error 通知的形式提示接入。
+ */
 "use client";
 
-/** AI 接入状态：全局统一判断"AI 是否可用"，并给出未接入横幅、Token 消耗标注。
- *
- * ready 的判断标准：任一服务商已配置可用凭据即视为就绪——服务商 Key、环境变量、
- * 或已接入模型的独立 Key（enabled_models）任一存在即可。未设默认模型时后端会自动回退选择。
- * 未就绪时：所有 AI 功能（生成/提取/评价/大纲/蓝图/风格学习）不可用，
- * 各调用点在执行前调用 ensureReady()，抛出带指引的错误，由页面的错误提示区展示。
- */
 import {
   createContext,
   useCallback,
@@ -28,6 +29,7 @@ import {
   removeNotification,
 } from "@/components/notification";
 
+/** 全局 AI 状态值（Context 内容）：由 AiStatusProvider 计算并下发 */
 interface AiStatus {
   /** 目录与默认模型是否加载完成（加载中不弹横幅，避免闪烁） */
   loading: boolean;
@@ -41,8 +43,13 @@ interface AiStatus {
   ensureReady: () => void;
 }
 
+/** 全局 AI 状态上下文：Provider 写入，useAiStatus 读取；null 表示 Provider 未挂载 */
 const Ctx = createContext<AiStatus | null>(null);
 
+/**
+ * AI 状态 Provider：挂载于根布局，负责加载模型目录与默认模型，
+ * 计算 ready / label，并对外提供 refresh（重拉）与 ensureReady（就绪校验）。
+ */
 export function AiStatusProvider({ children }: { children: ReactNode }) {
   const [catalog, setCatalog] = useState<CatalogProvider[]>([]);
   const [defaultModel, setDefaultModel] = useState<DefaultModel | null>(null);
@@ -69,6 +76,7 @@ export function AiStatusProvider({ children }: { children: ReactNode }) {
    *  未设默认模型时后端会自动回退选择可用模型。 */
   const ready = catalog.some((p) => p.configured);
 
+  /** 当前默认模型展示标签（provider/model）；未配置默认模型时为 null */
   const label = defaultModel ? `${defaultModel.provider}/${defaultModel.model}` : null;
 
   const ensureReady = useCallback(() => {
@@ -84,6 +92,7 @@ export function AiStatusProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** 读取全局 AI 状态；必须在 <AiStatusProvider> 内调用，否则抛出错误。 */
 export function useAiStatus(): AiStatus {
   const ctx = useContext(Ctx);
   if (!ctx) throw new Error("useAiStatus 必须在 <AiStatusProvider> 内使用");
@@ -97,7 +106,9 @@ export function AiNotReadyBanner({ onConfigure }: { onConfigure?: () => void }) 
   // 已弹出的通知 id：避免重复弹；onConfigure 用 ref 持有，避免内联函数引起 effect 重跑
   const notifIdRef = useRef<number | null>(null);
   const onConfigureRef = useRef(onConfigure);
-  onConfigureRef.current = onConfigure;
+  useEffect(() => {
+    onConfigureRef.current = onConfigure;
+  });
 
   useEffect(() => {
     if (loading) return;

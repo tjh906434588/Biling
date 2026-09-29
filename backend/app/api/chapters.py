@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api/novels", tags=["chapters"])
 
 
 def _get_novel(db: Session, novel_id: uuid.UUID) -> Novel:
+    """按 id 取小说，不存在抛 404（各路由的前置校验）。"""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise HTTPException(404, "项目不存在")

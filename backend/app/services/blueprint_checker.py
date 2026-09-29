@@ -71,6 +71,7 @@ def serialize_blueprint(content: dict) -> str:
 
 
 def _bigrams(text: str) -> set[str]:
+    """提取文本的中文双字词集合（确定性扫描用：过滤非汉字后取相邻两字）。"""
     cjk = _CJK.sub("", text)
     return {cjk[i : i + 2] for i in range(len(cjk) - 1)}
 
@@ -101,6 +102,7 @@ def _deterministic_check(sections: list[dict], blueprint_text: str) -> list[dict
 
 
 async def _llm_check(db: Session, novel_id: uuid.UUID, sections: list[dict], blueprint_text: str) -> list[dict]:
+    """用 import_checker 角色逐节语义核对文档 vs 蓝图；失败重试一次，返回核对项列表。"""
     from app.agents.registry import get_agent
 
     doc_text = "\n\n".join(

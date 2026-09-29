@@ -1,3 +1,10 @@
+/**
+ * @file blueprint-panel.tsx
+ * 蓝图页面板：管理整本书的世界蓝图——版本列表、详情展示、新增生成、大纲文档导入与激活切换。
+ * 核心机制：生成任务走模块级 store + SSE（useSyncExternalStore，切页/刷新后仍可恢复）；
+ * 激活状态 1.5s 轮询（跨小说用 ref 隔离，避免误弹提示）；输入草稿与导入会话分别持久化
+ * 到 localStorage 断点续作；导入后骨架检测采用「关键词初筛 + LLM 语义校验覆盖」两段式。
+ */
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
@@ -22,6 +29,7 @@ import {
   type BlueprintRunStatus,
 } from "@/lib/blueprint-run";
 import { useElapsed } from "@/lib/use-elapsed";
+import { copyText } from "@/utils/clipboard";
 import AgentStreamModal from "./agent-stream-modal";
 import ConfirmDialog from "./confirm-dialog";
 import InfoTip from "./info-tip";
@@ -35,9 +43,11 @@ interface Props {
 }
 
 export default function BlueprintPanel({ novelId }: Props) {
+  // 蓝图版本列表（后端为单一事实来源：生成/删除/激活完成后重新拉取）
   const [items, setItems] = useState<Blueprint[]>([]);
   // 数据加载中：遮罩过渡，加载完成后解除
   const [loading, setLoading] = useState(true);
+  // 输入框内容：作者手填的要求，或「导入大纲」后的文档全文（生成前持久化，刷新后可反填）
   const [inputText, setInputText] = useState("");
   // 导入后骨架检测：关键词快速扫描立即提示，同时后台跑 LLM 语义校验覆盖结果（缺了提示，可跳过直接生成）
   const [outlineCheck, setOutlineCheck] = useState<OutlineCheckState | null>(null);
@@ -47,28 +57,36 @@ export default function BlueprintPanel({ novelId }: Props) {
   const [showAddModal, setShowAddModal] = useState(false);
   // 导入后骨架 LLM 校验的取消控制器：清除导入/关闭弹窗/开始生成/刷新页面时 abort，避免请求继续跑完白耗资源
   const checkAbortRef = useRef<AbortController | null>(null);
+  // 当前选中的蓝图 id：默认跟随「生效中」版本，用户手动点选后以点选为准
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 待删除的蓝图：非空即弹出删除确认框，确认后才真正执行删除
   const [delTarget, setDelTarget] = useState<Blueprint | null>(null);
   // 激活确认：激活会把该蓝图内容注入写作/大纲/设定等页面，先弹风险确认框
   const [activateTarget, setActivateTarget] = useState<Blueprint | null>(null);
   // 正在后台激活的蓝图 id（按钮防抖 + 刷新/切页后从后端恢复「激活中…」；成功/失败才置空）
   const [activatingId, setActivatingId] = useState<string | null>(null);
+  // 删除请求进行中：防止删除确认框被重复提交
   const [deleting, setDeleting] = useState(false);
   // 生成过程弹窗（DeepSeek 风格：思考过程折叠块 + 正文流式滚动），内容展示复用公共组件
   const [showStreamModal, setShowStreamModal] = useState(false);
+  // AI 服务状态检查：生成前确认模型已配置可用，未配置则抛错拦截（避免发起注定失败的空请求）
   const { ensureReady } = useAiStatus();
 
   // 输入框内容：可手填作者要求，或「导入大纲」后填入文档全文（此时点「识别为蓝图」）
   // importName 非空 = 当前内容是导入的文档
   const [importName, setImportName] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  // 隐藏的文件选择框 ref：点「导入大纲」按钮时触发其 click()
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // 文本框 ref：预留聚焦/滚动控制
   const boxRef = useRef<HTMLTextAreaElement | null>(null);
 
   // 生成任务状态来自模块级 store：切到其他 tab 再回来，流式输出/进度/结果依然在
   // 第三参 getServerSnapshot：SSR/预渲染时返回模块级初始态（React 19 要求），避免 500
   const run = useSyncExternalStore(subscribeBlueprintRun, getBlueprintRun, getBlueprintRun);
+  // 是否为「本小说」正在生成：run 是模块级 store，可能是其他小说的任务，必须按 novelId 过滤
   const running = run.novelId === novelId && run.status === "running";
+  // 生成已耗时（仅 running 期间走表，任务停止/切走后归零）
   const elapsed = useElapsed(running, running ? run.startedAt : null);
 
   // 输入框内容持久化：生成/导入时写入 localStorage，刷新或切换页面回来后自动反填，
@@ -113,6 +131,7 @@ export default function BlueprintPanel({ novelId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importName, inputText, outlineCheck, run.novelId, run.status, novelId]);
 
+  /** 拉取该小说的蓝图版本列表：成功写入 items 并返回列表；失败弹错误提示并返回 []（调用方据返回值判断）。 */
   const load = useCallback(async (): Promise<Blueprint[]> => {
     setLoading(true);
     try {
@@ -256,7 +275,6 @@ export default function BlueprintPanel({ novelId }: Props) {
       void load();
     }
     prevStatus.current = run.status;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.status, run.novelId, novelId, load]);
 
   // 生成结束（本页或后台完成）：刷新版本列表 + 关闭弹窗清空草稿 + 弹 Message 消息提示（居中靠上）。
@@ -293,6 +311,8 @@ export default function BlueprintPanel({ novelId }: Props) {
   const selected = items.find((b) => b.id === selectedId) ?? items.find((b) => b.status === "active") ?? items[0] ?? null;
   const c = selected?.content;
 
+  /** 发起蓝图生成：校验输入与 AI 配置 → 草稿持久化 → 按「导入/手写」两种模式启动后台任务。
+   *  成功判定：任务已交给后端即视为成功发起（run 进入 running，SSE 完成/失败由下方 status 监听 effect 统一提示）。 */
   function handleGenerate() {
     if (!inputText.trim()) {
       message.error("请输入作者要求，或先点「导入大纲」填入文档内容。");
@@ -352,6 +372,8 @@ export default function BlueprintPanel({ novelId }: Props) {
       });
   }
 
+  /** 导入大纲文档：上传解析成功后将全文填入输入框并记录文件名，随后触发骨架检测
+   *  （关键词初筛立即提示 + 后台 LLM 语义校验结果回来覆盖）。 */
   async function handleImportFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ""; // 允许再次选择同一文件
@@ -399,6 +421,9 @@ export default function BlueprintPanel({ novelId }: Props) {
     setActivateTarget(b);
   }
 
+  /** 执行激活：先置「激活中…」防重复点击 → 调后端接口。
+   *  成功判定：后端返回 running=false 说明已生效（并发下其他请求已完成），无需轮询直接刷新；
+   *  返回 running=true 则进入轮询，直到任务成功/失败才退出「激活中…」。 */
   async function doActivate(b: Blueprint) {
     if (activatingId) return;
     // 先置「激活中…」：按钮立即反馈，且防止重复点击（后端同样有并发兜底 409）
@@ -424,6 +449,7 @@ export default function BlueprintPanel({ novelId }: Props) {
     pollActivation(novelId);
   }
 
+  /** 激活确认框回调：关闭确认框后执行激活（activatingId 非空说明已在激活，忽略本次点击）。 */
   async function confirmActivate() {
     if (!activateTarget || activatingId) return;
     const b = activateTarget;
@@ -435,6 +461,7 @@ export default function BlueprintPanel({ novelId }: Props) {
     setDelTarget(b);
   }
 
+  /** 执行删除：成功后若删的是当前选中项则清空选中、刷新列表；deleting 标志防重复提交。 */
   async function confirmDelete() {
     if (!delTarget || deleting) return;
     setDeleting(true);
@@ -488,6 +515,7 @@ export default function BlueprintPanel({ novelId }: Props) {
     setShowAddModal(true);
   }
 
+  /** 生效状态徽章（纯展示）：生效中 / 未生效。 */
   const statusBadge = (s: Blueprint["status"]) =>
     s === "active" ? (
       <span className="shrink-0 whitespace-nowrap rounded bg-green-100 px-1.5 py-0.5 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">生效中</span>
@@ -819,7 +847,7 @@ export default function BlueprintPanel({ novelId }: Props) {
                     <li><b>世界观/规则</b>：题材相关才写（系统/力量体系/世界规则）</li>
                     <li><b>伏笔计划</b>：选填，有具体埋/揭安排才写（无则留空，由大纲师规划）</li>
                     <li><b>爽点/节奏规划</b>：通用模块，按前期/中期/后期排爽点·钩子·糖点，防节奏枯竭</li>
-                    <li><b>差异化/卖点定位</b>：通用模块，对标作品 · 独特设定 · 立意/平台卖点，回答"凭什么被记住"</li>
+                    <li><b>差异化/卖点定位</b>：通用模块，对标作品 · 独特设定 · 立意/平台卖点，回答&ldquo;凭什么被记住&rdquo;</li>
                   </ol>
                   <p className="mt-1.5 text-[11px] text-zinc-400">
                     点击按钮复制模板文本：可粘贴进文本框作为底稿，或发给 AI 按模板整理你的大纲。
@@ -1040,29 +1068,3 @@ const OUTLINE_TEMPLATE_TEXT = `请把我的大纲信息，按下面模板整理�
 八、差异化/卖点定位（通用模块：回答"凭什么不撞文、凭什么被记住"）
 - 对标作品 / 独特设定：
 - 立意 / 平台卖点：`;
-
-/** 复制文本到剪贴板：优先异步 Clipboard API；权限被拒/不可用时回退 execCommand。 */
-function copyText(text: string): Promise<void> {
-  const fallback = () =>
-    new Promise<void>((resolve, reject) => {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        if (document.execCommand("copy")) resolve();
-        else reject(new Error("execCommand copy 失败"));
-      } catch (e) {
-        reject(e);
-      } finally {
-        document.body.removeChild(ta);
-      }
-    });
-  if (navigator.clipboard?.writeText) {
-    return navigator.clipboard.writeText(text).catch(() => fallback());
-  }
-  return fallback();
-}
-

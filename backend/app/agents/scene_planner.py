@@ -126,6 +126,8 @@ class ScenePlannerAgent(Agent[ScenePlanProposal]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配场景规划上下文：复用大纲师素材，按 plan（整章拆场景）/proposal（单场景写法提案）
+        两种模式注入对应任务指令。"""
         # 复用大纲师的素材组装（与大纲/章节规划同一套上下文），仅替换 system prompt 与任务指令。
         base: ContextPack = OutlinerAgent(self.db).build_context(novel_id, params)
 
@@ -222,6 +224,7 @@ class ScenePlannerAgent(Agent[ScenePlanProposal]):
         )
 
     def parse_output(self, text: str):
+        """把 LLM 返回的 JSON 按文本结构自判：含 proposals+scene_index 为写法提案，否则为场景规划。"""
         # build_context 把模式放进 meta，但 parse_output 只拿到文本；用文本结构自判（scenes vs proposals）
         stripped = text.strip()
         if '"proposals"' in stripped and '"scene_index"' in stripped:

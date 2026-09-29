@@ -52,6 +52,7 @@ class OutlineCheckerAgent(Agent[OutlineSkeletonCheck]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配骨架校验上下文：注入导入的全书大纲文档，要求判断六个骨架模块覆盖情况。"""
         doc_text = params.get("doc_text", "")
         user_content = (
             f"以下是作者导入的全书大纲文档（已按标题切分，每节以【标题】开头）：\n\n"
@@ -72,6 +73,7 @@ class OutlineCheckerAgent(Agent[OutlineSkeletonCheck]):
         )
 
     def parse_output(self, text: str) -> OutlineSkeletonCheck:
+        """把 LLM 返回的六模块校验 JSON 解析为 OutlineSkeletonCheck（容忍代码围栏/夹带文字）。"""
         raw = text.strip()
         # 容忍 LLM 输出包在 markdown 代码围栏里、或首尾夹带多余说明文字：提取 JSON 主体再解析
         if not raw.startswith("{"):

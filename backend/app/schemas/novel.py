@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class NovelCreate(BaseModel):
+    """新建小说入参：标题 + 可选的前提/背景类型/题材。"""
     title: str = Field(..., min_length=1, max_length=255)
     premise: Optional[str] = None
     # 世界背景类型（可留空）：realistic=现实年代 | alternate=半架空 | pure_fantasy=纯架空
@@ -31,6 +32,7 @@ class NovelUpdate(BaseModel):
 
 
 class NovelRead(BaseModel):
+    """小说读取：项目信息 + 文风/背景/题材/时代研究等。"""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -47,6 +49,7 @@ class NovelRead(BaseModel):
 
 
 class SettingCreate(BaseModel):
+    """新增设定条目入参：类型 / 名称 / 来源 / 描述 / 结构化字段等。"""
     type: str = Field(..., pattern="^(character|location|faction|world_rule|item|concept)$")
     name: str = Field(..., min_length=1, max_length=255)
     # 数据来源（隐藏字段，不展示界面）：blueprint 蓝图导入 | batch 设定页批量新增 | manual 单个新增
@@ -65,6 +68,7 @@ class SettingUpdate(BaseModel):
 
 
 class SettingRead(BaseModel):
+    """设定条目读取：类型/名称/来源/所属蓝图版本/结构化内容等。"""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID

@@ -101,6 +101,8 @@ class OutlinerAgent(Agent[ChapterOutline]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配大纲生成上下文：按章节阶段过滤设定/账本/关系，支持重写模式（注入前后已写情节），
+        组装可裁剪组件。"""
         novel = get_novel(self.db, novel_id)
         try:
             chapter_no = int(params.get("chapter_no"))
@@ -288,4 +290,5 @@ class OutlinerAgent(Agent[ChapterOutline]):
         )
 
     def parse_output(self, text: str) -> ChapterOutline:
+        """把 LLM 返回的章节大纲 JSON 解析为 ChapterOutline。"""
         return ChapterOutline.model_validate_json(text.strip())

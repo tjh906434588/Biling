@@ -32,6 +32,7 @@ class StyleExtractorAgent(Agent[StyleExtraction]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配风格提取上下文：注入导入的大纲文档（截断 16000 字），要求提炼全局文风描述。"""
         source_doc = params.get("source_doc", "")[:16000]
         title = params.get("title") or str(novel_id)
         user_content = (
@@ -52,4 +53,5 @@ class StyleExtractorAgent(Agent[StyleExtraction]):
         )
 
     def parse_output(self, text: str) -> StyleExtraction:
+        """把 LLM 返回的风格描述 JSON 解析为 StyleExtraction。"""
         return StyleExtraction.model_validate_json(text.strip())

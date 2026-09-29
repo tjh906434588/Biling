@@ -16,6 +16,7 @@ from app.llm.routes import get_user_default_model, list_routes
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
+# 全部任务类型：设定 / 创作 / 评价 / 提取 / 对话（高级设置路由按 task_type 唯一）
 TASK_TYPES = ["setting", "creation", "review", "extract", "chat"]
 
 # 页面「添加模型」弹窗的预置服务商目录（参考 TRAE：自定义模型置顶 + 预设服务商 + 选模型填 Key）
@@ -243,6 +244,7 @@ MODEL_CATALOG: list[dict] = [
 
 
 class ProbeRequest(BaseModel):
+    """模型探测入参：provider + api_key（仅本次探测使用，不落库）+ 可选 base_url / model。"""
     provider: str = Field(..., description="如 openai / deepseek / qwen / anthropic")
     api_key: str = Field(..., description="该 provider 的 API Key（仅本次探测使用，不落库）")
     base_url: str | None = None
@@ -250,6 +252,7 @@ class ProbeRequest(BaseModel):
 
 
 class ProbeResponse(BaseModel):
+    """模型探测结果：该 Key 可用的模型 id 列表。"""
     models: list[str]
 
 
@@ -265,6 +268,7 @@ class RouteUpsert(BaseModel):
 
 
 class RouteRead(BaseModel):
+    """路由读模型（ORM 直读返回，对应 model_routes 表）。"""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -293,6 +297,7 @@ class CustomModelSave(BaseModel):
 
 
 class DefaultModel(BaseModel):
+    """默认模型保存入参：provider + model（页面「模型接入」选择的全任务默认）。"""
     provider: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
 
@@ -666,6 +671,7 @@ def upsert_route(payload: RouteUpsert, db: Session = Depends(get_db)):
 
 @router.patch("/routes/{route_id}", response_model=RouteRead)
 def update_route(route_id: uuid.UUID, payload: RouteUpsert, db: Session = Depends(get_db)):
+    """按 id 更新路由的全部配置（模型/温度/上下文窗口/是否默认）。"""
     row = db.get(ModelRoute, route_id)
     if row is None:
         raise HTTPException(404, "路由不存在")

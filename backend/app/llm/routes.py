@@ -22,6 +22,8 @@ _DEFAULT_TASK_MODELS: dict[str, str] = {
 
 @dataclass
 class RouteConfig:
+    """某任务类型的路由解析结果：目标模型/provider/温度/上下文窗口等，供 gateway 发起请求。"""
+
     task_type: str
     model: str
     provider: str = "openai"
@@ -32,6 +34,7 @@ class RouteConfig:
 
     @property
     def full_model(self) -> str:
+        """litellm 完整模型名：provider/model 拼接；模型名自带 /（自定义模型）时原样返回。"""
         # LiteLLM 格式：provider/model，如 deepseek/deepseek-chat
         if "/" in self.model and "litellm" in self.provider.lower():
             return self.model

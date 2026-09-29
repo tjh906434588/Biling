@@ -1,5 +1,8 @@
 """按 era_research.scope_issues 的 genres 建议，补写 novel.genres（模拟修复后的 apply_fix 逻辑）。
 仅用于修复历史数据：novel.genres 因裸 JSON 列原地 append 不被 SQLAlchemy 追踪而未落库。
+
+用法：python scripts/fix_genres.py
+固定修复脚本内 NOVEL_ID 指定的一本小说，直接 UPDATE 落库。
 """
 import json
 import re

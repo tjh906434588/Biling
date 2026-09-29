@@ -1,31 +1,29 @@
+/**
+ * @file page.tsx
+ * 首页（书架）：展示全部小说作品卡片，支持新建 / 编辑 / 删除。
+ * 核心机制：三种渲染态——加载骨架屏 / 空书架欢迎指引 + 内联新建表单 / 作品网格；
+ * 新建/编辑/删除均走「全屏 Loading 遮罩（operating）+ 操作完成后重新拉取列表再解锁」防止重复提交；
+ * 空书架且首次进入时自动展开欢迎面板（localStorage 键 GUIDE_KEY 记录是否已关闭）。
+ */
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { listNovels, createNovel, updateNovel, deleteNovel, type Novel } from "@/lib/api";
 import Brand from "@/components/brand";
 import NovelCover from "@/components/novel-cover";
-import { ONBOARDING_STEPS } from "@/components/onboarding";
 import { message } from "@/components/message";
-import { BACKGROUND_TYPES, BackgroundTypePicker, GenrePicker } from "@/components/novel-meta";
-
-const GUIDE_KEY = "biling.guide.hidden";
-
-function formatDate(iso?: string): string {
-  if (!iso) return "刚刚";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "刚刚";
-  const diff = Date.now() - d.getTime();
-  const HOUR = 3_600_000;
-  const DAY = 86_400_000;
-  if (diff < HOUR) return "刚刚";
-  if (diff < DAY) return `${Math.floor(diff / HOUR)} 小时前`;
-  if (diff < 30 * DAY) return `${Math.floor(diff / DAY)} 天前`;
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
+import { BackgroundTypePicker, GenrePicker } from "@/components/novel-meta";
+import { BACKGROUND_TYPES, GUIDE_KEY, ONBOARDING_STEPS } from "@/constants";
+import { formatDate } from "@/utils/format";
 
 /* ── 新建小说弹窗：工具类应用的轻对话框，而不是页面里的一块表单 ── */
+/**
+ * 新建小说弹窗：输入书名/简介/背景类型/题材后调用 createNovel 创建。
+ * @param onClose 关闭弹窗
+ * @param onCreated 创建成功回调（拿到新小说后跳转工作台）
+ */
 function CreateDialog({
   onClose,
   onCreated,
@@ -144,6 +142,13 @@ function CreateDialog({
 }
 
 /* ── 编辑小说弹窗：预填书名/一句话简介，保存走 updateNovel ── */
+/**
+ * 编辑小说弹窗：以目标小说初始化表单，保存后回调编辑后的字段。
+ * @param novel 被编辑的小说（用于预填表单）
+ * @param busy 全屏操作进行中（禁用提交，防重复）
+ * @param onClose 关闭弹窗
+ * @param onSaved 保存回调（携带 title / premise / background_type / genres）
+ */
 function EditDialog({
   novel,
   busy,
@@ -252,6 +257,13 @@ function EditDialog({
 }
 
 /* ── 删除确认弹窗：删除不可恢复，需二次确认 ── */
+/**
+ * 删除确认弹窗：明确告知删除范围且不可恢复，需用户二次确认。
+ * @param novel 待删除的小说（展示书名）
+ * @param busy 全屏操作进行中（禁用按钮）
+ * @param onClose 取消删除
+ * @param onConfirm 确认删除回调
+ */
 function DeleteDialog({
   novel,
   busy,
@@ -293,7 +305,9 @@ function DeleteDialog({
   );
 }
 
+/** 首页（书架）组件：作品网格 + 新建/编辑/删除弹窗 + 空书架欢迎指引 */
 export default function Home() {
+  const router = useRouter();
   const [novels, setNovels] = useState<Novel[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -303,9 +317,12 @@ export default function Home() {
   const [deleteTarget, setDeleteTarget] = useState<Novel | null>(null);
   /** 进行中的删除/编辑操作：非 null 时盖全屏 Loading 遮罩，操作完成并重新拉取数据后才解锁。 */
   const [operating, setOperating] = useState<null | { kind: "edit" | "delete"; title: string }>(null);
-  const [guideHidden, setGuideHidden] = useState(true);
+  // 空书架欢迎指引是否隐藏；state 值本身未使用，只通过 setter 切换渲染分支
+  const [, setGuideHidden] = useState(true);
+  /** 是否已做过「空书架自动展开欢迎面板」（仅首次且书架为空时执行一次） */
   const autoOpened = useRef(false);
 
+  /** 拉取小说列表；若书架为空且首次进入，自动展开欢迎面板（少一次点击） */
   async function refresh() {
     try {
       const list = await listNovels();
@@ -366,6 +383,7 @@ export default function Home() {
     }
   }, []);
 
+  /** 关闭空书架指引并写入 localStorage，之后不再展示 */
   function hideGuide() {
     setGuideHidden(true);
     try {
@@ -426,7 +444,7 @@ export default function Home() {
               {/* 开工表单：空状态下直接给，不用点「新建」 */}
               <div className="card p-5 sm:p-6">
                 <h2 className="font-serif text-[15px] font-medium text-zinc-900">开一本新书</h2>
-                <EmptyCreate onCreated={(n) => (window.location.href = `/workspace/${n.id}`)} />
+                <EmptyCreate onCreated={(n) => router.push(`/workspace/${n.id}`)} />
                 <button
                   type="button"
                   className="mt-4 text-[12px] text-zinc-400 transition-colors hover:text-zinc-600"
@@ -547,7 +565,7 @@ export default function Home() {
       {showCreate && (
         <CreateDialog
           onClose={() => setShowCreate(false)}
-          onCreated={(n) => (window.location.href = `/workspace/${n.id}`)}
+          onCreated={(n) => router.push(`/workspace/${n.id}`)}
         />
       )}
 
@@ -594,6 +612,10 @@ export default function Home() {
 }
 
 /* 空状态里的内联新建表单（与弹窗同逻辑，少一层弹窗） */
+/**
+ * 空书架欢迎面板内的内联新建表单：逻辑与 CreateDialog 相同，省去弹窗层级。
+ * @param onCreated 创建成功回调（跳转工作台）
+ */
 function EmptyCreate({ onCreated }: { onCreated: (n: Novel) => void }) {
   const [title, setTitle] = useState("");
   const [premise, setPremise] = useState("");

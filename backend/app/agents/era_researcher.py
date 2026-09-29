@@ -128,6 +128,7 @@ class EraResearcherAgent(Agent[EraResearch]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配研究上下文：注入项目信息与可参考素材；背景类型未选时如实告知 AI（引导其按素材推断并产出建议）。"""
         novel = get_novel(self.db, novel_id)
         # 未选择背景类型时如实告知 AI「（未选择）」，让它按素材推断并产出建议，
         # 而不是兜底当成 realistic（那样 AI 永远不知道作者没选，不会引导确认）
@@ -153,4 +154,5 @@ class EraResearcherAgent(Agent[EraResearch]):
         )
 
     def parse_output(self, text: str) -> EraResearch:
+        """把 LLM 返回的「年代×行业」研究知识包 JSON 解析为 EraResearch。"""
         return EraResearch.model_validate_json(text.strip())

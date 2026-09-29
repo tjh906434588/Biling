@@ -1,11 +1,14 @@
+/**
+ * @file ledger-panel.tsx
+ * 伏笔账本面板：按「待回收 / 已回收」泳道展示小说伏笔，并给出超期与久未回收预警。
+ * 核心机制：前端按 status（open/closed）分流泳道；overdue（超过目标揭示章）
+ * 与 stale（搁置超 5 章）字段驱动顶部预警横幅与条目底色。
+ */
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import {
-  LEDGER_TYPE_LABELS,
-  listLedger,
-  type LedgerItem,
-} from "@/lib/api";
+import { listLedger, type LedgerItem } from "@/lib/api";
+import { LEDGER_TYPE_LABELS } from "@/constants";
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
 
@@ -13,6 +16,7 @@ interface Props {
   novelId: string;
 }
 
+/** 紧迫度徽标配色：≥8 红、≥5 琥珀、其余灰；null（无紧迫度）灰。 */
 function urgencyColor(u: number | null): string {
   if (u == null) return "bg-zinc-100 text-zinc-500 dark:bg-zinc-800";
   if (u >= 8) return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
@@ -20,10 +24,15 @@ function urgencyColor(u: number | null): string {
   return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800";
 }
 
+/**
+ * 伏笔账本面板主组件。
+ * @param novelId 当前小说 id。
+ */
 export default function LedgerPanel({ novelId }: Props) {
   const [items, setItems] = useState<LedgerItem[]>([]);
   const [loading, setLoading] = useState(true);
 
+  /** 拉取伏笔清单；失败仅弹错误提示。 */
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -39,11 +48,16 @@ export default function LedgerPanel({ novelId }: Props) {
     void load();
   }, [load]);
 
+  /** 待回收伏笔（status === "open"），进左侧泳道 */
   const openItems = items.filter((i) => i.status === "open");
+  /** 已回收伏笔，进右侧泳道 */
   const closedItems = items.filter((i) => i.status !== "open");
+  /** 超期未回收的伏笔（已过目标揭示章），触发红色预警 */
   const overdue = openItems.filter((i) => i.overdue);
+  /** 久未回收但未超期的伏笔，触发琥珀色预警 */
   const staleOnly = openItems.filter((i) => i.stale && !i.overdue);
 
+  /** 渲染单条伏笔：类型/紧迫度/状态徽标 + 描述 + 埋章/目标揭示章/关联实体。 */
   function renderItem(item: LedgerItem) {
     return (
       <li

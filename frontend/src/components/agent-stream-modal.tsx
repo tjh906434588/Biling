@@ -1,3 +1,9 @@
+/**
+ * @file agent-stream-modal.tsx
+ * AI 生成过程弹窗：深度思考折叠条 + 正文流式滚动的打字机展示，蓝图师/大纲师等生成任务共用。
+ * 核心机制：SSE 收到的文本经 useTypewriter 逐字播放（按积压量自动调速、流结束立即补全）；
+ * 生成期间可内嵌「作者确认」面板——确认点暂停生成流程，作者答复后自动继续。
+ */
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -9,6 +15,7 @@ import {
   setInlineHost,
   subscribeAuthorConfirms,
 } from "./author-confirm";
+import { formatElapsed } from "@/utils/format";
 
 /** SSR 服务端快照：恒为空，且引用稳定（避免 "getServerSnapshot should be cached" 警告） */
 const EMPTY_CONFIRM_SNAPSHOT: ReturnType<typeof getAuthorConfirms> = [];
@@ -35,15 +42,6 @@ interface AgentStreamModalProps {
   novelId?: string;
 }
 
-/** 格式化已用时：不足 1 分钟显示秒（如 37s），满 1 分钟显示分+秒（如 1m05s、2m00s） */
-function formatElapsed(sec: number): string {
-  const s = Math.max(0, Math.floor(sec));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}m${String(r).padStart(2, "0")}s`;
-}
-
 /**
  * 打字机逐字播放：把已经收到的文本按节奏「逐字打印」出来（而非整段整段蹦出）。
  * - 流式追加期间按积压量自动调速：积压越多打得越快，尽量跟手
@@ -58,7 +56,9 @@ function useTypewriter(text: string, open: boolean, running: boolean): string {
   // 打字机停在 0 字 → 全程只见占位文字。改为 interval 只随 [open, running] 启停，
   // 每帧从 ref 读最新长度，稳定推进、按积压量调速。
   const textRef = useRef(text);
-  textRef.current = text;
+  useEffect(() => {
+    textRef.current = text;
+  });
 
   // 新一轮生成开始（文本被清空）时重置打字位置
   useEffect(() => {
@@ -117,7 +117,8 @@ export default function AgentStreamModal({
   emptyDoneText,
   novelId,
 }: AgentStreamModalProps) {
-  const [thinkingOpen, setThinkingOpen] = useState(true);
+  const [thinkingOpen, setThinkingOpen] = useState(true); // 深度思考折叠条是否展开：生成中自动展开、完成后自动收起
+  // 正文 / 深度思考滚动区引用：自动吸底时定位到「正在增长」的一侧的末尾
   const streamRef = useRef<HTMLPreElement | null>(null);
   const thinkingRef = useRef<HTMLPreElement | null>(null);
   // 记录上一帧已打字长度，判断是「深度思考」还是「正文」在增长，吸底到对应的末尾

@@ -1,3 +1,9 @@
+"""全量检查 backend/biling.db：输出表结构与关键表数据。
+
+用法：python scripts/db_inspect_full.py
+输出 author_confirms 表结构，并打印 novels、agent_tasks（按创建时间倒序）、
+author_confirms 三张表的完整字段内容。
+"""
 import json
 import sqlite3
 

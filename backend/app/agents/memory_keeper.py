@@ -57,6 +57,8 @@ class MemoryKeeperAgent(Agent[ChronicleOutput]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配编年上下文：注入全部故事快照（摘要+high/medium 事件）、账本 open 项、
+        蓝图与关系图谱，压缩为固定大小的作品编年总览。"""
         novel = get_novel(self.db, novel_id)
         # 全部故事快照（按章升序）：每章只取摘要 + high 关键事件，压缩输入体积
         states = get_story_states_matching_active(self.db, novel_id)
@@ -107,4 +109,5 @@ class MemoryKeeperAgent(Agent[ChronicleOutput]):
         )
 
     def parse_output(self, text: str) -> ChronicleOutput:
+        """把 LLM 返回的作品编年总览 JSON 解析为 ChronicleOutput。"""
         return ChronicleOutput.model_validate_json(text.strip())

@@ -1,3 +1,11 @@
+/**
+ * @file notification.tsx
+ * 全局 Notification 通知：右上角堆叠的通知卡片，`notification.success/warning/info/error()` 命令式调用。
+ * 核心机制：模块级通知队列 + 订阅发布，由根布局的 NotificationHost 挂载点渲染；
+ * 支持常驻/自动消失、点击跳转、操作区，按 id 关闭或静默移除。
+ * 分工：notification=右上角通知（跨页/后台任务/其它小说的确认提醒，信息量大、可点击跳转）；
+ * message=居中靠上的轻量消息（当前页操作结果）——两套组件不要混用。
+ */
 "use client";
 
 /**
@@ -9,40 +17,28 @@
  *
  * 与居中靠上的 Message（消息提示）是两个不同的东西，不要混用。
  */
-import { useEffect, useState, type ReactNode } from "react";
-
-export type NotificationType = "success" | "warning" | "info" | "error";
-
-export interface NotificationOptions {
-  /** 标题（加粗主行，可多行文本） */
-  title?: ReactNode;
-  /** 描述正文（位于标题下方，可多行换行） */
-  message?: ReactNode;
-  /** 自动消失时长（ms），默认 4500；传 0 表示不自动消失 */
-  duration?: number;
-  /** 是否显示右上角关闭按钮，默认 true */
-  closable?: boolean;
-  /** 消失（自动或手动关闭）后回调 */
-  onClose?: () => void;
-  /** 点击通知卡片触发（如跳转到对应小说工作台）；设置后整张卡片可点击 */
-  onClick?: () => void;
-  /** 操作区（按钮等 ReactNode），渲染在描述下方（分隔线之上）；卡片默认不可整体点击时按钮各自响应 */
-  actions?: ReactNode;
-}
+import { useEffect, useState } from "react";
+import type { NotificationOptions, NotificationType } from "@/types/ui";
+export type { NotificationOptions, NotificationType };
 
 interface NotificationItem extends NotificationOptions {
   id: number;
   type: NotificationType;
 }
 
+/** 通知自增 id：用于 React key 与按 id 关闭/移除定位。 */
 let seq = 0;
+/** 当前展示中的通知队列（模块级：全局 API 写入、挂载点读取，跨组件共享）。 */
 let items: NotificationItem[] = [];
+/** 订阅者集合：NotificationHost 挂载点订阅队列变化以重渲染。 */
 const listeners = new Set<() => void>();
 
+/** 通知所有订阅者：队列已变化。 */
 function emit() {
   listeners.forEach((l) => l());
 }
 
+/** 入队一条通知并返回其 id（供调用方按 id 关闭/移除）。 */
 function push(type: NotificationType, options: NotificationOptions = {}): number {
   const item: NotificationItem = {
     id: ++seq,
@@ -113,6 +109,7 @@ const TYPE_CLS: Record<NotificationType, { wrap: string; icon: string; title: st
   },
 };
 
+/** 单条通知卡片：标题 + 描述 + 可选操作区 + 自动消失计时；设置了 onClick 时整卡可点击跳转。 */
 function NotificationCard({ item }: { item: NotificationItem }) {
   // 自动消失：duration=0 表示常驻（需手动关闭）
   useEffect(() => {

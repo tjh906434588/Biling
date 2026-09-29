@@ -36,6 +36,7 @@ _TRANSITION_PATTERNS = [r"但是", r"然而", r"不过", r"却", r"因此", r"�
 
 
 def _count_patterns(text: str, patterns: list[str]) -> int:
+    """统计一组正则模式在文本中的总命中次数（regex 词法规则层用）。"""
     return sum(len(re.findall(p, text)) for p in patterns)
 
 
@@ -141,6 +142,7 @@ _QUOTE = re.compile(r"[“”\"'「」]")
 
 
 def density_stats(text: str) -> DensityStats:
+    """统计文本的密度指纹：句长分布/变异、逗号密度、转折词、语气词、对话占比等。"""
     sents = [s.strip() for s in _SENT_SPLIT.split(text) if s.strip()]
     n = len(sents)
     if n == 0:

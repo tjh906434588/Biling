@@ -19,10 +19,12 @@ from app.schemas.concept import ConceptCardRead, ConceptConfirmResult
 
 router = APIRouter(prefix="/api/novels", tags=["concepts"])
 
+# 允许转正为设定库条目的概念类型（world_rule 转正为宪法，其余建普通设定）
 _SETTING_TYPES = {"character", "location", "faction", "world_rule", "item", "concept"}
 
 
 def _get_card(novel_id: uuid.UUID, card_id: uuid.UUID, db: Session) -> ConceptCard:
+    """按 id 取概念卡片并校验归属该小说（跨小说访问或不存在时抛 404）。"""
     card = db.get(ConceptCard, card_id)
     if card is None or card.novel_id != novel_id:
         raise HTTPException(404, "概念卡片不存在")
@@ -35,6 +37,7 @@ def list_concepts(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
+    """概念卡片列表（创建时间倒序）；?status= 可按状态过滤（pending/integrated/rejected）。"""
     if db.get(Novel, novel_id) is None:
         raise HTTPException(404, "项目不存在")
     stmt = select(ConceptCard).where(ConceptCard.novel_id == novel_id)
@@ -112,6 +115,7 @@ def confirm_concept(novel_id: uuid.UUID, card_id: uuid.UUID, db: Session = Depen
 
 @router.post("/{novel_id}/concepts/{card_id}/reject", response_model=ConceptCardRead)
 def reject_concept(novel_id: uuid.UUID, card_id: uuid.UUID, db: Session = Depends(get_db)):
+    """拒绝概念：卡片置 rejected（已转正的卡片不可再拒绝）。"""
     card = _get_card(novel_id, card_id, db)
     if card.status == "integrated":
         raise HTTPException(400, "已转正的卡片不可拒绝")

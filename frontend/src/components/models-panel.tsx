@@ -1,3 +1,10 @@
+/**
+ * @file models-panel.tsx
+ * 模型管理面板：展示当前默认模型与服务商接入状态，提供添加/切换模型（弹窗）入口；
+ * 高级设置可为「设定/创作/评价/提取」四类任务分别指定模型。
+ * 核心机制：任务路由（ModelRoute）按任务类型映射服务商+模型+温度，留空即回退默认模型；
+ * 保存后同步刷新路由列表与全局 AI 就绪状态（顶部红条即时消失）。
+ */
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -50,8 +57,10 @@ export default function ModelsPanel() {
   const [catalog, setCatalog] = useState<CatalogProvider[]>([]);
   const [defaultModel, setDefaultModelState] = useState<DefaultModel | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  /** 从页面服务商状态点进来时记录的目标服务商名，弹窗据此定位到其详情 */
   const [pendingProvider, setPendingProvider] = useState<string | null>(null);
 
+  /** 拉取任务路由列表（高级设置当前配置现状）。 */
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -63,6 +72,7 @@ export default function ModelsPanel() {
     }
   }, []);
 
+  /** 并行拉取模型目录与默认模型（服务商状态徽标与弹窗的数据源）。 */
   const loadModels = useCallback(async () => {
     setLoadingModels(true);
     try {
@@ -81,6 +91,7 @@ export default function ModelsPanel() {
     loadModels();
   }, [load, loadModels]);
 
+  /** 打开添加模型弹窗；传入 provider 时定位到该服务商详情，否则停在列表视图。 */
   const openPicker = (provider?: string) => {
     setPendingProvider(provider ?? null);
     setPickerOpen(true);
@@ -92,6 +103,7 @@ export default function ModelsPanel() {
     [pendingProvider, catalog],
   );
 
+  /** 温度容错解析：空串/非法输入返回 null（表示用默认值）。 */
   const num = (v: string | number): number | null => {
     if (v === "" || v === null || v === undefined) return null;
     const n = Number(v);

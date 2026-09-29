@@ -19,6 +19,7 @@ class LedgerUpdate(BaseModel):
 
 
 class LedgerRead(BaseModel):
+    """伏笔账本条目读取：伏笔信息 + 状态 + 超期/久未处理标记。"""
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID

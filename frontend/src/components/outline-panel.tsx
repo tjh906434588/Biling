@@ -1,3 +1,10 @@
+/**
+ * @file outline-panel.tsx
+ * 大纲页面板：大纲师逐章生成章节大纲（卷分组列表 / 详情 / 多版本切换），并支持批准注入与伏笔账本。
+ * 核心机制：AI 生成走 SSE（runAgent）流式输出 + author_confirm 作者确认 + stored 落库标记；
+ * 刷新/切页后用 getAgentRunningTask 轮询恢复进行中任务；批准注入用 1.5s 轮询（跨小说用 ref 隔离）；
+ * 全程以 liveNovelRef + mountedRef 守卫，切页签/切小说后不误弹提示、不用旧结果刷新。
+ */
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -8,6 +15,7 @@ import {
   getActiveBlueprint,
   getAgentRunningTask,
   getOutlineApprovalStatus,
+  getStreamStatus,
   listOutlines,
   listOutlineVersions,
   listSettings,
@@ -15,7 +23,6 @@ import {
   runAgent,
   type AgentRunningTaskResult,
   type AuthorConfirm,
-  type Blueprint,
   type Outline,
   type OutlineApprovalStatusResult,
   type Setting,
@@ -28,6 +35,14 @@ import { useElapsed } from "@/lib/use-elapsed";
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
 import { CostHint, useAiStatus } from "@/lib/ai-status";
+import {
+  DEFAULT_VOLUME,
+  FUNCTIONS,
+  ROLE_RANKS,
+  STAGE_LABEL,
+  TYPE_LABELS,
+  type VolumeInfo,
+} from "@/constants";
 
 interface Props {
   novelId: string;
@@ -40,16 +55,6 @@ interface GenForm {
   pov: string;
 }
 
-const FUNCTIONS = [
-  ["progression", "推进"],
-  ["buildup", "铺垫"],
-  ["turning", "转折"],
-  ["climax", "高潮"],
-  ["revelation", "揭秘"],
-  ["resolution", "收束"],
-  ["interlude", "间奏"],
-] as const;
-
 const EMPTY_FORM: GenForm = {
   chapter_no: 1,
   goal: "",
@@ -59,20 +64,10 @@ const EMPTY_FORM: GenForm = {
 
 const FUNCTION_LABELS: Record<string, string> = Object.fromEntries(FUNCTIONS);
 
-/** 视角角色按戏份分组（与设定库 role_rank 一致），方便区分主角 / 配角。 */
-const ROLE_RANKS = [
-  { value: "protagonist", label: "主角" },
-  { value: "major", label: "重要配角" },
-  { value: "minor", label: "次要配角" },
-  { value: "extra", label: "龙套 / 炮灰" },
-] as const;
-
 function roleRankOf(s: Setting): string {
   const rk = s.structured?.role_rank;
   return typeof rk === "string" ? rk : "";
 }
-
-const STAGE_LABEL: Record<string, string> = { early: "前期", middle: "中期", late: "后期" };
 
 /** 与后端 derive_stage 一致：按蓝图 volumes 最大结束章三分全书，推导章节所处阶段。 */
 function deriveStage(chapterNo: number, volumes: VolumeInfo[] | undefined): string | null {
@@ -129,25 +124,12 @@ function inactiveReason(
   return "本章未生效";
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  scene: "场景",
-  transition: "过场",
-  dialogue: "对话",
-  action: "动作",
-  reveal: "揭示",
-};
-
-type VolumeInfo = NonNullable<Blueprint["content"]["volumes"]>[number];
-
 interface VolumeGroup {
   key: string;
   label: string;
   subtitle: string;
   items: Outline[];
 }
-
-/** 蓝图没有分卷（或卷的章节范围全无法解析）时的兜底卷：所有章节归入「第1卷」，避免散成「未分卷」。 */
-const DEFAULT_VOLUME: VolumeInfo = { no: 1, name: "", focus: "", chapters_range: "" };
 
 /** 把章节大纲按当前生效蓝图的 volumes（chapters_range）归组；蓝图无卷时兜底为默认「第1卷」。 */
 function groupByVolume(outlines: Outline[], volumes: VolumeInfo[] | undefined): VolumeGroup[] {
@@ -190,7 +172,9 @@ function groupByVolume(outlines: Outline[], volumes: VolumeInfo[] | undefined): 
 export default function OutlinePanel({ novelId }: Props) {
   // 组件实例被 App Router 跨小说复用：记录「当前正在显示的小说」，AI 流回调/收尾据此判断是否已切小说
   const liveNovelRef = useRef(novelId);
-  if (liveNovelRef.current !== novelId) liveNovelRef.current = novelId;
+  useEffect(() => {
+    liveNovelRef.current = novelId;
+  }, [novelId]);
   /** 挂载标记：切页签会卸载本面板，但 runAgent 的流回调仍在后台继续。
    *  卸载后不再弹全局 Message（居中的成功/告警提示），避免「切到其他页面完成」时
    *  和全局右上角 Notification 重复弹两条；跨页的完成提醒由 agent-task-toasts 兜底。
@@ -204,6 +188,7 @@ export default function OutlinePanel({ novelId }: Props) {
       mountedRef.current = false;
     };
   }, []);
+  /** 章节大纲列表（后端为单一事实来源：生成/批准/切换版本后重新拉取）。 */
   const [outlines, setOutlines] = useState<Outline[]>([]);
   /** 当前选中章的版本历史（同一章可多版本，轻量历史版本用）。 */
   const [versions, setVersions] = useState<Outline[]>([]);
@@ -211,18 +196,27 @@ export default function OutlinePanel({ novelId }: Props) {
   const [viewVersionId, setViewVersionId] = useState<string | null>(null);
   // 数据加载中：遮罩过渡，加载完成后解除
   const [loading, setLoading] = useState(true);
+  /** 生效蓝图的分卷信息：用于大纲按卷分组、章节所处阶段推导（deriveStage）与视角角色过滤。 */
   const [volumes, setVolumes] = useState<VolumeInfo[]>([]);
   /** 生效蓝图标题：null = 无生效蓝图（新增大纲的前提，无蓝图时弹窗内提示并禁用生成）。 */
   const [blueprintTitle, setBlueprintTitle] = useState<string | null>(null);
+  /** 视角角色下拉的数据源（设定库 character 类，仅保留手动/批量 + 当前生效蓝图导入的角色）。 */
   const [characters, setCharacters] = useState<Setting[]>([]);
+  /** 生成表单：章节号 + 目标 + 章节功能 + 视角（打开弹窗时重置；重写模式章节号锁定）。 */
   const [form, setForm] = useState<GenForm>(EMPTY_FORM);
+  /** 生成进行中标志：驱动按钮禁用、生成过程弹窗开关，恢复轮询结束后解除。 */
   const [generating, setGenerating] = useState(false);
+  /** 生成的正文流式输出（SSE 累积；恢复时用后端任务累积内容反填，刷新前已流出的不丢）。 */
   const [draftText, setDraftText] = useState("");
+  /** 生成的思考过程流式输出（推理模型思考期文本）。 */
   const [thinkingText, setThinkingText] = useState("");
+  /** 生成过程弹窗（参考蓝图页：点击「查看生成过程」打开，DeepSeek 风格实时流式展示）。 */
+  const [showStreamModal, setShowStreamModal] = useState(false);
   // 生成启动（本页发起或刷新恢复）：自动弹出生成过程弹窗（生成中会出现需要作者确认的选择）
   useEffect(() => {
     if (generating) setShowStreamModal(true);
   }, [generating]);
+  /** 当前选中章的大纲 id：点击列表项设置，默认自动选中最新一章（无选中时才生效）。 */
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** 被折叠的卷 key（默认全展开）。搜索时强制展开匹配卷（与写作页章节目录一致）。 */
   const [collapsedKeys, setCollapsedKeys] = useState<Record<string, boolean>>({});
@@ -234,11 +228,10 @@ export default function OutlinePanel({ novelId }: Props) {
   const [rewriteChapterNo, setRewriteChapterNo] = useState<number | null>(null);
   /** 版本选择弹窗（点击详情标题右侧的 vN 打开）。 */
   const [showVersionModal, setShowVersionModal] = useState(false);
-  /** 生成过程弹窗（参考蓝图页：点击「查看生成过程」打开，DeepSeek 风格实时流式展示）。 */
-  const [showStreamModal, setShowStreamModal] = useState(false);
   /** 本次生成的开始时刻（供生成过程弹窗统计已用时）。 */
-  const startAtRef = useRef<number | null>(null);
-  const elapsed = useElapsed(generating, startAtRef.current);
+  const [startAt, setStartAt] = useState<number | null>(null);
+  /** 生成已耗时（仅 generating 期间走表，任务停止后归零）。 */
+  const elapsed = useElapsed(generating, startAt);
   /** 批准二次确认：该章已生成正文时，切换大纲版本需确认（正文不会自动重写）。 */
   const [confirmApprove, setConfirmApprove] = useState<Outline | null>(null);
   /** 正在后台批准注入的大纲版本 id（按钮防抖 + 刷新/切页后从后端恢复「批准中…」；成功/失败才置空） */
@@ -246,8 +239,10 @@ export default function OutlinePanel({ novelId }: Props) {
   // 本次生成成功落库的章节号 + 新版本 id（stored 事件写入，供完成后选中新草稿、顺延默认章节号）
   const storedChapterRef = useRef<number | null>(null);
   const storedIdRef = useRef<string | null>(null);
+  /** AI 服务状态检查：生成前确认模型已配置可用，未配置则抛错拦截（避免发起注定失败的空请求）。 */
   const { ensureReady } = useAiStatus();
 
+  /** 拉取该小说的章节大纲 + 生效蓝图 + 视角角色：成功写入状态并返回大纲列表；失败弹错误提示并返回 []。 */
   const load = useCallback(async (): Promise<Outline[]> => {
     setLoading(true);
     try {
@@ -297,7 +292,7 @@ export default function OutlinePanel({ novelId }: Props) {
       if (stopped || !r.running || !r.task) return;
       const task = r.task;
       // 恢复生成中状态：用后端累积的流式文字与任务真实开始时间（刷新前已流出的内容不丢）
-      startAtRef.current = task.started_at ? new Date(task.started_at).getTime() : Date.now();
+      setStartAt(task.started_at ? new Date(task.started_at).getTime() : Date.now());
       setGenerating(true);
       setThinkingText(task.progress?.thinking ?? "");
       setDraftText(task.progress?.draft ?? "");
@@ -318,10 +313,21 @@ export default function OutlinePanel({ novelId }: Props) {
           }
           continue;
         }
-        if (r2.task?.status === "error") {
-          message.error(`大纲生成失败：${friendlyTaskError(r2.task.error, "后台任务失败")}`);
+        // 任务已结束：/tasks 只返回 running 任务（结束后 task 为 null），
+        // 需借 /status 的 recent 判断本角色任务是否失败，避免失败被误报为成功
+        let outlineError: string | null = null;
+        try {
+          const st = await getStreamStatus(novelId);
+          if (st.recent && st.recent.agent === "outliner" && st.recent.status === "error") {
+            outlineError = st.recent.error;
+          }
+        } catch {
+          /* 查询失败按完成处理 */
+        }
+        if (outlineError) {
+          message.error(`大纲生成失败：${friendlyTaskError(outlineError, "后台任务失败")}`);
         } else {
-          message.success(r2.task?.msg ?? "大纲已生成完毕");
+          message.success("大纲已生成完毕");
           // 与蓝图页一致：生成完成自动关闭「生成过程」与「新增大纲」弹窗
           setShowStreamModal(false);
           setShowAddModal(false);
@@ -334,7 +340,6 @@ export default function OutlinePanel({ novelId }: Props) {
     return () => {
       stopped = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [novelId, load]);
 
   // 批准轮询：后台批准注入（角色设定 + 账本同步）期间每 1.5s 查询一次批准状态，「批准中…」保持到成功或失败才退出。
@@ -519,9 +524,14 @@ export default function OutlinePanel({ novelId }: Props) {
       }
     | undefined;
 
+  /** 发起大纲生成：置生成中 → 校验 AI 配置 → runAgent SSE 流式调用（回调里分流处理流式/确认/stored 事件）。
+   *  成功判定：SSE 事件流中出现 stored（带 chapter_no + id）即视为成功落库，统一在 finally 出口提示一次
+   *  （stored 事件与刷新恢复路径都不再重复弹，避免双提示）；失败判定：try 抛错（friendlyRunError）或
+   *  stream_error 事件，均弹错误提示。跨小说/卸载守卫：回调与收尾都用 liveNovelRef/mountedRef 判断，
+   *  切走后不写入状态、不刷新、不提示。 */
   async function handleGenerate() {
     setGenerating(true);
-    startAtRef.current = Date.now();
+    setStartAt(Date.now());
     setDraftText("");
     setThinkingText("");
     storedChapterRef.current = null;

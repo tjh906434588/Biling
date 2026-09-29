@@ -73,6 +73,8 @@ class ExtractorAgent(Agent[StoryStateExtract]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配提取上下文：注入正文与已有实体名单/已定档硬事实/已确立关系/待回收账本，
+        约束关系与伏笔引用只能取自真实存在的条目（防编造）。"""
         novel = get_novel(self.db, novel_id)
         chapter_text = params.get("chapter_text", "")
         chapter_no = params.get("chapter_no", "?")
@@ -119,4 +121,5 @@ class ExtractorAgent(Agent[StoryStateExtract]):
         )
 
     def parse_output(self, text: str) -> StoryStateExtract:
+        """把 LLM 返回的结构化记忆 JSON 解析为 StoryStateExtract。"""
         return StoryStateExtract.model_validate_json(text.strip())

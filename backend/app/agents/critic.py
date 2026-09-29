@@ -189,6 +189,8 @@ class CriticAgent(Agent[ReviewOutput]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配评价上下文：以可裁剪组件注入项目/蓝图/前文/账本/设定与各程序确定性核对清单，
+        并把「证据引文语料」放进 meta 供 host_validate 防编造引文。"""
         novel = get_novel(self.db, novel_id)
         # 世界背景类型决定签约核查口径：现实年代对照真实世界、纯架空只查设定账本自洽
         background_scope = BACKGROUND_TYPE_SCOPE.get(
@@ -410,12 +412,13 @@ class CriticAgent(Agent[ReviewOutput]):
         )
 
     def parse_output(self, text: str) -> ReviewOutput:
+        """把 LLM 返回的评价报告 JSON 解析为 ReviewOutput。"""
         return ReviewOutput.model_validate_json(text.strip())
 
     # ---------- 宿主侧确定性校验（证据引用真实性，防编造引文）----------
 
-    _QUOTE_RE = re.compile(r"[“\"「『]([^”\"」』]{2,40})[”\"」』]")
-    _GENERIC_WORDS = ("写得好", "很好", "不错", "优秀", "自然", "流畅", "较好", "整体")
+    _QUOTE_RE = re.compile(r"[“\"「『]([^”\"」』]{2,40})[”\"」』]")  # 匹配「」“”等引号内的 2-40 字引文片段
+    _GENERIC_WORDS = ("写得好", "很好", "不错", "优秀", "自然", "流畅", "较好", "整体")  # 无引文时的套话词表（判"泛泛而谈"）
 
     @staticmethod
     def _norm_text(s: str) -> str:

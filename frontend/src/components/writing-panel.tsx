@@ -1,3 +1,18 @@
+/**
+ * @file writing-panel.tsx
+ * 写作页主面板：状态编排 + 组合各子块。承担全局状态与 AI 流程编排（章节/版本/正文编辑、
+ * AI 生成/评价/优化/提取/联动重写），渲染子块按职责拆到 writing/ 目录：
+ * - notifications.ts：模块级全局通知机制（受影响章节 / 联动重写中断 / 设定自检），跨页存活；
+ * - chapter-tree.tsx：左侧章节目录栏（卷分组/搜索/折叠 + 本章操作）；
+ * - version-tree.tsx：版本树浮层（多级递归）；
+ * - review-card.tsx：评价师结果卡片；
+ * - auto-textarea.tsx：自动增高文本框。
+ * 核心机制（保持不变）：
+ * - AI 流程（生成/评价/优化/提取）走 runAgent SSE，任务跨页/刷新由全局 AgentTaskToasts 轮询恢复；
+ * - 正文编辑「镜像 ref + 防抖 2s 自动落盘 + 切版本/卸载兜底落盘」，切章用请求序号防竞态覆盖；
+ * - liveNovelRef + mountedRef 跨小说/卸载守卫 + 模块级通知状态（writing/notifications），
+ *   保证切页不误弹、跨页通知不丢。
+ */
 "use client";
 
 import {
@@ -6,9 +21,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
 } from "react";
 import {
   getActiveBlueprint,
@@ -21,7 +33,6 @@ import {
   selectVersion,
   updateChapterVersion,
   type AgentRunningTaskResult,
-  type Blueprint,
   type ChapterDetail,
   type ChapterListItem,
   type Outline,
@@ -36,38 +47,36 @@ import AgentStreamModal from "./agent-stream-modal";
 import { useElapsed } from "@/lib/use-elapsed";
 import Loading from "@/components/loading";
 import { message } from "@/components/message";
-import { notification, closeNotification, removeNotification } from "@/components/notification";
 import { CostHint, useAiStatus } from "@/lib/ai-status";
+import {
+  FUNCTIONS,
+  REVIEW_W_DEFAULT,
+  REVIEW_W_KEY,
+  REVIEW_W_MAX,
+  REVIEW_W_MIN,
+  REVIEW_W_PRESETS,
+  type VolumeInfo,
+} from "@/constants";
+import { copyText } from "@/utils/clipboard";
+import { AutoTextarea } from "./writing/auto-textarea";
+import { ChapterSidebar, sourceLabel } from "./writing/chapter-tree";
+import { ReviewCard } from "./writing/review-card";
+import { VersionTree } from "./writing/version-tree";
+import {
+  clearGapNotifIfMismatch,
+  fireGapNotif,
+  getInitialAffectedChapters,
+  getInitialRewriteFail,
+  syncAffectedNotif,
+  useRewriteFailNotif,
+  type AffectedChapter,
+  type RewriteFailData,
+} from "./writing/notifications";
+export { hideWorkspaceNotifs, showWorkspaceNotifs } from "./writing/notifications";
 
 interface Props {
   novelId: string;
 }
-
-/** 评价维度英文 key → 用户可读中文（界面直接展示用）。 */
-const RUBRIC_LABELS: Record<string, string> = {
-  blueprint_adherence: "蓝图贴合度",
-  consistency: "前后一致性",
-  character_voice: "角色口吻",
-  pacing: "节奏把控",
-  style_compliance: "文风与语言",
-  foreshadowing_accountability: "伏笔交代",
-  reader_retention: "读者追读",
-};
-
-/** 追读力子项英文 key → 中文。 */
-const RETENTION_HOOK_LABELS: Record<string, string> = {
-  opening_hook: "开篇钩子",
-  ending_hook: "章末悬念",
-  tension: "情绪张力",
-  anticipation: "期待感",
-};
-
-/** 问题严重度 → 中文。 */
-const SEVERITY_LABELS: Record<string, string> = {
-  high: "严重",
-  medium: "中等",
-  low: "轻微",
-};
 
 interface GenForm {
   chapter_no: number;
@@ -88,313 +97,6 @@ interface AiRunState {
   running: boolean;
 }
 
-/** 下游受影响章节（递进链被根部改动波及）：每项带关系信息，前端据此展示「是什么影响到了这章」。
- *  origin_chapter / origin_relation 是被删/改的根因（如第1章 师徒），relation 是该章受影响的关系。 */
-interface AffectedChapter {
-  chapter_no: number;
-  source: string;
-  target: string;
-  relation: string;
-  origin_chapter: number;
-  origin_relation: string;
-}
-
-/** 受影响章节 → 全局 Notification 的模块级状态（跨写作页卸载/切页存活）：
- *  通知悬浮在右上角、常驻，切页不隐藏；只有点 ✕ 或「挨个重写」才关闭（与新手引导不同，不随页面隐藏）。
- *  组件卸载时不清理通知，数据存在这里，切页回来由组件初始状态还原。 */
-let affectedNotifId: number | null = null;
-let affectedData: AffectedChapter[] | null = null;
-let affectedNovelId: string | null = null;
-let affectedRerun: (() => void) | null = null;
-let affectedClear: (() => void) | null = null;
-
-/** 联动重写中断 → 全局 Notification 的模块级状态（跨写作页卸载/切页存活）：
- *  error 类型、无 ✕（closable:false），只能自动关闭；
- *  总展示 15s，但只累计「页面可见时间」：离开页面暂停并保留剩余时长，回来继续累计，
- *  刷新从 localStorage 恢复数据与剩余，直到累计满 15s 才自动关闭（通知继续显示、不清除）。 */
-interface RewriteFailData {
-  failedChapter: number;
-  remainingRewrite: number[];
-  remainingExtract: number[];
-}
-const REWRITE_FAIL_TOTAL_MS = 15_000;
-let rewriteNotifId: number | null = null;
-let rewriteFailData: RewriteFailData | null = null;
-let rewriteNovelId: string | null = null;
-let rewriteRemainingMs = 0;
-
-/** 写后设定自检（setting_warning）→ 右上角告警通知的模块级状态：带「重新生成/忽略」操作。
- *  切换章节或离开工作台即自动移除，避免挂着一个旧章节的告警（此时点「重新生成」目标会错）。 */
-let gapsNotifId: number | null = null;
-let gapsNotifChapter: number | null = null;
-let gapsNotifNovel: string | null = null;
-
-function rewriteFailDataKey(novelId: string) {
-  return `biling.rewriteFail.${novelId}.data`;
-}
-function rewriteFailRemainingKey(novelId: string) {
-  return `biling.rewriteFail.${novelId}.remaining`;
-}
-/** 刷新后恢复中断数据（模块变量已重置，只能从 localStorage 读）。 */
-function loadRewriteFailData(novelId: string): RewriteFailData | null {
-  try {
-    const raw = localStorage.getItem(rewriteFailDataKey(novelId));
-    if (!raw) return null;
-    const d = JSON.parse(raw) as RewriteFailData;
-    if (
-      typeof d.failedChapter === "number" &&
-      Array.isArray(d.remainingRewrite) &&
-      Array.isArray(d.remainingExtract)
-    ) {
-      return d;
-    }
-  } catch {
-    /* 忽略损坏数据 */
-  }
-  return null;
-}
-function saveRewriteFailData(novelId: string, data: RewriteFailData | null) {
-  try {
-    if (data) localStorage.setItem(rewriteFailDataKey(novelId), JSON.stringify(data));
-    else localStorage.removeItem(rewriteFailDataKey(novelId));
-  } catch {
-    /* 忽略 */
-  }
-}
-/** 刷新后恢复剩余展示时长（页面可见时才递减）。 */
-function loadRewriteRemaining(novelId: string): number {
-  try {
-    const v = Number(localStorage.getItem(rewriteFailRemainingKey(novelId)));
-    if (Number.isFinite(v) && v > 0) return v;
-  } catch {
-    /* 忽略 */
-  }
-  return 0;
-}
-function saveRewriteRemaining(novelId: string, ms: number) {
-  try {
-    if (ms > 0) localStorage.setItem(rewriteFailRemainingKey(novelId), String(Math.round(ms)));
-    else localStorage.removeItem(rewriteFailRemainingKey(novelId));
-  } catch {
-    /* 忽略 */
-  }
-}
-
-/** 用当前模块数据渲染联动重写中断通知（rewriteNovelId/rewriteFailData 需已设置）。
- *  剩余展示时长：切页/离开回来优先取 localStorage，无则用模块剩余，再否则满额 15s。
- *  只在当前小说工作台显示：离开工作台由 hideWorkspaceNotifs 隐藏（暂停计时、数据保留），回来重弹续计。 */
-function renderRewriteFailNotif(novelId: string) {
-  const data = rewriteFailData;
-  if (!data) return;
-  const persisted = loadRewriteRemaining(novelId);
-  rewriteRemainingMs = persisted > 0 ? persisted : rewriteRemainingMs > 0 ? rewriteRemainingMs : REWRITE_FAIL_TOTAL_MS;
-  saveRewriteRemaining(novelId, rewriteRemainingMs);
-  saveRewriteFailData(novelId, data);
-  rewriteNotifId = notification.error({
-    duration: 0, // 不由通知组件自动关（计时在 WritingPanel 内，只累计页面可见时间）
-    closable: false, // 无 ✕：只能自动关闭
-    title: "联动重写中断",
-    message: (
-      <div className="space-y-2">
-        {/* 根因 */}
-        <div className="rounded-md bg-red-100/80 px-2.5 py-1.5 dark:bg-red-900/50">
-          <p className="text-[12px] font-semibold leading-5 text-red-900 dark:text-red-100">根因</p>
-          <p className="mt-0.5 text-[12px] leading-5 text-red-800/90 dark:text-red-200/90">
-            第 <span className="font-medium">{data.failedChapter}</span> 章处理失败，联动已停止；
-            失败之后还没轮到处理的章节同样未完成，请到章节目录手动补齐。
-          </p>
-        </div>
-        {/* 未完成清单 */}
-        <div>
-          <p className="text-[12px] font-semibold leading-5 text-red-900 dark:text-red-100">未完成事项</p>
-          <ul className="mt-1 space-y-1 text-[12px] leading-5 text-red-800/90 dark:text-red-200/90">
-            {data.remainingRewrite.length > 0 && (
-              <li className="rounded-md bg-red-100/70 px-2 py-1 dark:bg-red-900/50">
-                正文未重写：第 <span className="font-medium">{data.remainingRewrite.join("、")}</span> 章
-                （请「重新生成正文」）
-              </li>
-            )}
-          </ul>
-        </div>
-      </div>
-    ),
-    onClose: () => {
-      // 15s 计时耗尽由 closeNotification 触发（无 ✕，不会手动触发）：清模块态
-      rewriteNotifId = null;
-      rewriteFailData = null;
-      rewriteNovelId = null;
-    },
-  });
-}
-
-/**
- * 进入当前小说工作台（WorkspacePage 挂载）：恢复本小说挂着的常驻/计时通知——
- *  「后续章节关系受影响」与「联动重写中断」只在当前小说工作台显示，各小说互相独立：
- *  离开本小说工作台即隐藏（不清数据），回来重新弹出；其他小说的数据不受影响。
- *  联动重写中断带刷新持久化（localStorage），刷新后即便停在非写作 tab 也能恢复显示（计时由写作页恢复后继续）。
- */
-export function showWorkspaceNotifs(novelId: string) {
-  if (affectedNovelId === novelId && affectedData && affectedNotifId == null) renderAffectedNotif();
-  // 中断通知：模块数据在刷新后可能丢失，从 localStorage 兜底恢复
-  if (rewriteNotifId == null) {
-    const data = rewriteNovelId === novelId ? rewriteFailData : loadRewriteFailData(novelId);
-    if (data) {
-      rewriteNovelId = novelId;
-      rewriteFailData = data;
-      renderRewriteFailNotif(novelId);
-    }
-  }
-}
-
-/** 离开当前小说工作台（WorkspacePage 卸载）：隐藏本小说的两条通知，不触发 onClose（不误判为已处理），数据保留。 */
-export function hideWorkspaceNotifs(novelId: string) {
-  if (affectedNotifId != null && affectedNovelId === novelId) {
-    removeNotification(affectedNotifId);
-    affectedNotifId = null;
-  }
-  if (rewriteNotifId != null && rewriteNovelId === novelId) {
-    removeNotification(rewriteNotifId);
-    rewriteNotifId = null;
-  }
-  if (gapsNotifId != null && gapsNotifNovel === novelId) {
-    removeNotification(gapsNotifId);
-    gapsNotifId = null;
-    gapsNotifChapter = null;
-    gapsNotifNovel = null;
-  }
-}
-
-/** 受影响章节按章分组（逐章展示对应关系）。 */
-function groupAffectedByChapter(list: AffectedChapter[]): [number, AffectedChapter[]][] {
-  const map = new Map<number, AffectedChapter[]>();
-  for (const a of list) {
-    const arr = map.get(a.chapter_no) ?? [];
-    arr.push(a);
-    map.set(a.chapter_no, arr);
-  }
-  return [...map.entries()].sort((x, y) => x[0] - y[0]);
-}
-
-/**
- * 把受影响状态同步到模块级并渲染/刷新通知：
- * - chapters 为空 → 关闭本小说正在显示的通知（点按钮 / ✕ 走这里）；
- * - 同一份数据重复同步（如切页回来重新挂载）→ 只更新回调，不重弹；
- * - 数据更新（再次提取）→ 先移除旧的再重弹，始终反映最新受影响清单。
- */
-function syncAffectedNotif(
-  novelId: string,
-  chapters: AffectedChapter[] | null,
-  rerun: () => void,
-  clear: () => void,
-) {
-  affectedRerun = rerun;
-  affectedClear = clear;
-  const active = chapters && chapters.length > 0 ? chapters : null;
-
-  if (!active) {
-    // 本地已清（点按钮 / ✕）：只关闭本小说的通知；其他小说挂着的通知与数据不受影响
-    if (affectedNotifId != null && affectedNovelId === novelId) {
-      closeNotification(affectedNotifId);
-      affectedNotifId = null;
-      affectedData = null;
-    }
-    return;
-  }
-  // 同一份数据（切页回来重新挂载）：仅更新回调，不重复弹
-  if (affectedNotifId != null && affectedData === active) return;
-
-  // 数据更新（再次提取）：先移除旧的再重弹，始终反映最新受影响清单
-  if (affectedNotifId != null) {
-    removeNotification(affectedNotifId);
-    affectedNotifId = null;
-  }
-  affectedNovelId = novelId;
-  affectedData = active;
-  renderAffectedNotif();
-}
-
-/** 用当前模块数据渲染受影响章节通知（affectedNovelId/affectedData 需已设置）。
- *  只在当前小说工作台显示：离开工作台由 hideWorkspaceNotifs 隐藏（不清数据），回来由 showWorkspaceNotifs 重弹。 */
-function renderAffectedNotif() {
-  const active = affectedData;
-  if (!active || active.length === 0) return;
-  const byChapter = groupAffectedByChapter(active);
-  const originChapter = active[0].origin_chapter;
-  const originRelations = [...new Set(active.map((a) => a.origin_relation).filter(Boolean))];
-
-  affectedNotifId = notification.warning({
-    duration: 0, // 常驻：不自动消失、不被其他通知顶掉
-    title: "后续章节关系受影响",
-    message: (
-      <div className="space-y-2">
-        {/* 根因 */}
-        <div className="rounded-md bg-amber-100/80 px-2.5 py-1.5 dark:bg-amber-900/50">
-          <p className="text-[12px] font-semibold leading-5 text-amber-900 dark:text-amber-100">根因</p>
-          <p className="mt-0.5 text-[12px] leading-5 text-amber-800/90 dark:text-amber-200/90">
-            第 {originChapter} 章的
-            {originRelations.length > 0 ? originRelations.map((r) => `「${r}」`).join("、") : "关系"}
-            被删除/替换，以下章节的正文仍建立在旧递进链上，需按各章当前大纲重写并重新提取记忆层。
-          </p>
-        </div>
-        {/* 受影响章节清单 */}
-        <div>
-          <p className="text-[12px] font-semibold leading-5 text-amber-900 dark:text-amber-100">
-            受影响章节（{byChapter.length} 章）
-          </p>
-          <ul className="mt-1 space-y-1 text-[12px] leading-5 text-amber-800/90 dark:text-amber-200/90">
-            {byChapter.map(([no, items]) => (
-              <li
-                key={no}
-                className="flex items-baseline gap-1.5 rounded-md bg-amber-100/70 px-2 py-1 dark:bg-amber-900/50"
-              >
-                <span className="shrink-0 font-medium text-amber-900 dark:text-amber-100">第 {no} 章</span>
-                <span className="min-w-0">
-                  {items.map((a) => `${a.source} ${a.relation} ${a.target}`).join("、")}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        {/* 操作 */}
-        <button
-          type="button"
-          onClick={() => {
-            // 先触发联动重写（内部会 setAffectedChapters(null) 关通知），再兜底关闭本通知
-            affectedRerun?.();
-            if (affectedNotifId != null) {
-              closeNotification(affectedNotifId);
-              affectedNotifId = null;
-            }
-          }}
-          className="w-full rounded-lg bg-amber-700 px-3 py-2 text-[12px] font-medium text-white transition-colors hover:bg-amber-800 dark:bg-amber-600 dark:hover:bg-amber-500"
-        >
-          挨个重写第 {byChapter.map(([no]) => no).join("、")} 章并重提取
-        </button>
-      </div>
-    ),
-    onClose: () => {
-      // ✕ 手动关闭 = 暂不处理：清掉模块状态 + 组件本地状态，避免效果重跑再弹
-      affectedNotifId = null;
-      affectedData = null;
-      const clearFn = affectedClear;
-      affectedRerun = null;
-      affectedClear = null;
-      clearFn?.();
-    },
-  });
-}
-
-/** 章节功能：写作页与大纲页共用同一份，保证两处下拉完全一致（默认空 = 自动判定）。 */
-const FUNCTIONS = [
-  ["progression", "推进"],
-  ["buildup", "铺垫"],
-  ["turning", "转折"],
-  ["climax", "高潮"],
-  ["revelation", "揭秘"],
-  ["resolution", "收束"],
-  ["interlude", "间奏"],
-] as const;
-
 const EMPTY_FORM: GenForm = {
   chapter_no: 1,
   title: "",
@@ -407,155 +109,12 @@ const EMPTY_FORM: GenForm = {
   hint_only: "",
 };
 
-/** 评价栏宽度（px）：三档预设切换，xl 起生效。偏好存 localStorage，跨刷新保持。 */
-const REVIEW_W_DEFAULT = 620;
-const REVIEW_W_MIN = 340;
-const REVIEW_W_MAX = 1000;
-const REVIEW_W_KEY = "biling.reviewWidth";
-/** 评价栏三档预设（窄 / 中 / 宽），点一下即切换。 */
-const REVIEW_W_PRESETS: ReadonlyArray<readonly [string, number]> = [
-  ["窄", 420],
-  ["中", 620],
-  ["宽", 860],
-];
-
-/** 卷信息（与蓝图 content.volumes 一致，用于章节目录按卷分组）。 */
-type VolumeInfo = NonNullable<Blueprint["content"]["volumes"]>[number];
-
-interface ChapterVolumeGroup {
-  key: string;
-  label: string;
-  subtitle: string;
-  items: ChapterListItem[];
-}
-
-/** 把章节按当前生效蓝图的 volumes（chapters_range）归组；不在任何卷内的归「未分卷/全部章节」。
- *  与大纲页 groupByVolume 逻辑一致，只是 item 换成 ChapterListItem。 */
-/** 蓝图没有分卷（或卷的章节范围全无法解析）时的兜底卷：所有章节归入「第1卷」（与大纲页一致）。 */
-const DEFAULT_VOLUME: VolumeInfo = { no: 1, name: "", focus: "", chapters_range: "" };
-
-function groupChaptersByVolume(
-  chapters: ChapterListItem[],
-  volumes: VolumeInfo[] | undefined,
-): ChapterVolumeGroup[] {
-  const vols = volumes ?? [];
-  const parsed = vols
-    .map((v) => {
-      const m = v.chapters_range?.match(/(\d+)\s*[-~至到]\s*(\d+)/);
-      return { v, start: m ? Number(m[1]) : NaN, end: m ? Number(m[2]) : NaN };
-    })
-    .filter((x) => Number.isFinite(x.start) && Number.isFinite(x.end));
-
-  // 无卷或全部卷范围解析失败 → 用一个默认「第1卷」吸收全部章节
-  const effectiveVols = parsed.length > 0 ? vols : [DEFAULT_VOLUME];
-  const effectiveParsed =
-    parsed.length > 0 ? parsed : [{ v: DEFAULT_VOLUME, start: 1, end: Number.MAX_SAFE_INTEGER }];
-
-  const groups: ChapterVolumeGroup[] = effectiveVols.map((v) => ({
-    key: `vol-${v.no ?? v.name ?? "?"}`,
-    label: `${v.no != null ? `第${v.no}卷` : "卷"}${v.name ? ` · ${v.name}` : ""}`,
-    subtitle: [v.chapters_range && `${v.chapters_range}章`, v.chapter_count, v.word_count]
-      .filter(Boolean)
-      .join(" · "),
-    items: [],
-  }));
-  const rest: ChapterVolumeGroup = {
-    key: "rest",
-    label: "未分卷",
-    subtitle: "",
-    items: [],
-  };
-
-  for (const c of [...chapters].sort((a, b) => a.chapter_no - b.chapter_no)) {
-    const hit = effectiveParsed.find(({ start, end }) => c.chapter_no >= start && c.chapter_no <= end);
-    const target = hit
-      ? groups.find((g) => g.key === `vol-${hit.v.no ?? hit.v.name ?? "?"}`)
-      : undefined;
-    (target ?? rest).items.push(c);
-  }
-
-  const result = groups.filter((g) => g.items.length > 0);
-  if (rest.items.length > 0) result.push(rest);
-  return result;
-}
-
-/** 版本来源的友好标签（章节详情版本列表用）。 */
-const SOURCE_LABELS: Record<string, string> = {
-  novelist: "初稿", // 新增章节首次生成
-  regenerate: "再稿", // 重新生成正文（novelist，根层平级）
-  reviser: "修订稿", // 评价优化（按评价修订）
-  merged: "手动合并",
-};
-
-function sourceLabel(source: string): string {
-  if (source.startsWith("novelist")) return "初稿";
-  return SOURCE_LABELS[source] ?? "未知来源";
-}
-
-/** 复制文本到剪贴板：优先异步 Clipboard API；权限被拒/不可用（如非 https、iframe 内）时回退 execCommand。 */
-function copyText(text: string): Promise<void> {
-  const fallback = () =>
-    new Promise<void>((resolve, reject) => {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        if (document.execCommand("copy")) resolve();
-        else reject(new Error("execCommand copy 失败"));
-      } catch (e) {
-        reject(e);
-      } finally {
-        document.body.removeChild(ta);
-      }
-    });
-  if (navigator.clipboard?.writeText) {
-    return navigator.clipboard.writeText(text).catch(() => fallback());
-  }
-  return fallback();
-}
-
-/** 自动增高文本框：高度跟随内容，封顶后内部滚动（用于「本章大纲目标」）。 */
-function AutoTextarea({
-  value,
-  onChange,
-  placeholder,
-  className,
-  maxHeight = 320,
-  disabled = false,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  className?: string;
-  maxHeight?: number;
-  disabled?: boolean;
-}) {
-  const ref = useRef<HTMLTextAreaElement | null>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
-  }, [value, maxHeight]);
-  return (
-    <textarea
-      ref={ref}
-      value={value}
-      placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
-      className={className}
-      disabled={disabled}
-    />
-  );
-}
-
 export default function WritingPanel({ novelId }: Props) {
   // 组件实例被 App Router 跨小说复用：记录「当前正在显示的小说」，AI 流回调/收尾据此判断是否已切小说
   const liveNovelRef = useRef(novelId);
-  if (liveNovelRef.current !== novelId) liveNovelRef.current = novelId;
+  useEffect(() => {
+    liveNovelRef.current = novelId;
+  }, [novelId]);
   /** 挂载标记：切页签会卸载本面板，但 runAgent 的流回调仍在后台继续。
    *  卸载后不再弹全局 Message（居中的成功/告警提示），避免「切到其他页面完成」时
    *  和全局右上角 Notification 重复弹两条；跨页的完成提醒由 agent-task-toasts 兜底。
@@ -571,6 +130,7 @@ export default function WritingPanel({ novelId }: Props) {
   }, []);
   // 初始数据（章节目录 / 已批准大纲 / 卷结构）加载中：遮罩过渡
   const [loading, setLoading] = useState(true);
+  /** 章节目录列表（后端为单一事实来源：生成/定稿/提取/联动重写后重新拉取）。 */
   const [chapters, setChapters] = useState<ChapterListItem[]>([]);
   /** 当前生效蓝图的卷列表：章节目录按卷分组、可展开/搜索（与大纲页一致）。 */
   const [volumes, setVolumes] = useState<VolumeInfo[]>([]);
@@ -578,11 +138,15 @@ export default function WritingPanel({ novelId }: Props) {
   const [chapterSearch, setChapterSearch] = useState("");
   /** 被折叠的卷 key（默认全展开）。搜索时强制展开匹配卷。 */
   const [collapsedVols, setCollapsedVols] = useState<Record<string, boolean>>({});
+  /** 当前激活章号（目录高亮 + 详情加载依据；进入页面默认最新一章，任务完成自动切到对应章）。 */
   const [activeNo, setActiveNo] = useState<number | null>(null);
+  /** 当前章详情（全部版本 + 元数据）；正文未生成（404）时为 null。 */
   const [detail, setDetail] = useState<ChapterDetail | null>(null);
+  /** 新增/重新生成弹窗表单：章号/标题/大纲目标/章节功能/信息控制（打开弹窗时重置）。 */
   const [form, setForm] = useState<GenForm>(EMPTY_FORM);
   /** 「沿用该章已批大纲」开关：仅该章有已批大纲时在弹窗显示；关 = 自由草稿（不预填大纲）。 */
   const [useOutline, setUseOutline] = useState(true);
+  /** 正文生成进行中标志：驱动按钮禁用、AI 过程弹窗开关与刷新恢复轮询（见 mount 恢复 effect）。 */
   const [generating, setGenerating] = useState(false);
   /** 正上方悬浮条已迁移到全局 Message：showToast 为本地别名，统一走 message API。 */
   const showToast = (msg: string, level: "success" | "warning" | "error" = "success") => {
@@ -590,23 +154,30 @@ export default function WritingPanel({ novelId }: Props) {
     else if (level === "warning") message.warning(msg);
     else message.success(msg);
   };
+  /** 记忆层提取进行中标志：参与 aiBusy 锁定面板（目录/版本/其他 AI 操作全部禁用，提取完成才解除）。 */
   const [extracting, setExtracting] = useState(false);
   /** 本次提取清掉的「链条中间环」所影响的下游章节（如删了第1章 师徒，第2/3章递进前提断裂）。
    *  提取回执带 downstream_affected 时置位，弹出右上角全局 Notification 提示作者「挨个重写并重提取」；
    *  暂不处理（✕）/开始处理后清空。切页后通知保持显示，回来时从模块级状态还原（不会因切页丢失）。 */
   const [affectedChapters, setAffectedChapters] = useState<AffectedChapter[] | null>(() =>
-    affectedNovelId === novelId && affectedData ? affectedData : null,
+    getInitialAffectedChapters(novelId),
   );
   /** 串行联动重写中断（任一章重写或提取失败即停止）：记录失败章 + 仍未完成的章节，
    *  弹右上角 error 通知分章列出「正文未重写 / 记忆层未提取」，让作者手动逐章补齐。
    *  初始状态还原模块级数据（切页回来），刷新则从 localStorage 恢复。 */
-  const [rewriteFail, setRewriteFail] = useState<RewriteFailData | null>(() =>
-    rewriteNovelId === novelId && rewriteFailData ? rewriteFailData : loadRewriteFailData(novelId),
-  );
+  const [rewriteFail, setRewriteFail] = useState<RewriteFailData | null>(() => getInitialRewriteFail(novelId));
+  /** 当前章已批大纲（评价对照、正文-大纲版本关联、旧大纲判定 isStaleForActiveOutline 的依据）。 */
   const [approvedOutline, setApprovedOutline] = useState<Outline | null>(null);
+  /** 全书已批大纲列表（按章号排序）：供「沿用该章已批大纲」回填、联动重写按章取大纲使用。 */
   const [approvedOutlines, setApprovedOutlines] = useState<Outline[]>([]);
+  /** 评价进行中标志：参与 aiBusy 锁定面板 + 评价按钮禁用 + 评价过程弹窗开关。 */
   const [reviewing, setReviewing] = useState(false);
+  /** 优化进行中标志：参与 aiBusy 锁定面板 + 优化按钮禁用 + 优化过程弹窗开关。 */
   const [revising, setRevising] = useState(false);
+  /** AI 运行过程弹窗显隐（「查看 AI 过程」按钮打开；生成/评价/优化启动或刷新恢复时自动弹开）。 */
+  const [showGenRun, setShowGenRun] = useState(false);
+  const [showReviewRun, setShowReviewRun] = useState(false);
+  const [showReviseRun, setShowReviseRun] = useState(false);
   // AI 流程启动（发起或刷新恢复）：自动弹出对应「AI 过程」弹窗（生成中会出现需要作者确认的选择）
   useEffect(() => {
     if (generating) setShowGenRun(true);
@@ -617,22 +188,21 @@ export default function WritingPanel({ novelId }: Props) {
   useEffect(() => {
     if (revising) setShowReviseRun(true);
   }, [revising]);
+  /** 当前章全部评价（接口按时间倒序；null=加载失败）。按选中版本过滤得到 currentReviews。 */
   const [reviews, setReviews] = useState<QualityReview[] | null>(null);
   /** AI 运行过程（「查看 AI 过程」弹窗）：生成正文 / 评价 / 优化各一份，任务结束保留供回看。 */
   const [genRun, setGenRun] = useState<AiRunState | null>(null);
-  const [showGenRun, setShowGenRun] = useState(false);
   const [reviewRun, setReviewRun] = useState<AiRunState | null>(null);
-  const [showReviewRun, setShowReviewRun] = useState(false);
   const [reviseRun, setReviseRun] = useState<AiRunState | null>(null);
 
   /** 各 AI 流程开始时间戳：供 AgentStreamModal 统计已用秒数（与蓝图/大纲页一致）。 */
-  const genStartRef = useRef<number | null>(null);
-  const reviewStartRef = useRef<number | null>(null);
-  const reviseStartRef = useRef<number | null>(null);
-  const genElapsed = useElapsed(genRun?.running ?? false, genStartRef.current);
-  const reviewElapsed = useElapsed(reviewRun?.running ?? false, reviewStartRef.current);
-  const reviseElapsed = useElapsed(reviseRun?.running ?? false, reviseStartRef.current);
-  const [showReviseRun, setShowReviseRun] = useState(false);
+  const [genStartAt, setGenStartAt] = useState<number | null>(null);
+  const [reviewStartAt, setReviewStartAt] = useState<number | null>(null);
+  const [reviseStartAt, setReviseStartAt] = useState<number | null>(null);
+  /** 各 AI 流程已耗时（仅对应流程 running 期间走表，供各自「查看 AI 过程」弹窗展示）。 */
+  const genElapsed = useElapsed(genRun?.running ?? false, genStartAt);
+  const reviewElapsed = useElapsed(reviewRun?.running ?? false, reviewStartAt);
+  const reviseElapsed = useElapsed(reviseRun?.running ?? false, reviseStartAt);
 
   /** 记忆层提取时记录：提取的是哪一章的哪个版本（id）。用于判断「当前正文」是否与提取的不一致，
    *  一致则无需重提取，不一致则高亮「提取→记忆层」按钮提醒用户重新提取。
@@ -726,8 +296,9 @@ export default function WritingPanel({ novelId }: Props) {
   /** 重新生成模式：非 null 时新增章节弹窗以"重新生成当前章正文"语义工作（章节号锁定当前章）。 */
   const [regenerateNo, setRegenerateNo] = useState<number | null>(null);
   /** 当前进行中的生成是「新增章节」还是「重新生成正文」：弹窗被手动关闭后 regenerateNo 会重置为 null，
-   *  不能据此判断本次生成模式，用 ref 记录（决定生成中「新增章节 / 重新生成正文」两个入口的禁用方向）。 */
-  const genIsRegenerateRef = useRef(false);
+   *  不能据此判断本次生成模式，用 state 记录（按钮禁用/提示在渲染期读取，用 ref 会触发
+   *  react-hooks/refs 告警且不触发重渲染）。 */
+  const [genIsRegenerate, setGenIsRegenerate] = useState(false);
 
   /** 信息控制弹窗：本地 draft，点「完成」才提交到 form，点「取消」丢弃。
    *  这样「清空」只清本地草稿，不点确定则原内容仍然保留（再打开还在）。 */
@@ -747,6 +318,7 @@ export default function WritingPanel({ novelId }: Props) {
     setShowInfoModal(true);
   }, [form]);
 
+  /** AI 服务状态检查：各 AI 操作发起前确认模型已配置可用，未配置则抛错拦截（避免发起注定失败的空请求）。 */
   const { ensureReady } = useAiStatus();
 
   /** 将已批大纲压缩成一段可作 outline 参数 / 评价对照的摘要（不含标题，标题单独成字段）。 */
@@ -773,10 +345,12 @@ export default function WritingPanel({ novelId }: Props) {
    */
   const maxChapterNo = chapters.reduce((m, c) => Math.max(m, c.chapter_no), 0);
   const nextNo = maxChapterNo + 1;
+  /** 目标章已批大纲：弹窗「沿用该章已批大纲」开关与回填的依据（仅该章有已批大纲时显示开关）。 */
   const targetOutline = approvedOutlines.find((o) => o.chapter_no === form.chapter_no) ?? null;
   // 大纲+章节合并后：写正文前由「本章规划」弹窗确认（后端 novelist 前置钩子），
   // 不再要求该章必须有已批大纲——有则自动回填预览，无则规划确认后直接写作。
   const canAdd = true;
+  /** 信息控制已填项数：弹窗入口按钮据此显示「已填 N 项 · 编辑」。 */
   const infoFilledCount = [form.reader_knows, form.protagonist_knows, form.must_hide, form.hint_only].filter(
     (v) => v.trim(),
   ).length;
@@ -870,13 +444,6 @@ export default function WritingPanel({ novelId }: Props) {
       }
     };
   }, [novelId]);
-  /** 目录项显示标题：当前激活章未定稿时跟随选中版本标题（版本切换本地预览联动目录），其余用章级标题。
-   *  已定稿章节 c.title 已由定稿动作同步为激活版本标题，无需特判。 */
-  const listItemTitle = (c: ChapterListItem) =>
-    c.chapter_no === activeNo && c.status !== "complete" && selectedVersion?.title
-      ? selectedVersion.title
-      : c.title;
-
   /** 打开「新增章节」弹窗：按当前目录算好目标章号、回填该章已批大纲（若有）。 */
   const openAddModal = useCallback(() => {
     const o = approvedOutlines.find((x) => x.chapter_no === nextNo) ?? null;
@@ -911,81 +478,9 @@ export default function WritingPanel({ novelId }: Props) {
     setShowAddModal(true);
   }, [activeNo]);
 
-  /**
-   * 写后设定自检命中 → 右上角常驻告警通知（带「重新生成/忽略」操作）。
-   * 仅对「正文必现清单漏写」弹窗；机构档案缺维度（org_archive_gap）属设定卡不完整、
-   * 重新生成解决不了，且作者可能无权/无需硬编（背景机构），已降级为评价区低优先级提示，
-   * 不再弹右上角常驻告警——需要时到「评价与优化」查看。
-   * 切换章节/换小说即自动移除本通知（见下方 effect），避免挂着旧章节的告警。
-   */
-  function fireGapNotif(chapterNo: number, gaps: SettingGap[]) {
-    // 过滤出正文必现清单漏写（机构档案缺维度不弹窗，评价区低优先级提示承载）
-    const contentGaps = gaps.filter((g) => g.kind !== "org_archive_gap");
-    if (contentGaps.length === 0) return;
-    if (gapsNotifId != null) {
-      removeNotification(gapsNotifId);
-      gapsNotifId = null;
-    }
-    gapsNotifNovel = novelId;
-    gapsNotifChapter = chapterNo;
-    gapsNotifId = notification.warning({
-      duration: 0, // 常驻：等作者处理（重新生成 / 忽略 / 手动关闭）
-      title: `设定自检：第 ${chapterNo} 章发现 ${contentGaps.length} 处设定问题`,
-      message: (
-        <div className="space-y-1">
-          {contentGaps.map((g) => (
-            <div key={`${g.rule}-${g.missing.join("-")}`} className="leading-5">
-              《{g.rule}》要求 [{g.group.join(" + ")}] 同时出现，已写到 {g.present.join("、")}，缺失{" "}
-              <span className="font-medium text-amber-900 dark:text-amber-100">{g.missing.join("、")}</span>
-            </div>
-          ))}
-          <div className="pt-0.5 text-[11px] leading-5 opacity-75">
-            属机器字面核对：若本章确实不该写到该项可忽略；否则建议重新生成，
-            或到「评价与优化」的【作者批注】里写明补写内容，让修订师补上。
-          </div>
-        </div>
-      ),
-      actions: (
-        <>
-          <button
-            type="button"
-            onClick={() => {
-              closeNotification(gapsNotifId!);
-              gapsNotifId = null;
-              gapsNotifChapter = null;
-              gapsNotifNovel = null;
-              openRegenerateModal();
-            }}
-            className="rounded-md bg-amber-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-amber-700"
-          >
-            重新生成
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              closeNotification(gapsNotifId!);
-              gapsNotifId = null;
-              gapsNotifChapter = null;
-              gapsNotifNovel = null;
-            }}
-            className="rounded-md border border-zinc-300 px-2 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          >
-            忽略
-          </button>
-        </>
-      ),
-    });
-  }
-
   // 切章 / 换小说：移除「设定自检」常驻通知（其操作目标是通知当时所在章，切走后不再适用）
   useEffect(() => {
-    if (gapsNotifId != null && (gapsNotifChapter !== activeNo || gapsNotifNovel !== novelId)) {
-      removeNotification(gapsNotifId);
-      gapsNotifId = null;
-      gapsNotifChapter = null;
-      gapsNotifNovel = null;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    clearGapNotifIfMismatch(activeNo, novelId);
   }, [activeNo, novelId]);
 
   /** 弹窗内切换「沿用大纲」开关：开启回填该章已批大纲，关闭清空（= 自由草稿，标题交给 AI）。 */
@@ -1003,6 +498,9 @@ export default function WritingPanel({ novelId }: Props) {
   // 若已被更新的切章请求取代则丢弃本次结果，杜绝"快速切章竞态"（慢的旧响应覆盖新选中章）。
   const loadDetailReqRef = useRef(0);
 
+  /** 拉取全部已批大纲并定位指定章的大纲约束：成功写入 approvedOutlines/approvedOutline；
+   *  失败或查无时 approvedOutline 置 null（该章无大纲约束，不阻塞自由写作）。
+   *  req 为切章竞态序号：携带它调用时，若已被更新的切章请求取代则丢弃过期结果。 */
   const loadApprovedOutlines = useCallback(
     async (no?: number, req?: number) => {
       try {
@@ -1022,6 +520,7 @@ export default function WritingPanel({ novelId }: Props) {
     [novelId],
   );
 
+  /** 拉取章节目录列表：成功写入 chapters；失败走顶部悬浮框提示（不在内联区显示错误）。 */
   const loadChapters = useCallback(async () => {
     try {
       setChapters(await listChapters(novelId));
@@ -1031,6 +530,10 @@ export default function WritingPanel({ novelId }: Props) {
     }
   }, [novelId]);
 
+  /** 加载指定章详情 + 大纲约束 + 评价列表。核心是竞态控制：每次调用递增 loadDetailReqRef 序号，
+   *  await 后若已被更新的切章请求取代则整段丢弃，杜绝「快速切章」时慢的旧响应覆盖新选中章。
+   *  404（正文未生成/加载失败）→ detail 置 null 静默处理，其余错误走顶部提示。
+   *  selectVersionId 用于显式指定预览版本（如优化完成后切到新生成的版本），默认回到默认选中规则。 */
   const loadDetail = useCallback(
     async (no: number, selectVersionId?: string | null) => {
       // 请求序号 +1：本次切章的所有后续写入都受它保护，被更新的切章取代时整段丢弃
@@ -1127,7 +630,7 @@ export default function WritingPanel({ novelId }: Props) {
       if (stopped || !r.running || !r.task) return;
       const task = r.task;
       // 恢复生成中状态：用后端累积的流式文字与任务真实开始时间（刷新前已流出的内容不丢）
-      genStartRef.current = task.started_at ? new Date(task.started_at).getTime() : Date.now();
+      setGenStartAt(task.started_at ? new Date(task.started_at).getTime() : Date.now());
       setGenerating(true);
       setGenRun({
         thinking: task.progress?.thinking ?? "",
@@ -1157,13 +660,12 @@ export default function WritingPanel({ novelId }: Props) {
         // 与 handleGenerate finally 保持一致：任务完成（成功/失败）后关闭新增章节/重新生成弹窗
         setShowAddModal(false);
         setRegenerateNo(null);
-        genIsRegenerateRef.current = false;
+        setGenIsRegenerate(false);
       }
     })();
     return () => {
       stopped = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [novelId]);
 
   /** 优化中状态持久化：刷新/切页后重新进入页面时，若后端仍有该小说的修订师（reviser）任务进行中
@@ -1182,7 +684,7 @@ export default function WritingPanel({ novelId }: Props) {
       if (stopped || !r.running || !r.task) return;
       const task = r.task;
       // 恢复优化中状态：用后端累积的流式文字与任务真实开始时间（刷新前已流出的内容不丢）
-      reviseStartRef.current = task.started_at ? new Date(task.started_at).getTime() : Date.now();
+      setReviseStartAt(task.started_at ? new Date(task.started_at).getTime() : Date.now());
       setRevising(true);
       setReviseRun({ thinking: task.progress?.thinking ?? "", output: task.progress?.draft ?? "", running: true });
       // 轮询到任务结束（成功/失败均退出）
@@ -1210,7 +712,6 @@ export default function WritingPanel({ novelId }: Props) {
     return () => {
       stopped = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [novelId]);
 
   /** 评价中状态持久化：与优化中同理，恢复评价师（critic）进行中的「评价中」锁定并轮询到结束，
@@ -1226,7 +727,7 @@ export default function WritingPanel({ novelId }: Props) {
       }
       if (stopped || !r.running || !r.task) return;
       const task = r.task;
-      reviewStartRef.current = task.started_at ? new Date(task.started_at).getTime() : Date.now();
+      setReviewStartAt(task.started_at ? new Date(task.started_at).getTime() : Date.now());
       setReviewing(true);
       setReviewRun({ thinking: task.progress?.thinking ?? "", output: task.progress?.draft ?? "", running: true });
       // 轮询到任务结束（成功/失败均退出）
@@ -1254,7 +755,6 @@ export default function WritingPanel({ novelId }: Props) {
     return () => {
       stopped = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [novelId]);
 
   const activeChapter = chapters.find((c) => c.chapter_no === activeNo) ?? null;
@@ -1267,9 +767,14 @@ export default function WritingPanel({ novelId }: Props) {
   /** 重新评价提示在评价栏顶部展示：正文改动过（reviewStale）且当前版本已有评价时才出现，
    *  按钮点击直接对当前版本重新评价。 */
   /** 当前选中正文是否「刚生成」：生成后系统通常会在 1-2 分钟内异步自动评价落库，
-   *  此时打开弹窗若还没有评价，多半是自动评价还在跑（而非永远没有），提示作者稍候而非误以为要手动点。 */
-  const isRecentlyGenerated =
-    selectedVersion != null && Date.now() - new Date(selectedVersion.created_at).getTime() < 3 * 60 * 1000;
+   *  此时打开弹窗若还没有评价，多半是自动评价还在跑（而非永远没有），提示作者稍候而非误以为要手动点。
+   *  Date.now() 在渲染期读取会触发 react-hooks/purity 告警，改为选中版本变化时用 effect 计算。 */
+  const [isRecentlyGenerated, setIsRecentlyGenerated] = useState(false);
+  useEffect(() => {
+    setIsRecentlyGenerated(
+      selectedVersion != null && Date.now() - new Date(selectedVersion.created_at).getTime() < 3 * 60 * 1000,
+    );
+  }, [selectedVersion]);
   /** 当前预览正文是否为「旧大纲版本」生成的：该章已有批准大纲（approvedOutline）时，
    *  正文版本记录的 outline_id 必须等于它才算"基于激活大纲"，否则只能看、不能评价/修订/提取。
    *  仅当版本绑定了大纲（outline_id 非空）才参与判定：outline_id 为空的自由草稿
@@ -1292,15 +797,8 @@ export default function WritingPanel({ novelId }: Props) {
   const extractPending =
     !!selectedVersion && selectedIsFinal && !extractedMatch;
 
-  /** 章节目录按卷分组（搜索为空时按卷归组；搜索时仅过滤、不折叠）。 */
-  const volGroups = groupChaptersByVolume(chapters, volumes);
-  const chapterQ = chapterSearch.trim().toLowerCase();
-  const chapterMatches = (c: ChapterListItem) =>
-    !chapterQ || `第${c.chapter_no}章 ${c.title ?? ""}`.toLowerCase().includes(chapterQ);
-
   /** 「挨个重写」始终指向最新一次渲染的联动重写逻辑，避免通知里回调闭包过期。 */
   const rerunAffectedRef = useRef<() => void>(() => {});
-  rerunAffectedRef.current = () => handleRerunAffected();
 
   /** 受影响章节 → 全局 Notification（右上角、常驻）：状态置位时弹出；切页不隐藏，
    *  只有点 ✕ 或「挨个重写」才关闭（组件卸载不清通知，由模块级持有，回来时状态还原）。
@@ -1314,73 +812,21 @@ export default function WritingPanel({ novelId }: Props) {
   /** 联动重写中断 → 全局 Notification（右上角、error 类型、不可手动关闭）：
    *  - 状态置位时弹通知（数据更新先移除旧的再重弹），切页不隐藏、回来状态还原（同上，模块级持有）；
    *  - 15s 总展示时长只累计「页面可见时间」：document 不可见/组件卸载时暂停并保留剩余（写 localStorage），
-   *    刷新或切页回来继续累计，累计满 15s 才自动关闭（此时才清模块态与本地状态）。 */
-  useEffect(() => {
-    if (!rewriteFail) {
-      // 本地清空（如新一轮联动开始前 setRewriteFail(null)）：关闭本小说的通知并清理持久化，
-      // 剩余时长归零，保证下一次失败重新从满额 15s 计时
-      if (rewriteNotifId != null && rewriteNovelId === novelId) {
-        closeNotification(rewriteNotifId);
-        rewriteNotifId = null;
-        rewriteFailData = null;
-        rewriteNovelId = null;
-        saveRewriteFailData(novelId, null);
-      }
-      rewriteRemainingMs = 0;
-      saveRewriteRemaining(novelId, 0);
-      return;
-    }
-    // 通知尚未弹 / 数据已更新 / 属于其他小说：先移除旧的再重弹（渲染逻辑统一在模块函数 renderRewriteFailNotif）
-    if (rewriteNotifId == null || rewriteNovelId !== novelId || rewriteFailData !== rewriteFail) {
-      if (rewriteNotifId != null) removeNotification(rewriteNotifId);
-      rewriteNovelId = novelId;
-      rewriteFailData = rewriteFail;
-      renderRewriteFailNotif(novelId);
-    }
-    // 倒计时：每秒递减「页面可见时间」，攒满 15s 自动关闭
-    const id = rewriteNotifId;
-    if (id == null) return;
-    // 剩余时长来源：优先取 localStorage（按小说隔离，刷新/切页/换小说回来都不丢）；
-    // 无持久化则用模块剩余，再否则满额 15s
-    const persisted = loadRewriteRemaining(novelId);
-    if (persisted > 0) rewriteRemainingMs = persisted;
-    else if (rewriteRemainingMs <= 0) rewriteRemainingMs = REWRITE_FAIL_TOTAL_MS;
-    saveRewriteRemaining(novelId, rewriteRemainingMs);
-    let last = Date.now();
-    const tick = () => {
-      const now = Date.now();
-      if (document.visibilityState === "visible") {
-        rewriteRemainingMs -= now - last;
-        if (rewriteRemainingMs <= 0) {
-          rewriteRemainingMs = 0;
-          saveRewriteRemaining(novelId, 0);
-          saveRewriteFailData(novelId, null);
-          closeNotification(id);
-          rewriteNotifId = null;
-          rewriteFailData = null;
-          rewriteNovelId = null;
-          setRewriteFail(null);
-          return;
-        }
-        saveRewriteRemaining(novelId, rewriteRemainingMs);
-      }
-      last = now;
-    };
-    const iv = window.setInterval(tick, 1000);
-    return () => {
-      window.clearInterval(iv);
-      // 卸载/切页：暂停计时，剩余时长持久化（通知保持显示，回来继续累计）
-      saveRewriteRemaining(novelId, rewriteRemainingMs);
-    };
-  }, [novelId, rewriteFail]);
+   *    刷新或切页回来继续累计，累计满 15s 才自动关闭（此时才清模块态与本地状态）。
+   *  逻辑已封装进 writing/notifications 的 useRewriteFailNotif hook。 */
+  useRewriteFailNotif(novelId, rewriteFail, setRewriteFail);
 
+  /** 发起正文生成（新增章节或重新生成正文，靠 regenerateNo 区分）：置生成中 → 合成本次配置 → runAgent SSE。
+   *  成功判定：SSE 收到 stored 事件（action=alert 为格式校验未通过仅记录；dry_run 不提示；其余弹成功 toast）；
+   *  失败判定：stream_error 事件或 try 抛错（friendlyRunError），均弹错误提示。
+   *  收尾统一在 finally：关闭弹窗、刷新目录与详情、弹写后设定自检告警；跨小说守卫下不刷新不提示。 */
   async function handleGenerate(override?: Partial<typeof form>) {
     setGenerating(true);
     // 写后设定自检：本次生成收集到的疑似漏项（SSE setting_warning），完成后弹右上角告警通知
     let collectedGaps: SettingGap[] = [];
-    genStartRef.current = Date.now();
+    setGenStartAt(Date.now());
     // 记录本次生成模式：新增章节 or 重新生成正文（弹窗关闭后 regenerateNo 会重置，按钮禁用方向靠它判断）
-    genIsRegenerateRef.current = regenerateNo != null;
+    setGenIsRegenerate(regenerateNo != null);
     // 弹窗保持打开、不自动关闭；生成过程通过「查看 AI 过程」按钮实时查看
     setGenRun({ thinking: "", output: "", running: true });
 
@@ -1464,7 +910,7 @@ export default function WritingPanel({ novelId }: Props) {
       await loadChapters();
       await loadDetail(f.chapter_no);
       // 写后设定自检命中：弹右上角常驻告警（重新生成 / 忽略）
-      if (collectedGaps.length > 0) fireGapNotif(f.chapter_no, collectedGaps);
+      if (collectedGaps.length > 0) fireGapNotif(novelId, f.chapter_no, collectedGaps, openRegenerateModal);
     }
   }
 
@@ -1513,6 +959,7 @@ export default function WritingPanel({ novelId }: Props) {
     }
   }
 
+  /** 复制当前选中版本正文到剪贴板：优先异步 Clipboard API，失败回退 execCommand；无正文/失败均提示。 */
   async function handleCopyContent() {
     if (!selectedVersion?.content) return;
     try {
@@ -1523,6 +970,10 @@ export default function WritingPanel({ novelId }: Props) {
     }
   }
 
+  /** 提取当前选中已定稿版本入记忆层：先落盘未保存编辑 → 校验（有章/有版本/非旧大纲/已定稿）→ 二次确认。
+   *  成功判定：SSE 的 stored 回执（其 downstream_affected 非空时弹受影响章节通知）；
+   *  但 SSE 断流回执可能丢失、后端照常落库，收尾以服务端 extracted_version_id 校准按钮高亮，
+   *  避免「已提取仍高亮」误报；确实未落库才提示失败。 */
   async function handleExtract() {
     // 提取前先落盘正文草稿区未保存的编辑：记忆层须基于最新正文内容；落盘失败则中止
     const savedText = await flushSave();
@@ -1640,6 +1091,11 @@ export default function WritingPanel({ novelId }: Props) {
     }
   }
 
+  /** 对当前选中版本发起评价（critic）：先落盘未保存编辑 → 校验（有章/有版本/非旧大纲）→ runAgent SSE 流式展示。
+   *  成功判定：流正常结束且未失败（failed 由 stream_error / schema_validate 置位）即提示完成——
+   *  不依赖 stored（回执可能因断流丢失但后端照常落库），结束后无条件从服务端校准评价列表；
+   *  若评价期间正文未被改动则清除「待重新评价」标记（该评价对应当前内容）。
+   *  连接超时兜底 15 分钟：超时中断显示，但后端任务照常跑完落库，刷新可见。 */
   async function handleReview() {
     // 先把正文草稿区未落盘的编辑保存：评价必须基于后端最新正文（不是本地未保存的旧内容）；
     // 落盘失败（确有改动）时中止，避免对旧正文评价。
@@ -1667,7 +1123,7 @@ export default function WritingPanel({ novelId }: Props) {
     }
     setReviewing(true);
     setReviews(null);
-    reviewStartRef.current = Date.now();
+    setReviewStartAt(Date.now());
     setReviewRun({ thinking: "", output: "", running: true });
     let failed = false; // 流内失败标记（stream_error / schema 最终校验失败）：失败时不再弹完成提示
     try {
@@ -1827,6 +1283,12 @@ export default function WritingPanel({ novelId }: Props) {
     }
   }
 
+  /** 「挨个重写」始终指向最新一次渲染的联动重写逻辑，避免通知里回调闭包过期。
+   *  放在 handleRerunAffected 声明之后，避免 react-hooks/immutability「声明前访问」告警。 */
+  useEffect(() => {
+    rerunAffectedRef.current = () => handleRerunAffected();
+  });
+
   /** 按评价报告逐条优化本章正文（修订师），修订版直接定稿为新版本。 */
   async function handleRevise(
     review: QualityReview,
@@ -1863,7 +1325,7 @@ export default function WritingPanel({ novelId }: Props) {
     setRevising(true);
     // 写后设定自检：本次优化收集到的疑似漏项（SSE setting_warning），完成后弹右上角告警通知
     let collectedGaps: SettingGap[] = [];
-    reviseStartRef.current = Date.now();
+    setReviseStartAt(Date.now());
     setReviseRun({ thinking: "", output: "", running: true });
     let failed = false; // 流内失败标记（stream_error / schema 最终校验失败）：失败时不再弹完成提示、不关闭弹窗
     try {
@@ -1951,82 +1413,9 @@ export default function WritingPanel({ novelId }: Props) {
       }
       await loadDetail(detail.chapter_no, selectNewVersionId);
       // 写后设定自检命中：弹右上角常驻告警（重新生成 / 忽略）
-      if (!failed && collectedGaps.length > 0) fireGapNotif(detail.chapter_no, collectedGaps);
+      if (!failed && collectedGaps.length > 0) fireGapNotif(novelId, detail.chapter_no, collectedGaps, openRegenerateModal);
     }
   }
-
-  /** 版本树递归渲染：新增章节与重新生成正文平级，均为根节点（parent_version_id=null）；
-   *  评价优化（reviser）挂在「当前选中版本」之下（parent=选中版本 id），可沿「选中→评价→优化」无限递进。
-   *  点击节点=选中预览该版本（与旧版本 tab 一致），选中后关闭弹窗。 */
-  const renderVersionNodes = (parentId: string | null): ReactNode[] => {
-    if (!detail) return [];
-    return detail.versions
-      .filter((v) => (parentId == null ? v.parent_version_id == null : v.parent_version_id === parentId))
-      .map((v) => {
-        const isSel = selectedVersion?.id === v.id;
-        const kids = renderVersionNodes(v.id);
-        return (
-          <li key={v.id}>
-            <button
-              type="button"
-              onClick={() => {
-                handleSelectVersion(v.id);
-                setVersionOpen(false);
-              }}
-              disabled={aiBusy}
-              title={
-                aiBusy
-                  ? "AI 处理中，暂不能切换版本预览"
-                  : v.is_active
-                    ? "已定稿版本（点击预览）"
-                    : isSel
-                      ? "当前预览的草稿版本（可在「本章操作」点「定稿」）"
-                      : "点击预览此版本（草稿，可在「本章操作」定稿）"
-              }
-              className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
-                isSel
-                  ? "bg-zinc-200/70 ring-1 ring-inset ring-zinc-400 dark:bg-zinc-700/70 dark:ring-zinc-500"
-                  : "hover:bg-zinc-100 dark:hover:bg-zinc-700/40"
-              } ${aiBusy ? "cursor-not-allowed opacity-60" : ""}`}
-            >
-              {/* 节点圆点：绿=已定稿，灰=草稿 */}
-              <span
-                className={`h-2 w-2 shrink-0 rounded-full ${
-                  v.is_active ? "bg-green-500 dark:bg-green-400" : "bg-zinc-300 dark:bg-zinc-600"
-                }`}
-              />
-              {/* 版本号 */}
-              <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">v{v.version_no}</span>
-              {/* 签约未过签标记：评价存在内容红线/抄袭类高危 issue，定稿默认被拒 */}
-              {v.signing_blocked && (
-                <span className="shrink-0 rounded-md bg-red-600/90 px-1.5 py-px text-[10px] font-medium text-white">
-                  未过签
-                </span>
-              )}
-              {/* 定稿/草稿 状态 */}
-              <span
-                className={`ml-auto shrink-0 font-medium ${
-                  v.is_active ? "text-green-600 dark:text-green-400" : "text-zinc-400 dark:text-zinc-500"
-                }`}
-              >
-                {v.is_active ? "已定稿" : "草稿"}
-              </span>
-              {/* 当前选中 */}
-              {isSel && (
-                <span className="shrink-0 rounded-md bg-zinc-800 px-1.5 py-px text-[10px] font-medium text-white dark:bg-zinc-200 dark:text-zinc-800">
-                  当前
-                </span>
-              )}
-            </button>
-            {kids.length > 0 && (
-              <ul className="mt-0.5 space-y-0.5 border-l border-zinc-200 pl-3.5 dark:border-zinc-700">
-                {kids}
-              </ul>
-            )}
-          </li>
-        );
-      });
-  };
 
   return (
     <Loading loading={loading}>
@@ -2035,287 +1424,41 @@ export default function WritingPanel({ novelId }: Props) {
           dirCollapsed ? "lg:grid-cols-[48px_minmax(0,1fr)]" : "lg:grid-cols-[340px_minmax(0,1fr)]"
         }`}
       >
-      {/* 目录折叠后的窄条：点它把 340px 目录栏收起，正文与评价栏同时变宽 */}
-      {dirCollapsed && (
-        <div className="panel flex flex-row items-center gap-2 py-2 lg:w-full xl:h-[calc(100dvh-6rem)] xl:flex-col xl:py-3">
-          <button
-            type="button"
-            onClick={() => setDirCollapsed(false)}
-            title="展开章节目录"
-            aria-label="展开章节目录"
-            className="btn btn-ghost h-8 w-8 shrink-0 p-0"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 6l6 6-6 6" /></svg>
-          </button>
-          <span className="text-xs tracking-widest text-zinc-500 dark:text-zinc-400 xl:[writing-mode:vertical-rl]">
-            章节目录
-          </span>
-        </div>
-      )}
-      {/* 左侧：章节目录（一件事一张卡，按卷分组、可展开搜索，与大纲页一致）。
-          模块高度跟随内容，最多与页面底部对齐；内容多时在列表内滚动，避免整页滚动条。 */}
-      <aside className={`${dirCollapsed ? "hidden" : "flex"} max-h-[calc(100dvh-6rem)] min-w-0 flex-col gap-4 overflow-hidden`}>
-        <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="panel-head shrink-0">
-            <h3 className="panel-title">章节目录</h3>
-            <div className="flex items-center gap-2">
-              <span className="panel-hint">{chapters.length} 章</span>
-              <button
-                type="button"
-                onClick={() => setDirCollapsed(true)}
-                title="收起章节目录，正文与评价栏同时变宽"
-                aria-label="收起章节目录"
-                className="btn btn-ghost h-6 w-6 shrink-0 p-0"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M15 6l-6 6 6 6" /></svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  // 生成中再次点击 = 重开弹窗查看生成进度：跳过「最新章须已定稿」门禁
-                  if (!generating) {
-                    // 最新一章尚未定稿 → 拦截：必须先定稿才能新增章节（空小说除外）
-                    const latest = [...chapters].sort((a, b) => b.chapter_no - a.chapter_no)[0];
-                    if (latest && latest.status !== "complete") {
-                      showToast(
-                        `最新一章（第 ${latest.chapter_no} 章）还是草稿，请先定稿后再新增章节。`,
-                        "warning",
-                      );
-                      return;
-                    }
-                  }
-                  openAddModal();
-                }}
-                // 新增章节生成中不禁用：可再次点击重开弹窗查看「查看生成过程」进度（弹窗内「生成正文」仍禁用防重复）；
-                // 仅「重新生成正文」生成中禁用新增（本次是重生成，进度只能从重生成入口重开查看）；
-                // 评价 / 提取进行中禁用（本次操作锁定面板，等完成才解除）
-                disabled={(generating && genIsRegenerateRef.current) || aiBusy}
-                title={
-                  aiBusy
-                    ? reviewing
-                      ? "评价进行中，暂不能新增章节"
-                      : "提取记忆层中，暂不能新增章节"
-                    : generating && genIsRegenerateRef.current
-                      ? "重新生成正文中，暂不能新增章节"
-                      : generating
-                        ? "正文生成中，点击可再次打开弹窗查看进度"
-                        : undefined
-                }
-                className="btn btn-primary px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                新增章节
-              </button>
-            </div>
-          </div>
-          {chapters.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
-              还没有章节。点右上角「新增章节」，写下一章。
-            </p>
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <input
-                className="mb-3 w-full shrink-0 rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                placeholder="搜索章节（章号 / 标题）"
-                value={chapterSearch}
-                onChange={(e) => setChapterSearch(e.target.value)}
-              />
-              <div className="min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
-                {volGroups
-                  .map((g) => {
-                    const items = chapterQ ? g.items.filter(chapterMatches) : g.items;
-                    return items.length > 0 ? { g, items } : null;
-                  })
-                  .filter((x): x is { g: ChapterVolumeGroup; items: ChapterListItem[] } => x != null)
-                  .map(({ g, items }, idx, arr) => {
-                    const isCollapsed = !chapterQ && collapsedVols[g.key];
-                    const isLast = idx === arr.length - 1;
-                    return (
-                      <section key={g.key} className={isLast ? "" : "mb-2"}>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            !chapterQ &&
-                            setCollapsedVols((prev) => ({ ...prev, [g.key]: !prev[g.key] }))
-                          }
-                          className={`mb-1.5 flex w-full items-start gap-1.5 text-left ${
-                            chapterQ ? "cursor-default" : "cursor-pointer"
-                          }`}
-                        >
-                          <span
-                            className={`mt-0.5 shrink-0 text-[10px] text-zinc-400 transition-transform ${
-                              isCollapsed ? "-rotate-90" : ""
-                            }`}
-                          >
-                            ▾
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <h4 className="text-xs font-bold text-zinc-500 dark:text-zinc-400">{g.label}</h4>
-                            {g.subtitle && (
-                              <span className="mt-0.5 block text-[10px] text-zinc-400">{g.subtitle}</span>
-                            )}
-                          </div>
-                          <span className="ml-auto shrink-0 text-[10px] text-zinc-400">{items.length} 章</span>
-                        </button>
-                        {!isCollapsed && (
-                          <ul className="flex flex-col gap-2">
-                            {items.map((c) => (
-                              <li key={c.id}>
-                                <button
-                                  className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
-                                    activeNo === c.chapter_no
-                                      ? "border-zinc-500 bg-zinc-100 dark:bg-zinc-800"
-                                      : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
-                                  } ${aiBusy ? "cursor-not-allowed opacity-60" : ""}`}
-                                  disabled={aiBusy}
-                                  title={aiBusy ? "AI 处理中，暂不能切换章节" : undefined}
-                                  onClick={() => {
-                                    // 章节目录不允许取消选中：点击任意章节（含已选中）都保持/设为选中
-                                    setActiveNo(c.chapter_no);
-                                    setReviews(null);
-                                    setSelectedVersionId(null);
-                                    setVersionOpen(false);
-                                    void loadDetail(c.chapter_no);
-                                  }}
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="text-sm font-medium">
-                                      第{c.chapter_no}章{listItemTitle(c) ? ` ${listItemTitle(c)}` : ""}
-                                    </span>
-                                  </div>
-                                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-zinc-500">
-                                    {c.status === "complete" ? (
-                                      <span className="rounded bg-green-100 px-1 py-0.5 text-green-700 dark:bg-green-900 dark:text-green-300">
-                                        已定稿
-                                      </span>
-                                    ) : (
-                                      <span className="rounded bg-zinc-100 px-1 py-0.5 dark:bg-zinc-800">草稿</span>
-                                    )}
-                                    {c.active_source && <span>{sourceLabel(c.active_source)}</span>}
-                                    {c.word_count != null && <span>{c.word_count}字</span>}
-                                  </div>
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </section>
-                    );
-                  })}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* 本章操作：提取入记忆 / 复制正文，收在一张卡里。必须选中章节才能点（针对某一章）。
-            shrink-0：高度固定，始终把目录面板挤到剩余的视口高度里去滚动。 */}
-        <div className="panel shrink-0">
-          <div className="panel-head">
-            <h3 className="panel-title">本章操作</h3>
-            {activeNo != null && (
-              <span className="panel-hint">
-                第 {activeNo} 章{activeChapter?.title ? ` ${activeChapter.title}` : ""}
-              </span>
-            )}
-          </div>
-          <div className="flex flex-col gap-2">
-            {/* 重新生成正文：复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）。
-                生成中不禁用：要能再次打开弹窗查看「查看生成过程」进度；但「新增章节」生成中需禁用——
-                本次是新增而非重新生成，进度只能从「新增章节」入口重开查看；评价 / 提取进行中禁用。 */}
-            <button
-              type="button"
-              onClick={openRegenerateModal}
-              disabled={activeNo == null || (generating && !genIsRegenerateRef.current) || aiBusy}
-              className="btn btn-ghost w-full"
-              title={
-                activeNo == null
-                  ? "请先选择一章"
-                  : aiBusy
-                    ? reviewing
-                      ? "评价进行中，暂不能重新生成正文"
-                      : "提取记忆层中，暂不能重新生成正文"
-                    : generating && !genIsRegenerateRef.current
-                      ? "新增正文生成中，暂不能重新生成正文"
-                      : "复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）"
-              }
-            >
-              重新生成正文
-            </button>
-            {/* 定稿：把当前选中的草稿版本定稿激活（同一时间只能定稿一个版本）；选中已定稿版本时隐藏 */}
-            {!selectedIsFinal && (
-              <button
-                type="button"
-                onClick={() => void handleFinalizeSelected()}
-                disabled={activeNo == null || generating || aiBusy || !selectedVersion}
-                className="btn btn-primary w-full"
-                title={
-                  activeNo == null || !selectedVersion
-                    ? "请先选择一章"
-                    : aiBusy
-                      ? reviewing
-                        ? "评价进行中，暂不能定稿"
-                        : "提取记忆层中，暂不能定稿"
-                      : selectedVersion.signing_blocked
-                        ? "该版本签约未过签（存在内容红线/抄袭类高危问题），定稿需二次确认"
-                        : "将当前选中的草稿版本定稿为本章正文"
-                }
-              >
-                定稿
-              </button>
-            )}
-            {/* 评价入口统一在右侧「评价与优化」，本章操作只保留提取与复制 */}
-            <button
-              className={`relative w-full cursor-pointer rounded-lg border px-3 py-2 text-sm transition-colors ${
-                extractPending
-                  ? "border-blue-500 bg-gradient-to-r from-blue-200 to-blue-50 font-medium text-blue-800 hover:border-blue-600 hover:from-blue-300 hover:to-blue-100 dark:border-blue-500 dark:from-blue-800/80 dark:to-blue-950/60 dark:text-blue-300 dark:hover:border-blue-400 dark:hover:from-blue-800 dark:hover:to-blue-900/70 disabled:hover:border-blue-500 dark:disabled:hover:border-blue-500"
-                  : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-700 dark:text-zinc-300 disabled:hover:border-zinc-300 dark:disabled:hover:border-zinc-700"
-              } disabled:cursor-not-allowed disabled:opacity-100`}
-              onClick={handleExtract}
-              disabled={activeNo == null || extracting || reviewing || !selectedVersion || !selectedIsFinal}
-              title={
-                activeNo == null
-                  ? "请先在章节目录选择一章"
-                  : isStaleForActiveOutline
-                    ? "当前正文基于旧版大纲生成，只能查看；请基于当前激活大纲重新生成正文并定稿后再提取"
-                    : reviewing
-                      ? "评价进行中，暂不能提取记忆层"
-                      : !selectedVersion
-                        ? "先选定版本再提取"
-                        : !selectedIsFinal
-                          ? "只有已定稿的正文才能提取入记忆层，请先在「本章操作」点「定稿」"
-                          : extractPending
-                            ? "当前版本尚未提取记忆层，重新提取后才会进入记忆（或已切到新版本）"
-                            : "把本章摘要/角色状态/伏笔写进记忆层"
-              }
-            >
-              {extracting ? "提取中…" : "提取 → 记忆层"}
-              <span
-                className="absolute right-2 top-1/2 -translate-y-1/2"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <InfoTip side="right">
-                  <p className="font-medium text-zinc-700 dark:text-zinc-200">提取本章 = 给 AI 记账。</p>
-                  把这一章的摘要、角色当前状态、新埋的伏笔等写进「记忆层」。
-                  下一章生成时小说家会自动读到，角色性格的变化也靠它跟踪。
-                  <span className="mt-1.5 block text-zinc-400">
-                    每写完一章记得点一下，不然下一章可能"忘了"刚才发生了什么。
-                  </span>
-                </InfoTip>
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={handleCopyContent}
-              disabled={activeNo == null || !selectedVersion}
-              className="btn btn-ghost w-full"
-            >
-             复制本章正文
-            </button>
-            <div className="mt-1 border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
-              <CostHint />
-            </div>
-          </div>
-        </div>
-      </aside>
+      <ChapterSidebar
+        dirCollapsed={dirCollapsed}
+        onSetDir={setDirCollapsed}
+        chapters={chapters}
+        volumes={volumes}
+        chapterSearch={chapterSearch}
+        onChapterSearch={setChapterSearch}
+        collapsedVols={collapsedVols}
+        onToggleVol={(key) => setCollapsedVols((prev) => ({ ...prev, [key]: !prev[key] }))}
+        activeNo={activeNo}
+        activeChapter={activeChapter}
+        activeVersionTitle={selectedVersion?.title}
+        aiBusy={aiBusy}
+        reviewing={reviewing}
+        generating={generating}
+        genIsRegenerate={genIsRegenerate}
+        showToast={showToast}
+        onAdd={openAddModal}
+        onSelectChapter={(no) => {
+          setActiveNo(no);
+          setReviews(null);
+          setSelectedVersionId(null);
+          setVersionOpen(false);
+          void loadDetail(no);
+        }}
+        onRegenerate={openRegenerateModal}
+        selectedVersion={selectedVersion}
+        selectedIsFinal={selectedIsFinal}
+        extractPending={extractPending}
+        isStaleForActiveOutline={isStaleForActiveOutline}
+        extracting={extracting}
+        onFinalize={() => void handleFinalizeSelected()}
+        onExtract={handleExtract}
+        onCopy={handleCopyContent}
+      />
 
       {/* 右侧：正文（左，占据主区）+ 评价与优化（右，常驻侧栏）并排，各自独立滚动、互不挤压；
           中窄屏（<xl）回退为上下堆叠，评价栏限高可滚动；xl 起正文与评价左右并排、各自满高独立滚动。正文与评价始终同屏可见，不再用弹窗；评价栏可折叠为窄条让正文全宽阅读。 */}
@@ -2374,7 +1517,15 @@ export default function WritingPanel({ novelId }: Props) {
                           新增 / 重新生成为根节点；「评价优化」挂在被优化版本之下，可一直递进。点节点切换预览。
                         </p>
                         {detail.versions.length > 0 ? (
-                          <ul className="mt-1 space-y-1">{renderVersionNodes(null)}</ul>
+                          <VersionTree
+                            versions={detail.versions}
+                            selectedId={selectedVersion?.id ?? null}
+                            aiBusy={aiBusy}
+                            onSelect={(id) => {
+                              handleSelectVersion(id);
+                              setVersionOpen(false);
+                            }}
+                          />
                         ) : (
                           <p className="py-4 text-center text-xs text-zinc-400">本章还没有任何版本。</p>
                         )}
@@ -2930,256 +2081,5 @@ export default function WritingPanel({ novelId }: Props) {
       />
       </div>
     </Loading>
-  );
-}
-
-/** 评价师结果卡片：整体分 + 六维评分 + 问题 + 亮点 + 修改建议 + 按评价优化。 */
-function ReviewCard({
-  review,
-  onRevise,
-  revising,
-  activeVersionId,
-  viewButton,
-}: {
-  review: QualityReview;
-  onRevise: (r: QualityReview, authorInput?: { note?: string; disagreements?: Record<number, string> }) => void;
-  revising: boolean;
-  /** 当前预览选中的版本 id：评价与选中版本对得上才可「按评价优化」。 */
-  activeVersionId: string | null;
-  /** 出现在「按评价优化本章」左侧的附加按钮（如：查看 AI 过程）。 */
-  viewButton?: ReactNode;
-}) {
-  const rubric = review.rubric ?? {};
-  const rubricEntries = Object.entries(rubric);
-  const scoreColor = (s?: number) =>
-    s == null ? "" : s >= 80 ? "text-green-600" : s >= 60 ? "text-amber-600" : "text-red-600";
-  /** 评价是否针对当前预览选中的版本（原 is_current 由后端按激活版本标记 → 改为按选中版本判断）。 */
-  const matchesActive = activeVersionId != null && review.chapter_version_id === activeVersionId;
-  /** 作者对某条问题有异议的理由（key=问题序号）；异议随优化传给修订师，优先级高于评价师。 */
-  const [drafts, setDrafts] = useState<Record<number, string>>({});
-  /** 作者整体批注（可选）：随优化传给修订师，优先级高于评价师。 */
-  const [note, setNote] = useState("");
-  /** 当前展开异议输入框的问题序号（null=全部收起）。 */
-  const [openDraft, setOpenDraft] = useState<number | null>(null);
-  return (
-    <div className="rounded-lg bg-sunken/40 p-4">
-      <div className="mb-3 flex items-center gap-3">
-        <span className={`text-4xl font-bold ${scoreColor(review.overall_score ?? undefined)}`}>
-          {review.overall_score ?? "—"}
-        </span>
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="text-sm font-semibold">评价师 · 第 {review.chapter_no ?? "?"} 章评审</h3>
-            {review.version_no != null && (
-              <span
-                title={
-                  matchesActive
-                    ? `针对当前选中的正文 v${review.version_no}`
-                    : "针对其他版本（当前未选中）"
-                }
-                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                  matchesActive
-                    ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
-                    : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-                }`}
-              >
-                v{review.version_no}
-                {matchesActive ? "" : " · 未选中"}
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-zinc-500">
-            {review.created_at ? new Date(review.created_at).toLocaleString() : ""}
-            {review.chapter_title ? ` · ${review.chapter_title}` : ""}
-          </p>
-        </div>
-      </div>
-
-      {rubricEntries.length > 0 && (
-        <div className="mb-3 grid gap-2 @2xl:grid-cols-2">
-          {rubricEntries.map(([k, v]) => {
-            const isRetention = k === "reader_retention";
-            const hookEntries = Object.entries(v?.hooks ?? {});
-            const retentionRisk =
-              isRetention && typeof v?.score === "number" && v.score < 65;
-            return (
-              <div
-                key={k}
-                className={`rounded-lg border p-2.5 dark:border-zinc-800 ${
-                  isRetention
-                    ? "border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/40"
-                    : "border-zinc-200"
-                }`}
-              >
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    {RUBRIC_LABELS[k] ?? k}
-                  </span>
-                  <span className={`text-sm font-bold ${scoreColor(v?.score)}`}>{v?.score ?? "—"}</span>
-                </div>
-                {isRetention && hookEntries.length > 0 && (
-                  <div className="mb-1.5 grid grid-cols-2 gap-1">
-                    {hookEntries.map(([hk, hs]) => (
-                      <div
-                        key={hk}
-                        className="flex items-center justify-between rounded bg-zinc-100 px-1.5 py-1 text-[11px] dark:bg-zinc-900"
-                      >
-                        <span className="text-zinc-500">{RETENTION_HOOK_LABELS[hk] ?? hk}</span>
-                        <span className={`font-semibold ${scoreColor(hs)}`}>{hs ?? "—"}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <p className="text-xs text-zinc-600 dark:text-zinc-300">{v?.comment}</p>
-                {retentionRisk && (
-                  <p className="mt-1.5 rounded bg-red-100 px-2 py-1 text-[11px] font-medium text-red-700 dark:bg-red-900 dark:text-red-300">
-                    追读风险：本章低于 65 分，读者可能划走不追更，建议按评语改完重新评价。
-                  </p>
-                )}
-                {v?.evidence && (
-                  <p className="mt-1 border-l-2 border-zinc-200 pl-2 text-[11px] text-zinc-400 dark:border-zinc-700">
-                    {v.evidence}
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {review.issues && review.issues.length > 0 && (
-        <div className="mb-3">
-          <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">问题</h4>
-          <ul className="flex flex-col gap-1.5">
-            {review.issues.map((i, idx) => (
-              <li
-                key={idx}
-                className={`rounded-lg border p-2.5 text-xs ${
-                  drafts[idx]?.trim()
-                    ? "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950"
-                    : "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <span className="mr-1.5 rounded bg-red-100 px-1 py-0.5 text-[10px] text-red-700 dark:bg-red-900 dark:text-red-300">
-                      {i.severity ? (SEVERITY_LABELS[i.severity] ?? i.severity) : "?"}
-                    </span>
-                    {i.desc}
-                    {i.suggested_fix && (
-                      <span className="mt-1 block text-red-700/80 dark:text-red-300/80">改法：{i.suggested_fix}</span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setOpenDraft((v) => (v === idx ? null : idx))}
-                    title={
-                      drafts[idx]?.trim()
-                        ? "已标记有异议，该条将保留原文不修改（点击修改理由）"
-                        : "不认可这条建议？标记并写理由，修订师将保留原文、不按此条修改"
-                    }
-                    className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${
-                      drafts[idx]?.trim()
-                        ? "border-amber-400 bg-amber-100 text-amber-700 dark:border-amber-600 dark:bg-amber-900 dark:text-amber-300"
-                        : "border-zinc-300 text-zinc-500 hover:border-amber-400 hover:text-amber-600 dark:border-zinc-700 dark:text-zinc-400"
-                    }`}
-                  >
-                    {drafts[idx]?.trim() ? "有异议 ✓" : "有异议"}
-                  </button>
-                </div>
-                {openDraft === idx && (
-                  <textarea
-                    value={drafts[idx] ?? ""}
-                    onChange={(e) => setDrafts((d) => ({ ...d, [idx]: e.target.value }))}
-                    placeholder="说明哪里不对 / 与上文哪处冲突（可选；优化师将跳过此条或按你的意见改）"
-                    rows={2}
-                    className="mt-2 w-full resize-none rounded-md border border-zinc-300 bg-white p-1.5 text-xs outline-none focus:border-amber-400 dark:border-zinc-700 dark:bg-zinc-900"
-                  />
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="grid gap-3 @2xl:grid-cols-2">
-        {review.strengths && review.strengths.length > 0 && (
-          <div>
-            <h4 className="mb-1.5 text-xs font-semibold text-green-600 dark:text-green-400">亮点</h4>
-            <ul className="flex list-disc flex-col gap-1 pl-4 text-xs text-zinc-600 dark:text-zinc-300">
-              {review.strengths.map((s, i) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {review.revision_hints && review.revision_hints.length > 0 && (
-          <div>
-            <h4 className="mb-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">修改建议</h4>
-            <ul className="flex list-disc flex-col gap-1 pl-4 text-xs text-zinc-600 dark:text-zinc-300">
-              {review.revision_hints.map((s, i) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-
-      {matchesActive ? (
-        <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-          <p className="mb-1.5 text-[11px] text-zinc-500">
-            作者批注（可选，会记下来）
-            <span className="text-zinc-400">
-              ——评价里没提到、但你自己发现的问题（设定/关系/时间线不一致等），或想按自己的方式改，写在这里，修订师会照此修改。
-              这条意见会保存到本章，之后重新生成/规划本章都会自动遵守，不会再说一次还照写。
-              若想让某条评价建议保持原文，用问题右侧的「有异议」。
-            </span>
-          </p>
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="例如：本章王磊说『我租的房子在前面』，但前文交代过他是本地人、毕业住家里，请统一口径；主角的反应改成冷静处理…"
-            rows={2}
-            className="w-full resize-none rounded-md border border-zinc-300 bg-white p-2 text-xs outline-none focus:border-primary dark:border-zinc-700 dark:bg-zinc-900"
-          />
-          <div className="mt-2.5 flex items-center justify-between gap-3">
-            <p className="text-[11px] text-zinc-400">
-              修订师会逐条对照以上问题优化当前选中的正文（v{review.version_no}），保留原情节走向，优化后存为新草稿版本。
-              「有异议」=保留原文不采纳该条；作者批注=按你的批注修改正文。都会传给修订师，以你的意见为准。
-            </p>
-            <div className="flex shrink-0 items-center gap-2">
-              {viewButton}
-              <button
-                onClick={() => {
-                  const disagreements = Object.entries(drafts).reduce<Record<number, string>>((acc, [k, v]) => {
-                    if (v.trim()) acc[Number(k)] = v.trim();
-                    return acc;
-                  }, {});
-                  const hasNote = note.trim().length > 0;
-                  const hasDis = Object.keys(disagreements).length > 0;
-                  onRevise(
-                    review,
-                    hasNote || hasDis
-                      ? { note: hasNote ? note.trim() : undefined, disagreements: hasDis ? disagreements : undefined }
-                      : undefined,
-                  );
-                }}
-                disabled={revising}
-                className="btn btn-primary shrink-0 px-3 py-1.5 text-xs font-medium"
-              >
-                {revising ? "AI 优化中…" : "按评价优化本章"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-          <p className="text-[11px] text-zinc-400">
-            这条评价针对 v{review.version_no}，当前选中的正文不是该版本，评价对不上。先在下方版本列表选中「v{review.version_no}」
-            再优化，或直接对当前选中的正文重新评价。
-          </p>
-        </div>
-      )}
-    </div>
   );
 }

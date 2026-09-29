@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _get(research: dict | None, key: str, default=""):
+    """从研究字典安全取值：非字典或值为 None 时返回默认值（渲染注入文本用）。"""
     if not isinstance(research, dict):
         return default
     v = research.get(key, default)

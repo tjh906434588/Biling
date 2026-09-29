@@ -1,3 +1,9 @@
+"""调试 backend/biling.db 的 blueprints 表：检查 content 字段结构。
+
+用法：python scripts/db_blueprint.py
+逐条打印 blueprint 的顶层字段清单、可能含背景/题材的字段
+（genres/background_type/theme 等）值，以及前几个字段的内容样例。
+"""
 import json
 import sqlite3
 

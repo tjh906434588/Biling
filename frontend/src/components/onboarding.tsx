@@ -1,42 +1,14 @@
+/**
+ * @file onboarding.tsx
+ * 新手引导：首页「四步成书」引导区块，按 起书名 → 定蓝图 → 排大纲 → 开写 四步介绍工作流。
+ * 核心机制：步骤文案由 ONBOARDING_STEPS 常量驱动（与产品里 5 个 AI 角色一一对应，不写虚的）；
+ * 已有作品时右上角显示「继续写作」直达工作台，可一键收起引导。
+ */
 "use client";
 
 import Link from "next/link";
 import type { CSSProperties } from "react";
-
-export interface OnboardingStep {
-  key: string;
-  title: string;
-  desc: string;
-  note: string;
-}
-
-/** 与产品里真实的 5 个角色一一对应，不写虚的。 */
-export const ONBOARDING_STEPS: OnboardingStep[] = [
-  {
-    key: "create",
-    title: "起个书名",
-    desc: "给作品起个名字就能开始，一句话简介可以之后再补。",
-    note: "书名随时可改",
-  },
-  {
-    key: "blueprint",
-    title: "定下骨架",
-    desc: "蓝图师给出主题、核心冲突、角色弧光与伏笔计划，逐版保存，随时可回溯。",
-    note: "蓝图是整本书的底稿",
-  },
-  {
-    key: "outline",
-    title: "排好章节",
-    desc: "大纲师按蓝图排出每章的节拍与冲突，批准后会直接填进写作表单。",
-    note: "同时登记伏笔账本",
-  },
-  {
-    key: "write",
-    title: "开写正文",
-    desc: "小说家生成定稿正文；提取师把它压成记忆，下一章还记得。",
-    note: "你的改动会被风格画像学走",
-  },
-];
+import { ONBOARDING_STEPS } from "@/constants";
 
 interface Props {
   /** 已有作品时，引导右上角出现「继续写作」直达工作台 */
@@ -44,6 +16,11 @@ interface Props {
   onDismiss: () => void;
 }
 
+/**
+ * 新手引导区块。
+ * @param href 已有作品时指向工作台的「继续写作」链接；不传则不显示该按钮。
+ * @param onDismiss 点击「收起引导」时回调（由父组件负责持久化隐藏）。
+ */
 export default function Onboarding({ href, onDismiss }: Props) {
   return (
     <section id="how" className="shell scroll-mt-24 py-14 sm:py-20">

@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/novels", tags=["style"])
 
 @router.get("/{novel_id}/style", response_model=list[StyleProfileRead])
 def list_style_profiles(novel_id: uuid.UUID, db: Session = Depends(get_db)):
+    """风格画像版本列表（按版本号倒序，最新在前）。"""
     if db.get(Novel, novel_id) is None:
         raise HTTPException(404, "项目不存在")
     return db.execute(

@@ -254,6 +254,7 @@ _TRIGGER_MECHANISM_PATTERNS = [
     re.compile(r"金手指.{0,8}(激活|兑现|触发|展威|点亮)"),
     re.compile(r"(面板|天赋清单|适配推荐|推荐栏)"),
 ]
+# 合法 chapter_function 取值集合（校验 narrative 候选的 chapter_function 字段是否在协议内）
 _VALID_CHAPTER_FUNCTIONS = set(CHAPTER_FUNCTIONS)
 
 # goal 维度「同一时间切片」校验：候选必须落在同一阶段/时间点（如都锚定"入职第一天"），
@@ -642,6 +643,8 @@ class ChapterPlannerAgent(Agent[ChapterPlanDimensionProposal]):
         super().__init__(db)
 
     def build_context(self, novel_id: uuid.UUID, params: dict) -> ContextPack:
+        """装配章节规划上下文：复用大纲师素材，注入当前维度定义/前序已定选择/历史修改意见
+        与「上一轮被拒」重试提示，生成单维度候选。"""
         # 复用大纲师的素材组装（与正式大纲生成同一套上下文，保证规划与产出一致），
         # 仅替换 system prompt 为章节规划指令；输出协议为"单个维度"。
         base: ContextPack = OutlinerAgent(self.db).build_context(novel_id, params)
@@ -760,4 +763,5 @@ class ChapterPlannerAgent(Agent[ChapterPlanDimensionProposal]):
         )
 
     def parse_output(self, text: str) -> ChapterPlanDimensionProposal:
+        """把 LLM 返回的单个维度 5 个候选 JSON 解析为 ChapterPlanDimensionProposal。"""
         return ChapterPlanDimensionProposal.model_validate_json(text.strip())

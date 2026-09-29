@@ -1,3 +1,10 @@
+/**
+ * @file detect-panel.tsx
+ * 体检面板：粘贴文本或取章节正文做 AI 成稿倾向检测（签约合规检测 / 文风检测）。
+ * 核心机制：三层信号参考——词法规则命中（regex_hits）、密度指纹（句长/连接词/虚词等）、
+ * 突发性启发式（困惑度 ppl + 突发性 burstiness），综合给出 verdict 判定与启发式得分，
+ * 不设硬阈值、不阻断写作，仅作提示。
+ */
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -19,6 +26,7 @@ const VERDICT_LABEL: Record<string, string> = {
   unknown: "无法判定",
 };
 
+/** 指标小卡：展示单项检测数值；accent 时加深底色以突出（综合得分用）。 */
 function Stat({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
   return (
     <div className={`rounded-lg border p-3 ${accent ? "border-zinc-500 bg-zinc-100 dark:bg-zinc-800" : "border-zinc-200 dark:border-zinc-800"}`}>
@@ -28,10 +36,16 @@ function Stat({ label, value, accent }: { label: string; value: string | number;
   );
 }
 
+/**
+ * 体检面板主组件。
+ * @param novelId 当前小说 id，用于拉取章节列表与提交检测。
+ */
 export default function DetectPanel({ novelId }: { novelId: string }) {
   const [chapters, setChapters] = useState<ChapterListItem[]>([]);
   const [text, setText] = useState("");
+  /** 当前选中的章节号；"" = 未选择（下拉占位值，检测时转成 number） */
   const [chapterNo, setChapterNo] = useState<number | "">("");
+  /** 最近一次检测结果；null = 尚未检测 */
   const [result, setResult] = useState<DetectResult | null>(null);
   const [loading, setLoading] = useState(false);
   // 章节下拉数据加载中：遮罩过渡，加载完成后解除
@@ -43,6 +57,7 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
       .finally(() => setChaptersLoading(false));
   }, [novelId]);
 
+  /** 提交文本检测：调用后端 detectText，成功后写入 result，失败弹错误提示。 */
   const runDetect = useCallback(
     async (payload: string) => {
       setLoading(true);
@@ -57,8 +72,10 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
     [novelId],
   );
 
+  /** 取章检测：把选中章节的「当前生效版本」正文填入文本区并立即检测；无正文时提示。 */
   const detectChapter = async () => {
     if (chapterNo === "") return;
+    // 按章节号找到对应章节，取其已选版本正文
     const ch = chapters.find((c) => c.chapter_no === Number(chapterNo));
     const content = ch?.active_content;
     if (!content) {
