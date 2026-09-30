@@ -179,7 +179,7 @@ async def _run_agent_stream_raw(
             if dry_run:
                 stored_list.append({"version": version, "data": parsed.model_dump(mode="json")})
             else:
-                stored_list.append(_persist(db, agent_name, novel_id, params, parsed, source=version))
+                stored_list.append(await _persist(db, agent_name, novel_id, params, parsed, source=version))
             # 写后设定自检：作家类产出（有 content）才核对，评审/大纲类没有正文可核
             body = getattr(parsed, "content", None)
             if isinstance(body, str) and body.strip():
@@ -334,7 +334,7 @@ async def _stream_single(
             yield _event("stored", {"action": "dry_run", "data": parsed.model_dump(mode="json")})
         else:
             try:
-                stored = _persist(db, agent_name, novel_id, params, parsed)
+                stored = await _persist(db, agent_name, novel_id, params, parsed)
             except Exception as e:
                 # 落库失败必须显式告知前端，并抛出标 error：
                 # 否则 SSE 直接断开，前端误以为成功（曾出现修订在落库阶段崩溃却弹"优化完成"）
@@ -993,7 +993,7 @@ async def _validate_with_retry(
             return None, False, True, str(e2)
 
 
-def _persist(
+async def _persist(
     db: Session,
     agent_name: str,
     novel_id: uuid.UUID,
@@ -1003,7 +1003,7 @@ def _persist(
 ) -> dict:
     """结构化产出入库（M1：extractor→story_state，novelist→chapters+versions；M2：outliner→outlines+ledger，critic→quality_reviews；M3：blueprint_architect→blueprints，setting_extractor→concept_cards）。"""
     if agent_name == "extractor":
-        return _persist_extractor(db, novel_id, params, parsed)
+        return await _persist_extractor(db, novel_id, params, parsed)
     if agent_name == "novelist":
         return _persist_novelist(db, novel_id, params, parsed, source)
     if agent_name == "reviser":
@@ -1116,7 +1116,105 @@ def _reconcile_superseded(db: Session, novel_id: uuid.UUID) -> int:
         total += len(pending_ids)
 
 
-def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: BaseModel) -> dict:
+def _lcs_len(a: str, b: str) -> int:
+    """两字符串最长公共子串长度（称呼相似度，用于同人候选排序）。名字都很短，朴素实现足够。"""
+    if not a or not b:
+        return 0
+    best = 0
+    for i in range(len(a)):
+        for j in range(len(b)):
+            k = 0
+            while i + k < len(a) and j + k < len(b) and a[i + k] == b[j + k]:
+                k += 1
+            best = max(best, k)
+    return best
+
+
+_ENTITY_MATCH_PROMPT = """你是小说设定库的「角色同人判定器」。
+
+小说正文会不断提取出新人物。系统已经做过字符串精确匹配，判定这个新人物与设定库中任何现有角色都不同名。
+但同一角色在小说里常有多种称呼（如「周老板」与「老机构老板」其实是同一个人），字符串匹配识别不了，
+需要你基于语义判断：这个新提取的人物，是否与下面某个现有角色其实是同一个人。
+
+判断依据（按重要性）：
+1. 称呼语义：称呼是否指向同一身份/职位/关系（如「周老板」=「老机构老板」，都是那家机构的老板）。
+2. 描述吻合：新人描述与现有角色的身份、职业、特征、与主角的关系是否一致或强相关。
+3. 语境线索：新人在正文中的出现场景、称呼习惯是否与现有角色一致。
+
+注意：
+- 名字不完全相同 ≠ 不同人，异名同人非常常见。
+- 只判「明显是同一人」的情况；无法确定时输出 match=false，宁可新建卡片也不要误合并。
+- 一个新人最多匹配一个现有角色。"""
+
+
+async def _judge_char_identity(
+    db: Session,
+    novel_id: uuid.UUID,
+    name: str,
+    aliases: list[str],
+    description: str,
+    candidates: list,
+) -> Optional[Setting]:
+    """LLM 语义判定：新提取人物是否与某现有角色为同一人（异名同人归一化）。
+
+    命中返回对应 Setting 行（调用方据此跳过建卡并把新称呼并入该卡别名）；
+    未命中或判定失败返回 None。保守设计：任何异常（模型未接入/超时/解析失败）
+    都按「不命中」兜底，绝不阻断原有建卡流程。
+    candidates：已按疑似度排序并截断数量的 Setting 列表。
+    """
+    if not candidates:
+        return None
+    from app.llm.gateway import stream_completion
+    from app.llm.routes import resolve_route
+
+    def _clip(text, n: int) -> str:
+        text = (text or "").strip().replace("\n", " ")
+        return text if len(text) <= n else text[:n] + "…"
+
+    lines = [
+        "新人：" + " / ".join(x for x in [name, *(aliases or [])] if x),
+        "新人描述：" + _clip(description, 300),
+        "",
+        "现有角色：",
+    ]
+    for i, c in enumerate(candidates):
+        nm = " / ".join(x for x in [c.name, *(str(a) for a in (c.aliases or []))] if x)
+        lines.append(f"{i}. {nm}；描述：{_clip(c.description, 80)}")
+    user = "\n".join(lines)
+
+    messages = [
+        {"role": "system", "content": _ENTITY_MATCH_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                user
+                + "\n\n只输出 JSON：{\"match\": true 或 false, \"target_index\": 数字或 null, \"reason\": \"一句话理由\"}。"
+                "match 为 true 时 target_index 必须是上面列表里与新人同一人的角色编号。"
+            ),
+        },
+    ]
+    try:
+        route = resolve_route(db, "extract")
+        text = ""
+        async for piece in stream_completion(messages, route, temperature=0.2, max_tokens=300, db=db):
+            text += piece
+        data = json.loads(text.strip())
+        if not data.get("match") or data.get("target_index") is None:
+            return None
+        idx = int(data["target_index"])
+        if not (0 <= idx < len(candidates)):
+            return None
+        logger.info(
+            "novel_id=%s 抽取建卡 LLM 语义判定：新人「%s」命中已有角色「%s」（%s）",
+            novel_id, name, candidates[idx].name, str(data.get("reason") or "")[:60],
+        )
+        return candidates[idx]
+    except Exception:
+        logger.exception("novel_id=%s 抽取建卡 LLM 语义判定失败（按不命中兜底，照常建卡）", novel_id)
+        return None
+
+
+async def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: BaseModel) -> dict:
     from app.schemas.agents import StoryStateExtract
 
     assert isinstance(parsed, StoryStateExtract)
@@ -1335,6 +1433,10 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
                     return True
             return False
 
+        # LLM 语义判定截断的候选上限：只给疑似度最高的前 N 个，控制输入规模与误判面。
+        _ENTITY_MATCH_MAX_CANDIDATES = 15
+        aliases_merged = 0  # 命中的同人卡补充了别名（含新称呼）的卡片数
+
         for nc in parsed.new_characters:
             name = (nc.name or "").strip()
             if not name:
@@ -1344,6 +1446,29 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
                 continue  # 没有核心描述不建档（防空卡污染设定库）
             aliases = [str(a).strip() for a in (nc.aliases or []) if str(a).strip()]
             if _char_exists(name, aliases):
+                continue
+            # 字符串未命中 → 交给 LLM 做语义判定：是否与已有角色同人（异名同人，如 周老板=老机构老板）。
+            # 候选按「与新人称呼的公共子串长度」降序（疑似度高的排前面，能进截断窗口），全量卡含软删
+            # （尊重作者删除意图：作者删过的卡不因 LLM 误判而被重新建回，只可能并入别名）。
+            probe = {name, *(a for a in aliases if a)}
+
+            def _sim_score(c) -> int:
+                card_names = {c.name, *(str(a) for a in (c.aliases or []))}
+                return max((_lcs_len(a, b) for a in probe for b in card_names if a and b), default=0)
+
+            ranked = sorted(char_rows, key=_sim_score, reverse=True)
+            match_row = await _judge_char_identity(db, novel_id, name, aliases, desc, ranked[:_ENTITY_MATCH_MAX_CANDIDATES])
+            if match_row is not None:
+                # 命中同人：不重复建卡，把新称呼并入该卡别名（幂等：已存在的别名不重复加）。
+                merged_names = list(match_row.aliases or [])
+                changed = False
+                for a in [name, *aliases]:
+                    if a and a not in merged_names:
+                        merged_names.append(a)
+                        changed = True
+                if changed:
+                    match_row.aliases = merged_names or None
+                    aliases_merged += 1
                 continue
             st = {
                 "role_rank": (nc.role_rank or "minor").strip() or "minor",
@@ -1367,7 +1492,7 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
                 )
             )
             new_chars_created += 1
-    if new_chars_created:
+    if new_chars_created or aliases_merged:
         db.commit()
 
     # 根部编辑检测：本次重提取清掉了「被取代过的链条中间环」（如第1章的 师徒），
@@ -1414,6 +1539,7 @@ def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, parsed: B
         "relations_restored": restored,
         "entity_facts_frozen": freeze_updated,
         "new_characters_created": new_chars_created,
+        "characters_aliases_merged": aliases_merged,
         "downstream_affected": affected_chapters,
     }
 
@@ -2376,7 +2502,7 @@ def _confirm_result(row) -> dict:
     }
 
 
-def commit_agent_output(
+async def commit_agent_output(
     db: Session,
     agent_name: str,
     novel_id: uuid.UUID,
@@ -2390,4 +2516,4 @@ def commit_agent_output(
     """
     agent: Agent = get_agent(db, agent_name)
     parsed = agent.parse_output(json.dumps(output, ensure_ascii=False))
-    return _persist(db, agent_name, novel_id, params, parsed, source=source)
+    return await _persist(db, agent_name, novel_id, params, parsed, source=source)

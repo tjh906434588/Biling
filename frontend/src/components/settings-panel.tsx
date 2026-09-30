@@ -27,7 +27,6 @@ import {
   type SettingType,
 } from "@/lib/api";
 import {
-  BACKGROUND_TYPES,
   IMPORT_INSTRUCTION,
   ROLE_RANKS,
   SETTING_SPECS,
@@ -140,6 +139,15 @@ export default function SettingsPanel({ novelId }: Props) {
   const [bgType, setBgType] = useState<Novel["background_type"]>(undefined);
   const [genres, setGenres] = useState<string[]>([]);
   const [metaBusy, setMetaBusy] = useState(false);
+  // 已保存的背景类型与题材（load 时落盘）：与当前选中值比对，有改动才显示「保存修改」按钮
+  const [savedMeta, setSavedMeta] = useState<{ bgType: Novel["background_type"]; genres: string[] }>({
+    bgType: undefined,
+    genres: [],
+  });
+  // 是否有未保存的改动：背景类型或题材与已保存值不一致（含清空）→ 标题栏右侧显示「保存修改」
+  // 题材是集合语义的多选，比较不看数组顺序：取消再选中会把题材挪到末尾，顺序变化不应误报未保存
+  const genresKey = (g: string[]) => [...g].sort().join("\u0000");
+  const metaDirty = bgType !== savedMeta.bgType || genresKey(genres) !== genresKey(savedMeta.genres);
 
   // 只展示「手动/批量」设定 + 「当前生效蓝图」导入的设定；其余蓝图版本的导入设定隐藏
   const visibleSettings = settings.filter((s) => s.source !== "blueprint" || s.blueprint_id === activeBp?.id);
@@ -171,6 +179,7 @@ export default function SettingsPanel({ novelId }: Props) {
       setEraResearch(er);
       setBgType(novel.background_type ?? undefined);
       setGenres(novel.genres ?? []);
+      setSavedMeta({ bgType: novel.background_type ?? undefined, genres: novel.genres ?? [] });
     } catch (e) {
       message.error((e as Error).message);
     } finally {
@@ -350,6 +359,7 @@ export default function SettingsPanel({ novelId }: Props) {
     try {
       // 传 null 表示清除（暂不选择），genres 为空数组表示无题材
       await updateNovel(novelId, { background_type: bgType ?? null, genres });
+      setSavedMeta({ bgType: bgType ?? undefined, genres });
       message.success("世界背景类型与题材已保存");
     } catch (e) {
       message.error(`保存失败：${(e as Error).message}`);
@@ -409,7 +419,7 @@ export default function SettingsPanel({ novelId }: Props) {
         <div className="flex min-h-0 flex-col gap-4 lg:w-[400px] lg:shrink-0 lg:overflow-y-auto lg:pr-1">
         {/* 世界背景类型与题材：创建时可留空，导入蓝图时 AI 按素材推断、弹窗引导作者确认；这里可直接修改 */}
         <section className="panel flex shrink-0 flex-col gap-2.5">
-          <div className="panel-head !mb-2">
+          <div className="panel-head !mb-0">
             <div className="flex items-center gap-1.5">
               <h3 className="panel-title">世界背景类型与题材</h3>
               <InfoTip width="w-80" side="bottom">
@@ -420,17 +430,17 @@ export default function SettingsPanel({ novelId }: Props) {
                 </p>
               </InfoTip>
             </div>
+            {/* 有未保存改动时显示「保存修改」：按钮始终占位（无改动时 invisible），
+                避免按钮出现/消失引发模块与整页布局抖动；固定宽度防「保存中…」文字变化抖动 */}
+            <button
+              type="button"
+              disabled={metaBusy}
+              className={`btn btn-primary min-w-[92px] px-3 py-1.5 text-xs ${metaDirty ? "" : "invisible"}`}
+              onClick={handleSaveMeta}
+            >
+              {metaBusy ? "保存中…" : "保存修改"}
+            </button>
           </div>
-          <p className="-mt-1 mb-1 panel-hint">
-            {bgType || genres.length ? (
-              <>
-                当前：{bgType ? BACKGROUND_TYPES.find((t) => t.value === bgType)?.label ?? bgType : "未选背景"}
-                {genres.length > 0 ? ` · ${genres.join("、")}` : " · 未选题材"}
-              </>
-            ) : (
-              "暂未选择（导入蓝图时由 AI 推断确认）"
-            )}
-          </p>
           <div className="grid gap-3">
             <div className="flex flex-col gap-1.5">
               <p className="text-[12px] font-medium text-zinc-500">世界背景类型</p>
@@ -440,16 +450,6 @@ export default function SettingsPanel({ novelId }: Props) {
               <p className="text-[12px] font-medium text-zinc-500">题材（可多选）</p>
               <GenrePicker value={genres} onChange={setGenres} />
             </div>
-          </div>
-          <div className="flex justify-end">
-            <button
-              type="button"
-              disabled={metaBusy}
-              className="btn btn-primary px-3 py-1.5 text-xs"
-              onClick={handleSaveMeta}
-            >
-              {metaBusy ? "保存中…" : "保存"}
-            </button>
           </div>
         </section>
 
@@ -471,18 +471,16 @@ export default function SettingsPanel({ novelId }: Props) {
             {eraResearch ? (
               <div className="flex items-center gap-2">
                 <span className="panel-hint">生成蓝图时自动研究</span>
-                {!eraEditing && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost px-3 py-1.5 text-xs"
-                    onClick={() => {
-                      setEraForm(eraResearch ? eraToForm(eraResearch) : EMPTY_ERA_FORM);
-                      setEraEditing(true);
-                    }}
-                  >
-                    编辑
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="btn btn-ghost px-3 py-1.5 text-xs"
+                  onClick={() => {
+                    setEraForm(eraResearch ? eraToForm(eraResearch) : EMPTY_ERA_FORM);
+                    setEraEditing(true);
+                  }}
+                >
+                  编辑
+                </button>
               </div>
             ) : (
               <span className="panel-hint">尚未研究（生成蓝图时自动研究）</span>
@@ -490,147 +488,45 @@ export default function SettingsPanel({ novelId }: Props) {
           </div>
 
           {eraResearch ? (
-            eraEditing ? (
-              <div className="flex flex-col gap-2.5">
-                <div className="grid gap-2.5 sm:grid-cols-2">
-                  <EraField
-                    label="开局年份"
-                    hint="故事从哪一年开始"
-                    placeholder="如：2000"
-                    value={eraForm.story_start_year}
-                    onChange={(v) => setEraForm({ ...eraForm, story_start_year: v })}
-                  />
-                  <EraField
-                    label="行业"
-                    hint="判定出的行业"
-                    placeholder="如：人才中介 / 职业介绍"
-                    value={eraForm.industry}
-                    onChange={(v) => setEraForm({ ...eraForm, industry: v })}
-                  />
-                </div>
-                <EraField
-                  label="时代定位"
-                  hint="如：2000 年代起的现代都市"
-                  value={eraForm.era}
-                  onChange={(v) => setEraForm({ ...eraForm, era: v })}
-                />
-                <EraField
-                  label="判定依据"
-                  hint="AI 是从哪里判断出这个年代与行业的"
-                  textarea
-                  rows={2}
-                  value={eraForm.note}
-                  onChange={(v) => setEraForm({ ...eraForm, note: v })}
-                />
-                <EraField
-                  label="老板 / 负责人画像"
-                  textarea
-                  rows={2}
-                  value={eraForm.boss_portrait}
-                  onChange={(v) => setEraForm({ ...eraForm, boss_portrait: v })}
-                />
-                <EraField
-                  label="地域分布特征"
-                  hint="门店 / 机构通常开在哪里、为什么"
-                  textarea
-                  rows={2}
-                  value={eraForm.location_pattern}
-                  onChange={(v) => setEraForm({ ...eraForm, location_pattern: v })}
-                />
-                <EraField
-                  label="机构典型形态"
-                  hint="一行一条"
-                  textarea
-                  rows={3}
-                  value={eraForm.organization_forms}
-                  onChange={(v) => setEraForm({ ...eraForm, organization_forms: v })}
-                />
-                <EraField
-                  label="业务范围"
-                  hint="一行一条"
-                  textarea
-                  rows={3}
-                  value={eraForm.business_list}
-                  onChange={(v) => setEraForm({ ...eraForm, business_list: v })}
-                />
-                <EraField
-                  label="行业阶段演进时间轴"
-                  hint="一行一条，带起止年份"
-                  textarea
-                  rows={3}
-                  value={eraForm.evolution}
-                  onChange={(v) => setEraForm({ ...eraForm, evolution: v })}
-                />
-                <EraField
-                  label="时代错位雷点"
-                  hint="一行一条，写作红线（需带时间前提）"
-                  textarea
-                  rows={3}
-                  value={eraForm.era_mismatch_red_flags}
-                  onChange={(v) => setEraForm({ ...eraForm, era_mismatch_red_flags: v })}
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={eraBusy}
-                    className="btn btn-primary px-3 py-1.5 text-xs"
-                    onClick={handleSaveEra}
-                  >
-                    {eraBusy ? "保存中…" : "保存修改"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost px-3 py-1.5 text-xs"
-                    onClick={() => setEraEditing(false)}
-                  >
-                    取消
-                  </button>
-                  <span className="text-[11px] text-zinc-400">
-                    列表字段每行一条；全部清空并保存 = 清除这份研究
-                  </span>
-                </div>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5 text-[12.5px]">
+                <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">开局年份</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.story_start_year ?? "（未判定）")}</span></span>
+                <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">时代定位</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.era ?? "（未明确）")}</span></span>
+                <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">行业</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.industry ?? "（未明确）")}</span></span>
+                <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">判定</span><span className="text-zinc-500">{String(eraResearch.note ?? "—")}</span></span>
               </div>
-            ) : (
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5 text-[12.5px]">
-                  <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">开局年份</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.story_start_year ?? "（未判定）")}</span></span>
-                  <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">时代定位</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.era ?? "（未明确）")}</span></span>
-                  <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">行业</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.industry ?? "（未明确）")}</span></span>
-                  <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">判定</span><span className="text-zinc-500">{String(eraResearch.note ?? "—")}</span></span>
+              {Boolean(eraResearch.boss_portrait) && (
+                <p className="rounded-lg bg-sunken/40 px-3 py-2 text-[12.5px] leading-5 text-zinc-600 dark:text-zinc-300">
+                  <span className="mr-2 align-middle text-[11px] font-medium text-zinc-500">老板 / 负责人画像</span>
+                  {String(eraResearch.boss_portrait)}
+                </p>
+              )}
+              {Boolean(eraResearch.location_pattern) && (
+                <p className="rounded-lg bg-sunken/40 px-3 py-2 text-[12.5px] leading-5 text-zinc-600 dark:text-zinc-300">
+                  <span className="mr-2 align-middle text-[11px] font-medium text-zinc-500">地域分布特征</span>
+                  {String(eraResearch.location_pattern)}
+                </p>
+              )}
+              {(Array.isArray(eraResearch.organization_forms) && eraResearch.organization_forms.length > 0) ||
+               (Array.isArray(eraResearch.business_list) && eraResearch.business_list.length > 0) ||
+               (Array.isArray(eraResearch.evolution) && eraResearch.evolution.length > 0) ||
+               (Array.isArray(eraResearch.era_mismatch_red_flags) && eraResearch.era_mismatch_red_flags.length > 0) ? (
+                <div className="grid gap-2.5">
+                  {Array.isArray(eraResearch.organization_forms) && eraResearch.organization_forms.length > 0 && (
+                    <EraListCard title="机构典型形态" tone="jade" items={eraResearch.organization_forms} />
+                  )}
+                  {Array.isArray(eraResearch.business_list) && eraResearch.business_list.length > 0 && (
+                    <EraListCard title="业务范围" tone="dai" items={eraResearch.business_list} />
+                  )}
+                  {Array.isArray(eraResearch.evolution) && eraResearch.evolution.length > 0 && (
+                    <EraListCard title="行业阶段演进" tone="ochre" items={eraResearch.evolution} />
+                  )}
+                  {Array.isArray(eraResearch.era_mismatch_red_flags) && eraResearch.era_mismatch_red_flags.length > 0 && (
+                    <EraListCard title="时代错位雷点" tone="seal" items={eraResearch.era_mismatch_red_flags} warning />
+                  )}
                 </div>
-                {Boolean(eraResearch.boss_portrait) && (
-                  <p className="rounded-lg bg-sunken/40 px-3 py-2 text-[12.5px] leading-5 text-zinc-600 dark:text-zinc-300">
-                    <span className="mr-2 align-middle text-[11px] font-medium text-zinc-500">老板 / 负责人画像</span>
-                    {String(eraResearch.boss_portrait)}
-                  </p>
-                )}
-                {Boolean(eraResearch.location_pattern) && (
-                  <p className="rounded-lg bg-sunken/40 px-3 py-2 text-[12.5px] leading-5 text-zinc-600 dark:text-zinc-300">
-                    <span className="mr-2 align-middle text-[11px] font-medium text-zinc-500">地域分布特征</span>
-                    {String(eraResearch.location_pattern)}
-                  </p>
-                )}
-                {(Array.isArray(eraResearch.organization_forms) && eraResearch.organization_forms.length > 0) ||
-                 (Array.isArray(eraResearch.business_list) && eraResearch.business_list.length > 0) ||
-                 (Array.isArray(eraResearch.evolution) && eraResearch.evolution.length > 0) ||
-                 (Array.isArray(eraResearch.era_mismatch_red_flags) && eraResearch.era_mismatch_red_flags.length > 0) ? (
-                  <div className="grid gap-2.5 sm:grid-cols-2">
-                    {Array.isArray(eraResearch.organization_forms) && eraResearch.organization_forms.length > 0 && (
-                      <EraListCard title="机构典型形态" tone="jade" items={eraResearch.organization_forms} />
-                    )}
-                    {Array.isArray(eraResearch.business_list) && eraResearch.business_list.length > 0 && (
-                      <EraListCard title="业务范围" tone="dai" items={eraResearch.business_list} />
-                    )}
-                    {Array.isArray(eraResearch.evolution) && eraResearch.evolution.length > 0 && (
-                      <EraListCard title="行业阶段演进" tone="ochre" items={eraResearch.evolution} />
-                    )}
-                    {Array.isArray(eraResearch.era_mismatch_red_flags) && eraResearch.era_mismatch_red_flags.length > 0 && (
-                      <EraListCard title="时代错位雷点" tone="seal" items={eraResearch.era_mismatch_red_flags} warning />
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            )
+              ) : null}
+            </div>
           ) : (
             <p className="rounded-lg border border-dashed border-zinc-300 p-3 text-[12.5px] leading-5 text-zinc-400 dark:border-zinc-700">
               现实题材下，点击「蓝图 → 生成蓝图」会自动研究这本书的年代×行业（机构形态、老板画像、业务范围等），
@@ -1044,6 +940,114 @@ export default function SettingsPanel({ novelId }: Props) {
               </button>
             </div>
           )}
+        </div>
+      </Modal>
+
+      {/* 编辑时代行业研究：弹窗承载表单，不打断下方设定列表的浏览（原地编辑会把整个模块顶成表单） */}
+      <Modal
+        open={eraEditing}
+        onClose={() => setEraEditing(false)}
+        title="编辑时代行业研究"
+        subtitle="生成蓝图时自动研究一次；修改后蓝图 / 设定 / 评价都会参考。列表字段每行一条；全部清空并保存 = 清除这份研究。"
+        maxWidth="max-w-2xl"
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn btn-ghost px-4 py-1.5 text-sm"
+              onClick={() => setEraEditing(false)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary px-4 py-1.5 text-sm"
+              onClick={handleSaveEra}
+              disabled={eraBusy}
+            >
+              {eraBusy ? "保存中…" : "保存修改"}
+            </button>
+          </>
+        }
+      >
+        <div className="flex min-h-0 flex-1 flex-col gap-2.5">
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <EraField
+              label="开局年份"
+              hint="故事从哪一年开始"
+              placeholder="如：2000"
+              value={eraForm.story_start_year}
+              onChange={(v) => setEraForm({ ...eraForm, story_start_year: v })}
+            />
+            <EraField
+              label="行业"
+              hint="判定出的行业"
+              placeholder="如：人才中介 / 职业介绍"
+              value={eraForm.industry}
+              onChange={(v) => setEraForm({ ...eraForm, industry: v })}
+            />
+          </div>
+          <EraField
+            label="时代定位"
+            hint="如：2000 年代起的现代都市"
+            value={eraForm.era}
+            onChange={(v) => setEraForm({ ...eraForm, era: v })}
+          />
+          <EraField
+            label="判定依据"
+            hint="AI 是从哪里判断出这个年代与行业的"
+            textarea
+            rows={2}
+            value={eraForm.note}
+            onChange={(v) => setEraForm({ ...eraForm, note: v })}
+          />
+          <EraField
+            label="老板 / 负责人画像"
+            textarea
+            rows={2}
+            value={eraForm.boss_portrait}
+            onChange={(v) => setEraForm({ ...eraForm, boss_portrait: v })}
+          />
+          <EraField
+            label="地域分布特征"
+            hint="门店 / 机构通常开在哪里、为什么"
+            textarea
+            rows={2}
+            value={eraForm.location_pattern}
+            onChange={(v) => setEraForm({ ...eraForm, location_pattern: v })}
+          />
+          <EraField
+            label="机构典型形态"
+            hint="一行一条"
+            textarea
+            rows={3}
+            value={eraForm.organization_forms}
+            onChange={(v) => setEraForm({ ...eraForm, organization_forms: v })}
+          />
+          <EraField
+            label="业务范围"
+            hint="一行一条"
+            textarea
+            rows={3}
+            value={eraForm.business_list}
+            onChange={(v) => setEraForm({ ...eraForm, business_list: v })}
+          />
+          <EraField
+            label="行业阶段演进时间轴"
+            hint="一行一条，带起止年份"
+            textarea
+            rows={3}
+            value={eraForm.evolution}
+            onChange={(v) => setEraForm({ ...eraForm, evolution: v })}
+          />
+          <EraField
+            label="时代错位雷点"
+            hint="一行一条，写作红线（需带时间前提）"
+            textarea
+            rows={3}
+            value={eraForm.era_mismatch_red_flags}
+            onChange={(v) => setEraForm({ ...eraForm, era_mismatch_red_flags: v })}
+          />
         </div>
       </Modal>
 

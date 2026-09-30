@@ -6,7 +6,7 @@
  */
 "use client";
 import type { ReactNode } from "react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 interface Props {
@@ -20,6 +20,8 @@ interface Props {
   width?: string;
   /** 兼容旧接口：现在无论传不传都固定渲染到 body（fixed 定位），避免被容器 overflow 裁剪/挤压错位。 */
   portal?: boolean;
+  /** 弹层打开状态变化回调：父组件可据此隐藏自身的 title 提示，避免按钮 title 与弹层提示重叠。 */
+  onOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -30,7 +32,13 @@ interface Props {
  *   <InfoTip>这里放解释文字（支持 JSX）</InfoTip>
  *   <InfoTip side="right">按钮在侧栏时，向右侧展开</InfoTip>
  */
-export default function InfoTip({ children, side = "bottom", align = "right", width = "w-64" }: Props) {
+export default function InfoTip({
+  children,
+  side = "bottom",
+  align = "right",
+  width = "w-64",
+  onOpenChange,
+}: Props) {
   // 问号图标容器引用：弹层按它的实际位置计算坐标
   const triggerRef = useRef<HTMLSpanElement | null>(null);
   // 弹层元素引用：测量尺寸用于定位与视口边缘收敛
@@ -43,11 +51,15 @@ export default function InfoTip({ children, side = "bottom", align = "right", wi
 
   useEffect(() => setMounted(true), []);
 
-  const show = () => setOpen(true);
-  const hide = () => {
+  const show = useCallback(() => {
+    setOpen(true);
+    onOpenChange?.(true);
+  }, [onOpenChange]);
+  const hide = useCallback(() => {
     setOpen(false);
     setPos(null); // 同时清空坐标：下次打开重新按图标当前位置计算，避免沿用旧位置
-  };
+    onOpenChange?.(false);
+  }, [onOpenChange]);
 
   // 打开期间页面滚动 / 视口变化 → 关闭，避免 fixed 定位的弹层留在原地错位
   useEffect(() => {
@@ -58,7 +70,7 @@ export default function InfoTip({ children, side = "bottom", align = "right", wi
       window.removeEventListener("scroll", hide, true);
       window.removeEventListener("resize", hide);
     };
-  }, [open]);
+  }, [open, hide]);
 
   // 弹层挂载后按图标真实位置计算坐标（fixed 定位到 body），并做视口边缘收敛
   useLayoutEffect(() => {

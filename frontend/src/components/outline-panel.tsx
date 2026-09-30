@@ -41,6 +41,7 @@ import {
   ROLE_RANKS,
   STAGE_LABEL,
   TYPE_LABELS,
+  formatVolumeLabel,
   type VolumeInfo,
 } from "@/constants";
 
@@ -127,7 +128,6 @@ function inactiveReason(
 interface VolumeGroup {
   key: string;
   label: string;
-  subtitle: string;
   items: Outline[];
 }
 
@@ -148,13 +148,10 @@ function groupByVolume(outlines: Outline[], volumes: VolumeInfo[] | undefined): 
 
   const groups: VolumeGroup[] = effectiveVols.map((v) => ({
     key: `vol-${v.no ?? v.name ?? "?"}`,
-    label: `${v.no != null ? `第${v.no}卷` : "卷"}${v.name ? ` · ${v.name}` : ""}`,
-    subtitle: [v.chapters_range && `${v.chapters_range}章`, v.chapter_count, v.word_count]
-      .filter(Boolean)
-      .join(" · "),
+    label: formatVolumeLabel(v.no, v.name),
     items: [],
   }));
-  const rest: VolumeGroup = { key: "rest", label: "未分卷", subtitle: "", items: [] };
+  const rest: VolumeGroup = { key: "rest", label: "未分卷", items: [] };
 
   for (const o of [...outlines].sort((a, b) => a.chapter_no - b.chapter_no)) {
     const hit = effectiveParsed.find(({ start, end }) => o.chapter_no >= start && o.chapter_no <= end);
@@ -717,9 +714,6 @@ export default function OutlinePanel({ novelId }: Props) {
                           </span>
                           <div className="min-w-0 flex-1">
                             <h4 className="text-xs font-bold text-zinc-500 dark:text-zinc-400">{g.label}</h4>
-                            {g.subtitle && (
-                              <span className="mt-0.5 block text-[10px] text-zinc-400">{g.subtitle}</span>
-                            )}
                           </div>
                           <span className="ml-auto shrink-0 text-[10px] text-zinc-400">{items.length} 章</span>
                         </button>

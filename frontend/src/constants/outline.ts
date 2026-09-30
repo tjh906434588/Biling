@@ -50,3 +50,17 @@ export type VolumeInfo = NonNullable<Blueprint["content"]["volumes"]>[number];
 
 /** 蓝图没有分卷（或卷的章节范围全无法解析）时的兜底卷：所有章节归入「第1卷」，避免散成「未分卷」。 */
 export const DEFAULT_VOLUME: VolumeInfo = { no: 1, name: "", focus: "", chapters_range: "" };
+
+/** 从卷 name 里剥离冗余信息，生成干净的卷标签。
+ * 蓝图 LLM 偶尔把「第X卷」前缀与【年代】段写进 name（如 第一卷：懵懂入行·系统初醒【2000—2002】），
+ * 而前端已拼「第{no}卷」前缀 → 直接拼接会显示成「第1卷 · 第一卷：…」重复、且年代混入卷名。
+ * 这里统一净化：去【】/[] 内的年代段、去开头「第X卷」前缀，只留纯卷名；前端两处（章节目录/大纲）共用。 */
+export function formatVolumeLabel(no: number | undefined, name: string | undefined): string {
+  let n = (name ?? "")
+    .replace(/【[^】]*】/g, "")
+    .replace(/\[[^\]]*\]/g, "")
+    .trim();
+  n = n.replace(/^第\s*[一二三四五六七八九十百千万零〇\d]+\s*卷\s*[:：、.。\-—\s]*/, "").trim();
+  const head = no != null ? `第${no}卷` : "卷";
+  return n ? `${head} · ${n}` : head;
+}

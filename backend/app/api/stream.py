@@ -333,11 +333,11 @@ async def _ensure_era_research(
     era = str(result.get("era") or "未知年代").strip()  # 时代定位标签（非时间范围）
     industry = str(result.get("industry") or "未知行业").strip()
 
-    def _apply_decision(decision: str) -> None:
+    async def _apply_decision(decision: str) -> None:
         """按作者选择落库/修正。"""
         try:
             if decision == "apply":
-                commit_agent_output(db, "era_researcher", novel_id, params, result)
+                await commit_agent_output(db, "era_researcher", novel_id, params, result)
             elif decision == "apply_fix":
                 novel2 = db.get(Novel, novel_id)
                 if novel2 is not None:
@@ -415,7 +415,7 @@ async def _ensure_era_research(
             logger.exception("novel_id=%s 时代研究确认流程异常，自动应用研究结论", novel_id)
             decision = {"status": "timeout", "answer": None}
         if decision.get("status") == "answered" and decision.get("answer") in ("apply", "apply_fix"):
-            _apply_decision(decision["answer"])
+            await _apply_decision(decision["answer"])
             return {"research": True, "decision": decision["answer"]}
         if decision.get("status") == "answered" and decision.get("answer") == "ignore":
             return {"research": False, "decision": "ignore"}
@@ -424,14 +424,14 @@ async def _ensure_era_research(
             m = re.search(r"(?<!\d)((?:19|20)\d{2})(?!\d)", str(decision["answer"]))
             if m:
                 result["story_start_year"] = int(m.group(1))
-            _apply_decision("apply")
+            await _apply_decision("apply")
             return {"research": True, "decision": "apply"}
         # dismissed / timeout：自动应用（旧行为，不阻塞蓝图生成）
-        _apply_decision("apply")
+        await _apply_decision("apply")
         return {"research": True, "decision": None}
 
     # 无弹窗通道（理论不出现，兜底）：直接应用研究结论
-    _apply_decision("apply")
+    await _apply_decision("apply")
     return {"research": True, "decision": None}
 
 
@@ -1744,7 +1744,7 @@ async def commit_agent_run(agent: str, payload: AgentCommitRequest, db: Session 
     if agent not in AGENT_NAMES:
         raise HTTPException(404, f"未知角色：{agent}（可选：{', '.join(AGENT_NAMES)}）")
     try:
-        return commit_agent_output(db, agent, payload.novel_id, payload.params, payload.output, payload.source)
+        return await commit_agent_output(db, agent, payload.novel_id, payload.params, payload.output, payload.source)
     except Exception as e:
         logger.exception("agent=%s commit 失败", agent)
         raise HTTPException(422, f"提交失败：{e}")

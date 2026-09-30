@@ -7,6 +7,8 @@
  */
 "use client";
 
+import { useLayoutEffect, useRef } from "react";
+
 /** 时代行业研究：单张「清单卡」。四色点缀（朱砂/靛青/竹青/赭石），嵌套卡用底色区分、不描边。 */
 function EraListCard({
   title,
@@ -131,6 +133,17 @@ function EraField({
 }) {
   const cls =
     "w-full rounded-lg border border-zinc-300 bg-sunken/40 px-2.5 py-2 text-xs leading-5 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  // 多行文本高度自适应内容：清掉固定高度后按 scrollHeight 重设，随文字增减自动伸缩
+  function fitHeight(ta: HTMLTextAreaElement | null) {
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight}px`;
+  }
+  // 初始渲染与 value 变化（含打开弹窗回填）都重新自适应，避免已有文字被 rows 高度截断
+  useLayoutEffect(() => {
+    fitHeight(taRef.current);
+  }, [value]);
   return (
     <label className="flex flex-col gap-1">
       <span className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">
@@ -139,12 +152,14 @@ function EraField({
       </span>
       {textarea ? (
         <textarea
-          className={`${cls} resize-y`}
+          ref={taRef}
+          className={`${cls} resize-none overflow-hidden`}
           rows={rows}
           spellCheck={false}
           value={value}
           placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
+          onInput={(e) => fitHeight(e.currentTarget)}
         />
       ) : (
         <input

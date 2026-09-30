@@ -52,10 +52,24 @@ def list_chapters(novel_id: uuid.UUID, db: Session = Depends(get_db)):
                 StoryState.chapter_no == c.chapter_no,
             )
         ).scalar_one_or_none()
+        # 章级标题兜底：未定稿章节的标题只存在版本里（定稿时才同步回章级），
+        # 列表直接返回章级 title 会是空 → 目录/大纲里「第X章」后没标题。
+        # 章级 title 为空时回退到该章最新版本的标题，保证列表项始终有标题可显示。
+        title = c.title
+        if not title:
+            title = db.execute(
+                select(ChapterVersion.title)
+                .where(
+                    ChapterVersion.chapter_id == c.id,
+                    ChapterVersion.title.isnot(None),
+                )
+                .order_by(ChapterVersion.version_no.desc())
+                .limit(1)
+            ).scalar_one_or_none()
         items.append(ChapterListItem(
             id=c.id,
             chapter_no=c.chapter_no,
-            title=c.title,
+            title=title,
             status=c.status,
             word_count=c.word_count,
             updated_at=c.updated_at,

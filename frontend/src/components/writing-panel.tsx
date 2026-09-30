@@ -20,6 +20,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
 } from "react";
 import {
@@ -58,6 +59,7 @@ import {
   type VolumeInfo,
 } from "@/constants";
 import { copyText } from "@/utils/clipboard";
+import { getRunningTask, subscribeRunningTask } from "@/lib/task-status";
 import { AutoTextarea } from "./writing/auto-textarea";
 import { ChapterSidebar, sourceLabel } from "./writing/chapter-tree";
 import { ReviewCard } from "./writing/review-card";
@@ -226,6 +228,9 @@ export default function WritingPanel({ novelId }: Props) {
   /** 正文在最近一次评价后是否被修改过：已有评价对应当前内容过期 → 评价栏出现「重新评价」提示。
    *  编辑即置 true；完成重新评价（评价期间无新增改动）或切换版本后置 false。 */
   const [reviewStale, setReviewStale] = useState(false);
+  /** 已评价基线内容：评价所基于的版本正文。编辑保存后若内容与它一致（改完又恢复原样），
+   *  说明现有评价仍然有效 → 撤销「重新评价」提示；重新评价完成或切换版本时更新为最新基准。 */
+  const reviewBaselineRef = useRef<string | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const editTargetRef = useRef<{ chapterNo: number; versionId: string } | null>(null);
 
@@ -243,6 +248,10 @@ export default function WritingPanel({ novelId }: Props) {
       if (editTextRef.current === text) {
         lastSavedTextRef.current = updated.content;
         setSaveState("saved");
+        // 落盘内容与已评价基线一致（改动后又恢复原样）→ 现有评价仍有效，撤销「重新评价」提示
+        if (reviewBaselineRef.current != null && updated.content === reviewBaselineRef.current) {
+          setReviewStale(false);
+        }
         setDetail((d) =>
           d
             ? { ...d, versions: d.versions.map((v) => (v.id === target.versionId ? { ...v, content: updated.content } : v)) }
@@ -271,8 +280,6 @@ export default function WritingPanel({ novelId }: Props) {
   const [reviewCollapsed, setReviewCollapsed] = useState(false);
   /** 评价栏宽度（px）：窄/中/宽三档预设切换，xl 起生效。偏好存 localStorage，跨刷新保持。 */
   const [reviewWidth, setReviewWidth] = useState(REVIEW_W_DEFAULT);
-  /** 章节目录折叠：目录 340px 常驻会把正文+评价两头挤窄，折叠后两者都变宽。 */
-  const [dirCollapsed, setDirCollapsed] = useState(false);
 
   // 读取/保存评价栏宽度偏好（localStorage 不可用时静默退化为默认值）
   useEffect(() => {
@@ -405,13 +412,20 @@ export default function WritingPanel({ novelId }: Props) {
     setSaveState("saved");
     // 切换版本后评价基线随之更换：清除「待重新评价」标记，让当前版本按新评价基线重新计算
     setReviewStale(false);
+    reviewBaselineRef.current = selectedVersion.content;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVersion?.id]);
 
   /** 防抖自动保存：停止输入 2s 后自动落盘；无改动不触发。 */
   useEffect(() => {
     if (!editTargetRef.current) return;
-    if (editText === lastSavedTextRef.current) return;
+    if (editText === lastSavedTextRef.current) {
+      // 输入又回到已落盘内容：无未保存改动，撤销「已修改」标记；
+      // 若等于已评价基线（改完即恢复原样），现有评价仍有效，同时撤销「重新评价」提示
+      setSaveState("saved");
+      if (reviewBaselineRef.current != null && editText === reviewBaselineRef.current) setReviewStale(false);
+      return;
+    }
     setSaveState("dirty");
     // 正文发生改动：已有评价过期，评价栏出现「重新评价」提示（落盘后仍保持，直到重新评价）
     setReviewStale(true);
@@ -764,6 +778,15 @@ export default function WritingPanel({ novelId }: Props) {
    *  接口已按时间倒序，取第一条即最近一次。 */
   const currentReviews = (reviews ?? []).filter((r) => r.chapter_version_id === selectedVersion?.id);
   const currentReview = currentReviews[0] ?? null;
+  /** 全局运行中的后台任务（AgentTaskToasts 每 3 秒轮询 /stream/status 后写入共享状态）。
+   *  用于感知"自动评价是否还在后台跑"：评价栏据此显示加载态、禁用重复手动评价，
+   *  避免作者在自动评价进行中误点手动评价撞上后端 409「已有生成任务在后台运行」。 */
+  const runningTask = useSyncExternalStore(subscribeRunningTask, getRunningTask, () => null);
+  /** 是否有评价/优化类后台任务在跑（critic/reviser：自动评价 + 手动评价共用同一并发位）。 */
+  const reviewTaskRunning = runningTask?.agent === "critic" || runningTask?.agent === "reviser";
+  /** 该后台评价任务是否对应当前章节（决定评价栏显示"评价处理中"加载态；对不上章的不打扰当前章）。 */
+  const reviewBusyForChapter =
+    reviewTaskRunning && (runningTask?.chapter_no == null || runningTask.chapter_no === detail?.chapter_no);
   /** 重新评价提示在评价栏顶部展示：正文改动过（reviewStale）且当前版本已有评价时才出现，
    *  按钮点击直接对当前版本重新评价。 */
   /** 当前选中正文是否「刚生成」：生成后系统通常会在 1-2 分钟内异步自动评价落库，
@@ -1180,6 +1203,8 @@ export default function WritingPanel({ novelId }: Props) {
         // 清除「待重新评价」提示；并刷新详情同步版本的签约标记（signing_blocked「未过签」徽标）。
         if (editTextRef.current === (savedText ?? selectedVersion.content)) {
           setReviewStale(false);
+          // 本次评价基于当前正文：把「已评价基线」更新为本次评价的内容，后续改动是否过期以此为准
+          reviewBaselineRef.current = editTextRef.current;
         }
         void getChapter(novelId, activeChapter.chapter_no).then(setDetail).catch(() => undefined);
         showToast(`第 ${activeChapter.chapter_no} 章评价完成，报告已展示在「评价与优化」中。`, "success");
@@ -1419,14 +1444,8 @@ export default function WritingPanel({ novelId }: Props) {
 
   return (
     <Loading loading={loading}>
-      <div
-        className={`grid items-start gap-6 xl:gap-8 ${
-          dirCollapsed ? "lg:grid-cols-[48px_minmax(0,1fr)]" : "lg:grid-cols-[340px_minmax(0,1fr)]"
-        }`}
-      >
+      <div className="grid items-start gap-6 lg:grid-cols-[340px_minmax(0,1fr)] xl:gap-8">
       <ChapterSidebar
-        dirCollapsed={dirCollapsed}
-        onSetDir={setDirCollapsed}
         chapters={chapters}
         volumes={volumes}
         chapterSearch={chapterSearch}
@@ -1545,7 +1564,7 @@ export default function WritingPanel({ novelId }: Props) {
                 {/* 就地编辑保存状态（无改动时不显示；有未保存改动提醒作者，防抖 2s 自动落盘） */}
                 {selectedVersion && saveState !== "saved" && (
                   <span className="ml-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                    {saveState === "saving" ? "保存中…" : "已修改·未保存"}
+                    {saveState === "saving" ? "保存中…" : "已修改"}
                   </span>
                 )}
                 {/* 选中版本签约未过签：红色警示，提示需按评价修正或强制定稿 */}
@@ -1618,12 +1637,6 @@ export default function WritingPanel({ novelId }: Props) {
           <div className="panel-head shrink-0">
             <h3 className="panel-title">评价与优化</h3>
             <div className="flex items-center gap-2">
-              {activeNo != null && (
-                <span className="panel-hint">
-                  第 {activeNo} 章
-                  {selectedVersion ? ` · v${selectedVersion.version_no}` : ""}
-                </span>
-              )}
               {/* 宽度三档（仅并排时有效）：窄/中/宽一键切换 */}
               <div className="hidden items-center gap-0.5 rounded border border-zinc-200 p-0.5 xl:flex dark:border-zinc-700">
                 {REVIEW_W_PRESETS.map(([label, w]) => {
@@ -1668,10 +1681,10 @@ export default function WritingPanel({ novelId }: Props) {
                     <button
                       type="button"
                       onClick={handleReview}
-                      disabled={reviewing || !selectedVersion}
+                      disabled={reviewing || reviewTaskRunning || !selectedVersion}
                       className="btn btn-primary shrink-0 px-3 py-1 text-xs font-medium"
                     >
-                      {reviewing ? "评价中…" : "重新评价"}
+                      {reviewing ? "评价中…" : reviewTaskRunning ? "已有评价任务进行中…" : "重新评价"}
                     </button>
                   </div>
                 )}
@@ -1695,40 +1708,62 @@ export default function WritingPanel({ novelId }: Props) {
                 />
               ) : (
                 <div className="rounded-lg border border-dashed border-zinc-300 p-5 text-center dark:border-zinc-700">
-                  <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
-                    {selectedVersion ? (
-                      <>
-                        当前选中正文（v{selectedVersion.version_no}）还没有评价。
-                        {isRecentlyGenerated ? (
+                  {!reviewing && reviewBusyForChapter ? (
+                    /* 自动评价进行中：显示加载态，替代"还没有评价"空态——作者刚生成完正文时，
+                       评价在后台异步跑（约几分钟），此时不打扰、也不让作者误点手动评价（会撞 409）。
+                       任务完成由 agent-task-toasts 派发事件触发本面板刷新，评价会自动显示。 */
+                    <div className="flex flex-col items-center gap-2.5 py-1">
+                      <svg aria-hidden viewBox="0 0 24 24" fill="none" className="h-6 w-6 animate-spin text-seal">
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2.5" />
+                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                      </svg>
+                      <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
+                        系统正在自动评价第 {detail.chapter_no} 章（后台异步处理中）…
+                      </p>
+                      <p className="text-xs leading-5 text-zinc-400 dark:text-zinc-500">
+                        评价完成后会自动显示在这里，无需手动操作
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
+                        {selectedVersion ? (
                           <>
-                            该版本刚生成，系统通常会在生成后 1-2 分钟内自动评价并出现在这里，可稍候查看；若仍未出现，再点下方手动评价。
+                            当前选中正文（v{selectedVersion.version_no}）还没有评价。
+                            {reviewTaskRunning ? (
+                              <>当前已有评价任务在后台运行，请等待其完成后再手动评价。</>
+                            ) : isRecentlyGenerated ? (
+                              <>
+                                该版本刚生成，系统通常会在生成后 1-2 分钟内自动评价并出现在这里，可稍候查看；若仍未出现，再点下方手动评价。
+                              </>
+                            ) : (
+                              <>点下方「评价本章」，评价师会对照蓝图、伏笔账本与设定逐项打分。</>
+                            )}
                           </>
                         ) : (
-                          <>点下方「评价本章」，评价师会对照蓝图、伏笔账本与设定逐项打分。</>
+                          "该章还没有选定版本的正文，先在界面生成并选定一版，再回来评价。"
                         )}
-                      </>
-                    ) : (
-                      "该章还没有选定版本的正文，先在界面生成并选定一版，再回来评价。"
-                    )}
-                  </p>
-                  <div className="mt-2.5 flex items-center justify-center gap-2">
-                    <button
-                      onClick={handleReview}
-                      disabled={reviewing || !selectedVersion}
-                      className="btn btn-primary px-3 py-1.5 text-xs font-medium"
-                    >
-                      {reviewing ? "评价中…" : "评价本章"}
-                    </button>
-                    {reviewing && (
-                      <button
-                        type="button"
-                        onClick={() => setShowReviewRun(true)}
-                        className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                      >
-                        查看生成过程
-                      </button>
-                    )}
-                  </div>
+                      </p>
+                      <div className="mt-2.5 flex items-center justify-center gap-2">
+                        <button
+                          onClick={handleReview}
+                          disabled={reviewing || reviewTaskRunning || !selectedVersion}
+                          className="btn btn-primary px-3 py-1.5 text-xs font-medium"
+                        >
+                          {reviewing ? "评价中…" : reviewTaskRunning ? "已有评价任务进行中…" : "评价本章"}
+                        </button>
+                        {reviewing && (
+                          <button
+                            type="button"
+                            onClick={() => setShowReviewRun(true)}
+                            className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
+                          >
+                            查看生成过程
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               )
               }

@@ -7,7 +7,9 @@
  */
 "use client";
 
-import { DEFAULT_VOLUME, SOURCE_LABELS, type VolumeInfo } from "@/constants";
+import { useLayoutEffect, useRef, useState } from "react";
+
+import { DEFAULT_VOLUME, SOURCE_LABELS, formatVolumeLabel, type VolumeInfo } from "@/constants";
 import type { ChapterListItem, ChapterVersion } from "@/lib/api";
 import { CostHint } from "@/lib/ai-status";
 import InfoTip from "../info-tip";
@@ -15,8 +17,23 @@ import InfoTip from "../info-tip";
 export interface ChapterVolumeGroup {
   key: string;
   label: string;
-  subtitle: string;
   items: ChapterListItem[];
+}
+
+/** 章节列表标题：超长时省略号截断 + 悬浮显示完整标题；未超长不显示悬浮效果。 */
+function EllipsisTitle({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const [overflow, setOverflow] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setOverflow(el.scrollWidth > el.clientWidth);
+  }, [text]);
+  return (
+    <span ref={ref} className="min-w-0 truncate text-sm font-medium" title={overflow ? text : undefined}>
+      {text}
+    </span>
+  );
 }
 
 /** 把章节按当前生效蓝图的 volumes（chapters_range）归组；不在任何卷内的归「未分卷/全部章节」。
@@ -40,16 +57,12 @@ export function groupChaptersByVolume(
 
   const groups: ChapterVolumeGroup[] = effectiveVols.map((v) => ({
     key: `vol-${v.no ?? v.name ?? "?"}`,
-    label: `${v.no != null ? `第${v.no}卷` : "卷"}${v.name ? ` · ${v.name}` : ""}`,
-    subtitle: [v.chapters_range && `${v.chapters_range}章`, v.chapter_count, v.word_count]
-      .filter(Boolean)
-      .join(" · "),
+    label: formatVolumeLabel(v.no, v.name),
     items: [],
   }));
   const rest: ChapterVolumeGroup = {
     key: "rest",
     label: "未分卷",
-    subtitle: "",
     items: [],
   };
 
@@ -74,10 +87,6 @@ export function sourceLabel(source: string): string {
 
 /** 章节目录侧栏的 props：数据 + 回调全部由 writing-panel 传入，组件内不做任何状态编排。 */
 interface ChapterSidebarProps {
-  /** 目录折叠态：true=只显示窄条（折叠态还参与外层 grid 布局，故状态留在 writing-panel）。 */
-  dirCollapsed: boolean;
-  /** 设置目录折叠态（窄条↔完整目录互切）。 */
-  onSetDir: (v: boolean) => void;
   chapters: ChapterListItem[];
   volumes: VolumeInfo[];
   chapterSearch: string;
@@ -123,8 +132,6 @@ interface ChapterSidebarProps {
 
 /** 写作页左侧栏：章节目录（按卷分组、可展开搜索）+ 本章操作。 */
 export function ChapterSidebar({
-  dirCollapsed,
-  onSetDir,
   chapters,
   volumes,
   chapterSearch,
@@ -151,6 +158,8 @@ export function ChapterSidebar({
   onExtract,
   onCopy,
 }: ChapterSidebarProps) {
+  /** 提取按钮问号弹层是否打开：打开期间按钮自身 title 不显示，避免两套提示重叠 */
+  const [tipOpen, setTipOpen] = useState(false);
   /** 章节目录按卷分组（搜索为空时按卷归组；搜索时仅过滤、不折叠）。 */
   const volGroups = groupChaptersByVolume(chapters, volumes);
   const chapterQ = chapterSearch.trim().toLowerCase();
@@ -165,40 +174,14 @@ export function ChapterSidebar({
 
   return (
     <>
-      {/* 目录折叠后的窄条：点它把 340px 目录栏收起，正文与评价栏同时变宽 */}
-      {dirCollapsed && (
-        <div className="panel flex flex-row items-center gap-2 py-2 lg:w-full xl:h-[calc(100dvh-6rem)] xl:flex-col xl:py-3">
-          <button
-            type="button"
-            onClick={() => onSetDir(false)}
-            title="展开章节目录"
-            aria-label="展开章节目录"
-            className="btn btn-ghost h-8 w-8 shrink-0 p-0"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 6l6 6-6 6" /></svg>
-          </button>
-          <span className="text-xs tracking-widest text-zinc-500 dark:text-zinc-400 xl:[writing-mode:vertical-rl]">
-            章节目录
-          </span>
-        </div>
-      )}
       {/* 左侧：章节目录（一件事一张卡，按卷分组、可展开搜索，与大纲页一致）。
           模块高度跟随内容，最多与页面底部对齐；内容多时在列表内滚动，避免整页滚动条。 */}
-      <aside className={`${dirCollapsed ? "hidden" : "flex"} max-h-[calc(100dvh-6rem)] min-w-0 flex-col gap-4 overflow-hidden`}>
+      <aside className="max-h-[calc(100dvh-6rem)] flex min-w-0 flex-col gap-4 overflow-hidden">
         <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="panel-head shrink-0">
             <h3 className="panel-title">章节目录</h3>
             <div className="flex items-center gap-2">
               <span className="panel-hint">{chapters.length} 章</span>
-              <button
-                type="button"
-                onClick={() => onSetDir(true)}
-                title="收起章节目录，正文与评价栏同时变宽"
-                aria-label="收起章节目录"
-                className="btn btn-ghost h-6 w-6 shrink-0 p-0"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M15 6l-6 6 6 6" /></svg>
-              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -264,27 +247,27 @@ export function ChapterSidebar({
                         <button
                           type="button"
                           onClick={() => !chapterQ && onToggleVol(g.key)}
-                          className={`mb-1.5 flex w-full items-start gap-1.5 text-left ${
-                            chapterQ ? "cursor-default" : "cursor-pointer"
+                          className={`mb-1.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors ${
+                            chapterQ
+                              ? "cursor-default"
+                              : "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
                           }`}
+                          title={chapterQ ? undefined : isCollapsed ? "展开本卷章节" : "收起本卷章节"}
                         >
                           <span
-                            className={`mt-0.5 shrink-0 text-[10px] text-zinc-400 transition-transform ${
+                            className={`shrink-0 text-[10px] leading-none text-zinc-400 transition-transform ${
                               isCollapsed ? "-rotate-90" : ""
                             }`}
                           >
                             ▾
                           </span>
-                          <div className="min-w-0 flex-1">
-                            <h4 className="text-xs font-bold text-zinc-500 dark:text-zinc-400">{g.label}</h4>
-                            {g.subtitle && (
-                              <span className="mt-0.5 block text-[10px] text-zinc-400">{g.subtitle}</span>
-                            )}
-                          </div>
+                          <h4 className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+                            {g.label}
+                          </h4>
                           <span className="ml-auto shrink-0 text-[10px] text-zinc-400">{items.length} 章</span>
                         </button>
                         {!isCollapsed && (
-                          <ul className="flex flex-col gap-2">
+                          <ul className="mb-1.5 ml-2 flex flex-col gap-2 border-l border-zinc-200 pl-2 dark:border-zinc-800">
                             {items.map((c) => (
                               <li key={c.id}>
                                 <button
@@ -300,21 +283,13 @@ export function ChapterSidebar({
                                     onSelectChapter(c.chapter_no);
                                   }}
                                 >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="text-sm font-medium">
-                                      第{c.chapter_no}章{listItemTitle(c) ? ` ${listItemTitle(c)}` : ""}
-                                    </span>
-                                  </div>
-                                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-zinc-500">
-                                    {c.status === "complete" ? (
-                                      <span className="rounded bg-green-100 px-1 py-0.5 text-green-700 dark:bg-green-900 dark:text-green-300">
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <EllipsisTitle text={`第${c.chapter_no}章${listItemTitle(c) ? ` ${listItemTitle(c)}` : ""}`} />
+                                    {c.status === "complete" && (
+                                      <span className="shrink-0 rounded bg-green-100 px-1 py-0.5 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">
                                         已定稿
                                       </span>
-                                    ) : (
-                                      <span className="rounded bg-zinc-100 px-1 py-0.5 dark:bg-zinc-800">草稿</span>
                                     )}
-                                    {c.active_source && <span>{sourceLabel(c.active_source)}</span>}
-                                    {c.word_count != null && <span>{c.word_count}字</span>}
                                   </div>
                                 </button>
                               </li>
@@ -340,7 +315,7 @@ export function ChapterSidebar({
               </span>
             )}
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {/* 重新生成正文：复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）。
                 生成中不禁用：要能再次打开弹窗查看「查看生成过程」进度；但「新增章节」生成中需禁用——
                 本次是新增而非重新生成，进度只能从「新增章节」入口重开查看；评价 / 提取进行中禁用。 */}
@@ -387,7 +362,7 @@ export function ChapterSidebar({
             )}
             {/* 评价入口统一在右侧「评价与优化」，本章操作只保留提取与复制 */}
             <button
-              className={`relative w-full cursor-pointer rounded-lg border px-3 py-2 text-sm transition-colors ${
+              className={`relative w-full cursor-pointer rounded-lg border py-2 pl-3 pr-7 text-sm transition-colors ${
                 extractPending
                   ? "border-blue-500 bg-gradient-to-r from-blue-200 to-blue-50 font-medium text-blue-800 hover:border-blue-600 hover:from-blue-300 hover:to-blue-100 dark:border-blue-500 dark:from-blue-800/80 dark:to-blue-950/60 dark:text-blue-300 dark:hover:border-blue-400 dark:hover:from-blue-800 dark:hover:to-blue-900/70 disabled:hover:border-blue-500 dark:disabled:hover:border-blue-500"
                   : "border-zinc-300 text-zinc-600 hover:border-zinc-500 dark:border-zinc-700 dark:text-zinc-300 disabled:hover:border-zinc-300 dark:disabled:hover:border-zinc-700"
@@ -395,27 +370,29 @@ export function ChapterSidebar({
               onClick={onExtract}
               disabled={activeNo == null || extracting || reviewing || !selectedVersion || !selectedIsFinal}
               title={
-                activeNo == null
-                  ? "请先在章节目录选择一章"
-                  : isStaleForActiveOutline
-                    ? "当前正文基于旧版大纲生成，只能查看；请基于当前激活大纲重新生成正文并定稿后再提取"
-                    : reviewing
-                      ? "评价进行中，暂不能提取记忆层"
-                      : !selectedVersion
-                        ? "先选定版本再提取"
-                        : !selectedIsFinal
-                          ? "只有已定稿的正文才能提取入记忆层，请先在「本章操作」点「定稿」"
-                          : extractPending
-                            ? "当前版本尚未提取记忆层，重新提取后才会进入记忆（或已切到新版本）"
-                            : "把本章摘要/角色状态/伏笔写进记忆层"
+                tipOpen
+                  ? undefined // 问号弹层已打开：按钮自身 title 隐藏，避免两套提示重叠
+                  : activeNo == null
+                    ? "请先在章节目录选择一章"
+                    : isStaleForActiveOutline
+                      ? "当前正文基于旧版大纲生成，只能查看；请基于当前激活大纲重新生成正文并定稿后再提取"
+                      : reviewing
+                        ? "评价进行中，暂不能提取记忆层"
+                        : !selectedVersion
+                          ? "先选定版本再提取"
+                          : !selectedIsFinal
+                            ? "只有已定稿的正文才能提取入记忆层，请先在「本章操作」点「定稿」"
+                            : extractPending
+                              ? "当前版本尚未提取记忆层，重新提取后才会进入记忆（或已切到新版本）"
+                              : "把本章摘要/角色状态/伏笔写进记忆层"
               }
             >
-              {extracting ? "提取中…" : "提取 → 记忆层"}
+              {extracting ? "提取中…" : "提取记忆层"}
               <span
                 className="absolute right-2 top-1/2 -translate-y-1/2"
                 onClick={(e) => e.stopPropagation()}
               >
-                <InfoTip side="right">
+                <InfoTip side="right" onOpenChange={setTipOpen}>
                   <p className="font-medium text-zinc-700 dark:text-zinc-200">提取本章 = 给 AI 记账。</p>
                   把这一章的摘要、角色当前状态、新埋的伏笔等写进「记忆层」。
                   下一章生成时小说家会自动读到，角色性格的变化也靠它跟踪。
@@ -433,7 +410,7 @@ export function ChapterSidebar({
             >
              复制本章正文
             </button>
-            <div className="mt-1 border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
+            <div className="col-span-2 mt-1 border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
               <CostHint />
             </div>
           </div>
