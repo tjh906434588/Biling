@@ -152,8 +152,9 @@ export default function SettingsPanel({ novelId }: Props) {
   // 只展示「手动/批量」设定 + 「当前生效蓝图」导入的设定；其余蓝图版本的导入设定隐藏
   const visibleSettings = settings.filter((s) => s.source !== "blueprint" || s.blueprint_id === activeBp?.id);
 
-  // 时代行业研究：仅非纯架空（现实年代 / 半架空）展示；纯架空不触发研究，整段隐藏
-  const showEraResearch = bgType !== "pure_fantasy";
+  // 时代行业研究：仅「现实年代 / 半架空」展示（有现实参照才研究年代×行业）；
+  // 未选择背景类型或纯架空默认隐藏——不是所有小说都需要这个模块
+  const showEraResearch = bgType === "realistic" || bgType === "alternate";
 
   /** 加载阶段计划：从 active 蓝图分卷推导每阶段章范围 + 已创建章节数（供「出现时机」控件使用）。 */
   const loadStagePlan = useCallback(async () => {
@@ -453,7 +454,7 @@ export default function SettingsPanel({ novelId }: Props) {
           </div>
         </section>
 
-        {/* 时代行业研究：仅非纯架空（现实年代 / 半架空）展示；蓝图生成时自动研究，作者可查看/修改 */}
+        {/* 时代行业研究：仅「现实年代 / 半架空」展示（选中后才出现，默认隐藏）；蓝图生成时自动研究，作者可查看/修改 */}
         {showEraResearch && (
         <section className="panel flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
           <div className="panel-head !mb-0">
