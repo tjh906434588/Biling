@@ -1,7 +1,7 @@
 /**
  * @file task-status.ts
  * 全局"运行中后台任务"共享状态：由 AgentTaskToasts 每 3 秒轮询 /stream/status 后写入，
- * 写作页等组件订阅以感知后台任务（如自动评价 critic/reviser）是否在跑，
+ * 写作页等组件订阅以感知后台任务（如评价 critic/reviser）是否在跑，
  * 用于给「评价与优化」面板显示"评价处理中"加载态、并禁用重复手动操作（避免撞后端 409）。
  */
 import type { StreamTaskInfo } from "@/types/api";

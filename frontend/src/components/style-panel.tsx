@@ -100,13 +100,13 @@ export default function StylePanel({ novelId }: Props) {
         <div className="panel flex h-[calc(100dvh-6rem)] flex-col">
           <div className="panel-head">
             <div className="flex items-center gap-1.5">
-              <h3 className="panel-title">全局文风描述</h3>
+              <h3 className="panel-title">整本书的文风描述</h3>
               <InfoTip width="w-80" side="bottom">
                 <ul className="list-disc space-y-1 pl-4">
                   <li>蓝图识别文风：导入蓝图时从大纲文档提炼的文风。</li>
                   <li>手动添加文风：作者手动维护，导入蓝图不会覆盖。</li>
                   <li>两者冲突时以蓝图识别为准；手动部分与蓝图不冲突时也必须严格遵守。</li>
-                  <li>小说家与修订师每次生成都会读取以上两部分文风。</li>
+                  <li>AI 每次写正文时都会参考这两部分。</li>
                 </ul>
               </InfoTip>
             </div>
@@ -117,11 +117,11 @@ export default function StylePanel({ novelId }: Props) {
               <div className="mb-1 flex h-6 items-center justify-between gap-2">
                 <span className="flex items-center gap-1 text-xs font-semibold text-dai dark:text-dai">
                   蓝图识别文风
-                  <InfoTip side="bottom">导入蓝图时从大纲文档提炼的文风，只读</InfoTip>
+                  <InfoTip side="bottom">导入蓝图时从大纲文档提炼的文风，自动生成，不能手改</InfoTip>
                 </span>
                 <div className="flex items-center gap-1.5">
                   <span className="rounded-full border border-dai/50 px-1.5 py-0.5 text-[10px] text-dai dark:border-dai/60">蓝图导入</span>
-                  <span className="rounded-full border border-zinc-300 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">只读</span>
+                  <span className="rounded-full border border-zinc-300 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">自动生成，不能手改</span>
                 </div>
               </div>
               {blueprintDirective.trim() ? (
@@ -130,7 +130,7 @@ export default function StylePanel({ novelId }: Props) {
                 </div>
               ) : (
                 <p className="flex-1 rounded-lg bg-sunken/70 p-2.5 text-xs text-zinc-400">
-                  当前生效蓝图未提炼文风，暂无展示内容。
+                  当前使用的蓝图没提炼文风，暂无展示内容。
                 </p>
               )}
             </div>
@@ -191,15 +191,15 @@ export default function StylePanel({ novelId }: Props) {
           </div>
 
           <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
-            注意：这里只能写「描述」，<strong>不要直接粘贴他人作品原文</strong>。外部文本会以风格示例身份混入本小说上下文，既不准确也带版权风险。
+            注意：这里只能写「描述」，<strong>不要直接粘贴他人作品原文</strong>。别人的作品原文会被当成你的风格样例灌给 AI，既不准确还可能侵权。
           </p>
         </div>
 
         {profiles.length > 0 && (
           <div className="panel">
             <div className="panel-head">
-              <h3 className="panel-title">风格画像版本</h3>
-              <span className="panel-hint">共 {profiles.length} 版 · 最新一版生效</span>
+              <h3 className="panel-title">文风分析记录</h3>
+              <span className="panel-hint">共 {profiles.length} 版 · 最新一版在使用</span>
             </div>
             <div className="flex flex-col gap-2.5">
               {profiles.map((p) => (
@@ -208,11 +208,11 @@ export default function StylePanel({ novelId }: Props) {
                     <span className="text-sm font-medium">v{p.version}</span>
                     {p.version === (latest?.version ?? 0) && (
                       <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">
-                        当前生效
+                        正在使用
                       </span>
                     )}
                     {p.source_diff_ids?.length ? (
-                      <span className="text-[11px] text-zinc-500">来源 {p.source_diff_ids.length} 处编辑</span>
+                      <span className="text-[11px] text-zinc-500">基于 {p.source_diff_ids.length} 处修改生成</span>
                     ) : null}
                   </div>
                   <dl className="grid gap-1 text-xs sm:grid-cols-2">

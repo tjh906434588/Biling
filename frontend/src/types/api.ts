@@ -362,7 +362,7 @@ export interface MemoryReview {
 
 export interface ModelRoute {
   id: string;
-  task_type: "setting" | "creation" | "review" | "extract" | "chat";
+  task_type: "setting" | "creation" | "review" | "extract" | "chronicle";
   provider: string;
   model: string;
   temperature: number | null;

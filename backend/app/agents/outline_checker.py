@@ -45,7 +45,8 @@ SYSTEM_PROMPT = """你是「骨架校验师」，负责审查作者导入的全�
 
 
 class OutlineCheckerAgent(Agent[OutlineSkeletonCheck]):
-    task_type = "review"
+    # 校验类：与蓝图预检一致归入 setting（轻量档），不吃 pro 评价模型
+    task_type = "setting"
     temperature = 0.2
 
     def __init__(self, db: Session):

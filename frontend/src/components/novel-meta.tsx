@@ -49,7 +49,7 @@ export function BackgroundTypePicker({
         })}
       </div>
       <p className="text-[11px] leading-4 text-zinc-400">
-        {current ? current.hint : "未选择；不确定可不选，导入蓝图时 AI 会按素材推断并请你确认"}
+        {current ? current.hint : "不选也没关系，AI 会根据你的故事背景帮你选，再让你确认"}
       </p>
     </div>
   );

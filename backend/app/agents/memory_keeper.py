@@ -41,7 +41,10 @@ SYSTEM_PROMPT = """你是「编年师」，把一本小说的全部历史记忆�
 
 
 class MemoryKeeperAgent(Agent[ChronicleOutput]):
-    task_type = "creation"
+    # 独立任务类型 chronicle（编年）：与创作/提取分开，可在高级设置里单独配模型与温度。
+    # 编年是「压缩提炼」不是创作，应配低温度（默认 0.3）避免 LLM 在总览里加戏；
+    # 归入 creation 会被创作档的高温（如 0.8）带偏，归入 extract 会与正文提取挤同一模型。
+    task_type = "chronicle"
     temperature = 0.3
     mock_output = {
         "main_line": "主角在第 10 章追查身世真相，正前往旧档案馆（编年师 Mock）。",

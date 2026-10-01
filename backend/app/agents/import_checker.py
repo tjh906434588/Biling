@@ -38,7 +38,8 @@ SYSTEM_PROMPT = """你是「核对师」，负责把作者的导入大纲文档�
 
 
 class ImportCheckerAgent(Agent[BlueprintCheck]):
-    task_type = "review"
+    # 校验类：与蓝图预检一致归入 setting（轻量档），不吃 pro 评价模型
+    task_type = "setting"
     temperature = 0.2
 
     def __init__(self, db: Session):

@@ -95,6 +95,8 @@ SYSTEM_PROMPT = f"""你是「修订师」，一位手稳的老编辑。你的任
 class ReviserAgent(Agent[NovelChapter]):
     task_type = "creation"
     temperature = 0.5  # 修订需稳定，温度略低于小说家
+    # 修订是"改正文"不是"自由创作"：固定用 0.5 稳定温度，不被创作档的高温（如用户配 0.8）带偏
+    temperature_fixed = True
     version_count = 1
     mock_output = {
         "title": "雨夜铜币",

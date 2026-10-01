@@ -46,12 +46,12 @@ export function ReviewCard({
         </span>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="text-sm font-semibold">评价师 · 第 {review.chapter_no ?? "?"} 章评审</h3>
+            <h3 className="text-sm font-semibold">本章评审</h3>
             {review.version_no != null && (
               <span
                 title={
                   matchesActive
-                    ? `针对当前选中的正文 v${review.version_no}`
+                    ? `针对当前选中的第${review.version_no}版正文`
                     : "针对其他版本（当前未选中）"
                 }
                 className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
@@ -60,7 +60,7 @@ export function ReviewCard({
                     : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
                 }`}
               >
-                v{review.version_no}
+                第{review.version_no}版
                 {matchesActive ? "" : " · 未选中"}
               </span>
             )}
@@ -153,7 +153,7 @@ export function ReviewCard({
                     title={
                       drafts[idx]?.trim()
                         ? "已标记有异议，该条将保留原文不修改（点击修改理由）"
-                        : "不认可这条建议？标记并写理由，修订师将保留原文、不按此条修改"
+                        : "不认可这条建议？标记并写理由，AI 优化时会保留原文、不按此条修改"
                     }
                     className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${
                       drafts[idx]?.trim()
@@ -168,7 +168,7 @@ export function ReviewCard({
                   <textarea
                     value={drafts[idx] ?? ""}
                     onChange={(e) => setDrafts((d) => ({ ...d, [idx]: e.target.value }))}
-                    placeholder="说明哪里不对 / 与上文哪处冲突（可选；优化师将跳过此条或按你的意见改）"
+                    placeholder="说明哪里不对 / 与上文哪处冲突（可选；AI 优化时会跳过这条，或按你的意见改）"
                     rows={2}
                     className="mt-2 w-full resize-none rounded-md border border-zinc-300 bg-white p-1.5 text-xs outline-none focus:border-amber-400 dark:border-zinc-700 dark:bg-zinc-900"
                   />
@@ -207,7 +207,7 @@ export function ReviewCard({
           <p className="mb-1.5 text-[11px] text-zinc-500">
             作者批注（可选，会记下来）
             <span className="text-zinc-400">
-              ——评价里没提到、但你自己发现的问题（设定/关系/时间线不一致等），或想按自己的方式改，写在这里，修订师会照此修改。
+              ——评价里没提到、但你自己发现的问题（设定/关系/时间线不一致等），或想按自己的方式改，写在这里，AI 优化会照此修改。
               这条意见会保存到本章，之后重新生成/规划本章都会自动遵守，不会再说一次还照写。
               若想让某条评价建议保持原文，用问题右侧的「有异议」。
             </span>
@@ -221,8 +221,8 @@ export function ReviewCard({
           />
           <div className="mt-2.5 flex items-center justify-between gap-3">
             <p className="text-[11px] text-zinc-400">
-              修订师会逐条对照以上问题优化当前选中的正文（v{review.version_no}），保留原情节走向，优化后存为新草稿版本。
-              「有异议」=保留原文不采纳该条；作者批注=按你的批注修改正文。都会传给修订师，以你的意见为准。
+              AI 会逐条对照以上问题优化当前选中的正文（第{review.version_no}版），保留原情节走向，改好后另存新的一版，原稿保留。
+              「有异议」=保留原文不采纳该条；作者批注=按你的批注修改正文。都会传给 AI 优化，以你的意见为准。
             </p>
             <div className="flex shrink-0 items-center gap-2">
               {viewButton}
@@ -252,8 +252,8 @@ export function ReviewCard({
       ) : (
         <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           <p className="text-[11px] text-zinc-400">
-            这条评价针对 v{review.version_no}，当前选中的正文不是该版本，评价对不上。先在下方版本列表选中「v{review.version_no}」
-            再优化，或直接对当前选中的正文重新评价。
+            这条评价是对第{review.version_no}版正文写的，当前选中的不是那一版。先切到那一版
+            再优化，或直接对当前这版重新评价。
           </p>
         </div>
       )}

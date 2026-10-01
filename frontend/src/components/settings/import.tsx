@@ -35,7 +35,7 @@ export function parseImportText(text: string): { items: ImportItem[]; errors: st
   try {
     arr = JSON.parse(clean);
   } catch {
-    return { items: [], errors: ["内容无法解析，请检查粘贴的设定格式"] };
+    return { items: [], errors: ["没读出来，请检查粘贴的内容格式"] };
   }
   if (!Array.isArray(arr)) return { items: [], errors: ["内容格式不对，请粘贴 AI 输出的设定清单"] };
 

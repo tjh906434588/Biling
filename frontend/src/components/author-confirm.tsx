@@ -340,7 +340,7 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
                     ) : null}
                     {opt.protagonist_arc ? (
                       <span className="block text-xs leading-5 text-zinc-600 dark:text-zinc-300">
-                        <span className="font-medium text-zinc-500">主角反应弧：</span>
+                        <span className="font-medium text-zinc-500">主角会怎么反应：</span>
                         {opt.protagonist_arc}
                       </span>
                     ) : null}
@@ -751,7 +751,7 @@ export function ConfirmNotifier() {
           const label = AGENT_LABELS[it.agent] ?? it.agent;
           const nid = notification.warning({
             title: `《${it.novel_title ?? "未命名小说"}》需要你确认`,
-            message: `${label}在生成中停下等你定夺：\n${it.question}`,
+            message: `${label}生成到这里，需要你拿主意：\n${it.question}`,
             duration: 0, // 常驻，直到作者去确认、主动跳过或确认被作废
             onClick: () => router.push(`/workspace/${it.novel_id}`),
             // 点 ✕ = 放弃此确认：通知后端跳过（解除等待），否则轮询每几秒会把它重新弹回来

@@ -74,15 +74,15 @@ const NAV_GROUPS: { label: string; items: [Tab, string, keyof typeof ICONS][] }[
       ["settings", "设定", "settings"],
       ["ledger", "账本", "ledger"],
       ["style", "风格", "style"],
-      ["graph", "图谱", "graph"],
+      ["graph", "人物关系", "graph"],
     ],
   },
   {
     label: "质量与工具",
     items: [
-      ["outline", "大纲（高级）", "outline"],
-      ["detect", "体检", "detect"],
-      ["models", "模型", "models"],
+      ["outline", "细化大纲", "outline"],
+      ["detect", "质量检查", "detect"],
+      ["models", "AI 设置", "models"],
     ],
   },
 ];
@@ -138,7 +138,7 @@ function FirstRunGuide({ novelId, onGo }: { novelId: string; onGo: (t: Tab) => v
       message: (
         <>
           <p className="text-[12px] leading-5 text-zinc-500 dark:text-zinc-400">
-            蓝图是全书宪法，从设定出发定骨架；写正文前会先弹出「本章规划」供你确认，确认后直接写作。
+            蓝图是整本书的底稿，从设定出发定骨架；写正文前会让你先确认这一章的安排，确认后直接写作。
           </p>
           <ol className="mt-2 flex flex-col gap-1">
             {GUIDE_STEPS.map(([t, label, hint], i) => (
@@ -497,7 +497,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
             <button
               type="button"
               onClick={() => setShowPrompts(true)}
-              title="配置各角色的写作指令（全局）"
+              title="给 AI 助手立写作规矩（整本书生效）"
               className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800"
             >
               <svg
@@ -515,7 +515,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
               写作指令
             </button>
             <p className="px-2 text-[10.5px] leading-4 text-zinc-400">
-              设定「不可变」AI 必守<br />大纲批准自动入表
+              你标记为「不可变」的设定，AI 写的时候必须遵守<br />大纲你确认后，会自动登记到记录里
             </p>
           </div>
         </aside>

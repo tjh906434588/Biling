@@ -171,7 +171,7 @@ export default function AgentStreamModal({
       title={title}
       subtitle={
         running
-          ? "生成进行中，正文实时滚动…（用时见下方统计）"
+          ? "正在生成，正文一行行显示…（用时见下方统计）"
           : error
             ? "生成出错，已通过消息提示告知原因"
             : "生成已完成"
@@ -219,7 +219,7 @@ export default function AgentStreamModal({
                     {running && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-60" />}
                     <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-400" />
                   </span>
-                  深度思考
+                  AI 思考过程
                   <span className="ml-auto font-mono text-[11px] text-zinc-400">
                     {thinkingOpen ? "收起" : "展开"}
                   </span>

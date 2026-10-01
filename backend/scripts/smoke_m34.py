@@ -92,7 +92,7 @@ def main():
         "POST models/routes",
         client.post(
             f"{BASE}/models/routes",
-            json={"task_type": "chat", "provider": "deepseek", "model": "deepseek-chat", "is_default": True},
+            json={"task_type": "extract", "provider": "deepseek", "model": "deepseek-chat", "is_default": True},
         ),
     )
     if r.get("id"):

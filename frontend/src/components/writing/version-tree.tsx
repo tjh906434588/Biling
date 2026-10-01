@@ -60,11 +60,11 @@ export function VersionTree({
                 }`}
               />
               {/* 版本号 */}
-              <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">v{v.version_no}</span>
+              <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">第{v.version_no}版</span>
               {/* 签约未过签标记：评价存在内容红线/抄袭类高危 issue，定稿默认被拒 */}
               {v.signing_blocked && (
                 <span className="shrink-0 rounded-md bg-red-600/90 px-1.5 py-px text-[10px] font-medium text-white">
-                  未过签
+                  有红线问题
                 </span>
               )}
               {/* 定稿/草稿 状态 */}

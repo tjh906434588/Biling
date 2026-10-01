@@ -425,8 +425,8 @@ export default function SettingsPanel({ novelId }: Props) {
               <InfoTip width="w-80" side="bottom">
                 <p>
                   <span className="font-medium text-zinc-800 dark:text-zinc-100">这本书属于哪个世界背景、什么题材。</span>
-                  背景类型决定签约核查口径（现实对照时代 / 半架空 / 纯架空），题材是软性写作方向。
-                  不确定可以先不选，导入蓝图时 AI 会按素材推断、弹出弹窗请你确认后自动落库，你也可以在这里直接改。
+                  背景类型决定平台签约时会不会去核查设定（现实 / 半架空 / 纯架空），题材是软性写作方向。
+                  不确定可以先不选，导入蓝图时 AI 会先猜一个，弹窗请你确认后自动保存，你也可以在这里直接改。
                 </p>
               </InfoTip>
             </div>
@@ -462,8 +462,8 @@ export default function SettingsPanel({ novelId }: Props) {
               <InfoTip width="w-80" side="bottom">
                 <p>
                   <span className="font-medium text-zinc-800 dark:text-zinc-100">这本书所处的年代×行业长什么样。</span>
-                  生成蓝图时自动研究一次（运行时按需生成，不依赖开发加知识包），
-                  蓝图/设定/评价都会参考它，避免机构、老板、业务写得不符当时情况。
+                  生成蓝图时自动研究一次，
+                  后面生成设定、写作、检查时都会参考它，避免机构、老板、业务写得不符当时情况。
                   换一本小说会自动重新研究。你可以在这里直接查看和修改。
                 </p>
               </InfoTip>
@@ -530,7 +530,7 @@ export default function SettingsPanel({ novelId }: Props) {
           ) : (
             <p className="rounded-lg border border-dashed border-zinc-300 p-3 text-[12.5px] leading-5 text-zinc-400 dark:border-zinc-700">
               现实题材下，点击「蓝图 → 生成蓝图」会自动研究这本书的年代×行业（机构形态、老板画像、业务范围等），
-              之后设定与评价都会参考它；纯架空小说不触发研究。
+              之后生成设定、写作、检查时都会参考它；纯架空小说不触发研究。
             </p>
           )}
         </section>
@@ -545,7 +545,7 @@ export default function SettingsPanel({ novelId }: Props) {
             <InfoTip width="w-80" side="bottom">
               <p>
                 <span className="font-medium text-zinc-800 dark:text-zinc-100">设定 = 这本小说的「设定集」。</span>
-                AI 写每一章前都会读一遍。角色、地点、世界规则都记在这里；「不可变」栏的它死守不违，其余可随剧情演变。先写主角一条就能开笔，边写边补。
+                AI 写每一章前都会读一遍。角色、地点、世界规则都记在这里；「不可变」栏的内容 AI 绝对不会改，其余可以随剧情发展。先写主角一条就能开笔，边写边补。
               </p>
             </InfoTip>
           </div>
@@ -614,9 +614,9 @@ export default function SettingsPanel({ novelId }: Props) {
             </div>
           ) : (
             <div className="rounded-lg border border-dashed border-zinc-300 p-6 text-center text-sm leading-6 text-zinc-400 dark:border-zinc-700">
-              当前生效蓝图没有导入设定，手动/批量新增的设定也还没有。
+              还没有任何设定。点右上角「新增设定」自己加一条。
               <br />
-              可以新增手动设定。
+              可以先手动加一条。
             </div>
           )
         ) : (
@@ -640,7 +640,7 @@ export default function SettingsPanel({ novelId }: Props) {
                   )}
                   {s.source === "outline" && (
                     <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                      大纲注入
+                      来自大纲
                     </span>
                   )}
                   <span className="text-sm font-medium">{s.name}</span>
@@ -765,7 +765,7 @@ export default function SettingsPanel({ novelId }: Props) {
               </ul>
               <p className="mt-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">
                 <span className="font-medium text-zinc-600 dark:text-zinc-300">不可变 / 可变</span>
-                ：表单分两栏——「不可变」栏的内容 AI 永不违背；「可变」栏随剧情演变（如性格成长，交给记忆层跟踪）。
+                ：表单分两栏——「不可变」栏的内容 AI 永不违背；「可变」栏随剧情演变（如性格成长，AI 会自动记住）。
                 只填「不可变」栏 = 整条都不可变。
               </p>
             </InfoTip>
@@ -809,7 +809,7 @@ export default function SettingsPanel({ novelId }: Props) {
                 onChange={(e) => setForm({ ...form, is_background: e.target.checked })}
               />
               <span className="text-[11px] font-medium text-zinc-500">
-                背景机构（正文只提名字、无需完整档案，设定自检不再提示补齐）
+                背景机构（正文只提名字就行，AI 不会一直提醒你要补全）
               </span>
             </label>
           )}
@@ -861,7 +861,7 @@ export default function SettingsPanel({ novelId }: Props) {
         open={showImport}
         onClose={() => setShowImport(false)}
         title="批量导入设定"
-        subtitle="先复制指令发给外部 AI（豆包 / DeepSeek 等），再把它的输出粘贴回来，一键批量入库。"
+        subtitle="先复制指令发给外部 AI（豆包 / DeepSeek 等），再把它的输出粘贴回来，一键批量添加进设定集。"
         maxWidth="max-w-xl"
         regionScroll
       >
@@ -875,7 +875,7 @@ export default function SettingsPanel({ novelId }: Props) {
           <textarea
             className="w-full shrink-0 resize-y rounded-lg border border-zinc-300 bg-zinc-50 p-2 text-[12px] outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             rows={10}
-            placeholder='把 AI 输出的设定清单粘贴到这里（含类型、名称、设定与动态信息），可直接复制，无需手动编辑'
+            placeholder='把 AI 输出的设定清单粘贴到这里（含类型、名称、固定信息与可变信息），可直接复制，无需手动编辑'
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
           />
@@ -948,7 +948,7 @@ export default function SettingsPanel({ novelId }: Props) {
         open={eraEditing}
         onClose={() => setEraEditing(false)}
         title="编辑时代行业研究"
-        subtitle="生成蓝图时自动研究一次；修改后蓝图 / 设定 / 评价都会参考。列表字段每行一条；全部清空并保存 = 清除这份研究。"
+        subtitle="生成蓝图时自动研究一次；修改后蓝图 / 设定 / 评价都会参考。每一项一行；全部清空后保存 = 删掉这份研究。"
         maxWidth="max-w-2xl"
         footer={
           <>

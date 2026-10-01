@@ -1797,7 +1797,7 @@ def persist_chapter_plan(
 
     版本语义：与 _persist_outliner 一致，同一章可存多个版本，规划确认插入新版本
     （version_no=max+1）；同章其他 approved 版降回 draft（批准版是下游唯一依据）。
-    节拍存成 outline.beats（content 字段），供 _summarize_outline 对照评价。
+    节拍存成 outline.beats（content 字段），供评价师对照（手动评价时的对照依据）。
     写法要点存成 outline.content.writing_treatment（作者定向的执行细节，评价师对照用）。
     账本不在此登记：规划不含伏笔动作，正文写完后由提取师维护账本。
     """

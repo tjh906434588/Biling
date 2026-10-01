@@ -379,8 +379,8 @@ export default function OutlinePanel({ novelId }: Props) {
             const n = t.injected_characters?.length ?? 0;
             if (onPanel) {
               message.success(
-                `第 ${t.chapter_no} 章大纲 v${t.version_no} 已批准此版本（小说家生成时将优先引用）。` +
-                  (n ? `并登记了 ${n} 个新角色到设定库。` : ""),
+                `第 ${t.chapter_no} 章大纲（第${t.version_no}版）已确认，AI 写正文时会优先参考。` +
+                  (n ? `并自动把 ${n} 个新角色加进了设定集。` : ""),
               );
             }
           } else {
@@ -615,7 +615,7 @@ export default function OutlinePanel({ novelId }: Props) {
     if (!res.running) {
       // 已批准（并发下其他请求已完成）：无需轮询，直接刷新展示
       setApprovingId(null);
-      message.success(`第 ${o.chapter_no} 章大纲 v${o.version_no} 已批准此版本。`);
+      message.success(`第 ${o.chapter_no} 章大纲（第${o.version_no}版）已确认，AI 写正文时会优先参考。`);
       await load();
       // 刷新版本历史，并把详情/列表选中都切到刚批准（当前生效）的版本
       const vs = await listOutlineVersions(novelId, o.id).catch(() => [] as Outline[]);
@@ -673,7 +673,7 @@ export default function OutlinePanel({ novelId }: Props) {
           </div>
           {outlines.length === 0 ? (
             <p className="rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
-              还没有大纲。点右上角「新增大纲」，让大纲师产出第 N 章大纲。
+              还没有大纲。点右上角「新增大纲」，让 AI 排出第一章大纲。
             </p>
           ) : (
             <>
@@ -768,7 +768,7 @@ export default function OutlinePanel({ novelId }: Props) {
               <h3 className="panel-title">大纲详情</h3>
             </div>
             <p className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
-              还没有大纲。点左侧「新增大纲」，让大纲师排出第一章大纲。
+              还没有大纲。点左侧「新增大纲」，让 AI 排出第一章大纲。
             </p>
           </div>
         )}
@@ -887,7 +887,7 @@ export default function OutlinePanel({ novelId }: Props) {
                   </button>
                 ) : (
                   <span className="rounded bg-green-100 px-2 py-1 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">
-                    当前生效
+                    正在使用
                   </span>
                 )}
               </div>
@@ -962,7 +962,7 @@ export default function OutlinePanel({ novelId }: Props) {
                 <ul className="flex flex-col gap-1">
                   {content.resolve_foreshadowing.map((r, i) => (
                     <li key={i} className="rounded-lg border border-green-200 bg-green-50 p-2 text-sm dark:border-green-900 dark:bg-green-950">
-                      #{String(r.ledger_id ?? "").slice(0, 8)} — {r.how}
+                      {r.how}
                     </li>
                   ))}
                 </ul>
@@ -993,8 +993,8 @@ export default function OutlinePanel({ novelId }: Props) {
         title={rewriteChapterNo != null ? `重写第 ${rewriteChapterNo} 章大纲` : "新增大纲"}
         subtitle={
           rewriteChapterNo != null
-            ? "重写本章：生成一个新版本（未批准），与本章已有版本各自独立、互不影响。批准新版本后，小说家写本章时才优先引用它。"
-            : "大纲 = 单章的施工图。大纲师按当前生效蓝图，排出这一章的目标、节拍、冲突和视角。生成的是「未批准」版本，批准此版本后，小说家写这一章时会优先照它来。"
+            ? "重写本章：生成一个新版本（未批准），与本章已有版本各自独立、互不影响。批准新版本后，AI 写本章时会优先参考它。"
+            : "大纲 = 单章的施工图。AI 会按当前使用的蓝图，排出这一章的目标、节拍、冲突和视角。生成的是「未批准」版本，批准后，AI 写这一章时会优先照它来。"
         }
         onClose={() => setShowAddModal(false)}
         maxWidth="max-w-xl"
@@ -1039,7 +1039,7 @@ export default function OutlinePanel({ novelId }: Props) {
             <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs leading-6 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
               还没有生效的蓝图，无法生成大纲。
               <br />
-              请先到「蓝图」页创建蓝图并设为生效，再回来新增大纲。
+              请先到「蓝图」页创建蓝图并设为当前使用，再回来新增大纲。
             </div>
           )}
 
@@ -1048,12 +1048,12 @@ export default function OutlinePanel({ novelId }: Props) {
             {rewriteChapterNo != null ? (
               <>
                 将重写：第 {rewriteChapterNo} 章
-                {stage ? `（当前处于：${STAGE_LABEL[stage]}，视角角色按此过滤）` : ""}
+                {stage ? `（当前处于：${STAGE_LABEL[stage]}，这个阶段能出场的角色如下）` : ""}
               </>
             ) : (
               <>
                 将自动生成：第 {form.chapter_no} 章
-                {stage ? `（当前处于：${STAGE_LABEL[stage]}，视角角色按此过滤）` : ""}
+                {stage ? `（当前处于：${STAGE_LABEL[stage]}，这个阶段能出场的角色如下）` : ""}
               </>
             )}
           </span>
@@ -1068,8 +1068,8 @@ export default function OutlinePanel({ novelId }: Props) {
             >
               <option value="">
                 {activeCharacters.length > 0
-                  ? "视角角色（留空由大纲师自定）"
-                  : "该章节无生效角色（留空由大纲师自定）"}
+                  ? "视角角色（留空由 AI 自定）"
+                  : "该章节无生效角色（留空由 AI 自定）"}
               </option>
               {ROLE_RANKS.map((g) => {
                 const items = activeCharacters.filter((c) => roleRankOf(c) === g.value);
@@ -1096,7 +1096,7 @@ export default function OutlinePanel({ novelId }: Props) {
                 </optgroup>
               )}
               {inactiveCharacters.length > 0 && (
-                <optgroup label="本章未生效（置灰不可选）">
+                <optgroup label="这章不能出场（不能选）">
                   {inactiveCharacters.map((c) => (
                     <option key={c.id} value={c.name} disabled>
                       {c.name}（{inactiveReason(c, form.chapter_no, volumes)}）
@@ -1115,10 +1115,10 @@ export default function OutlinePanel({ novelId }: Props) {
               onChange={(e) => setForm({ ...form, chapter_function: e.target.value })}
               disabled={generating}
             >
-              <option value="">章节功能：自动判定</option>
+              <option value="">本章节奏定位：自动判定</option>
               {FUNCTIONS.map(([v, l]) => (
                 <option key={v} value={v}>
-                  章节功能：{l}
+                  本章节奏定位：{l}
                 </option>
               ))}
             </select>
@@ -1128,7 +1128,7 @@ export default function OutlinePanel({ novelId }: Props) {
             <span className="text-xs text-zinc-500">本章目标</span>
             <textarea
               className="resize-none rounded-lg border border-zinc-300 bg-zinc-50 p-3 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              placeholder="本章目标（留空则由大纲师自行把握）"
+              placeholder="本章目标（留空则由 AI 自行把握）"
               rows={2}
               value={form.goal}
               onChange={(e) => setForm({ ...form, goal: e.target.value })}
@@ -1145,16 +1145,16 @@ export default function OutlinePanel({ novelId }: Props) {
       <AgentStreamModal
         open={showStreamModal}
         onClose={() => setShowStreamModal(false)}
-        title="大纲师生成过程"
+        title="AI 生成过程"
         running={generating}
         draftText={draftText}
         thinkingText={thinkingText}
         elapsed={elapsed}
         novelId={novelId}
         emptyRunningText={
-          "模型正在深度思考与整理大纲（推理模型思考期约 1-3 分钟，此阶段通常没有正文输出），\n正文开始生成后会在这里实时滚动显示…"
+          "AI 正在思考整理大纲，头几分钟通常没字，属正常，\n正文开始生成后会在这里实时滚动显示…"
         }
-        emptyDoneText="生成完成，新大纲已作为未批准版本落库，可在详情里批准此版本。"
+        emptyDoneText="新大纲已存好，还是草稿状态，在详情里点「批准」后才会启用。"
       />
 
       {/* ── 批准二次确认：该章已生成正文，切换大纲版本后正文不会自动重写 ── */}

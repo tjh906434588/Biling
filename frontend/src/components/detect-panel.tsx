@@ -149,8 +149,8 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
                   <div className="mt-1 font-mono text-lg font-semibold">{VERDICT_LABEL[result.verdict]}</div>
                 </div>
                 <Stat label="综合得分" value={`${result.heuristic_score}/100`} accent />
-                <Stat label="困惑度" value={result.ppl ?? "—"} />
-                <Stat label="突发性" value={result.burstiness ?? "—"} />
+                <Stat label="文风反常度" value={result.ppl ?? "—"} />
+                <Stat label="长短句变化" value={result.burstiness ?? "—"} />
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {result.signals.map((s) => (
@@ -170,12 +170,12 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
                 <div className="panel-head">
                   <h2 className="panel-title">
                     <span className="panel-step">3</span>
-                    词法命中
+                    模板词
                   </h2>
                   <span className="panel-hint">模板痕迹</span>
                 </div>
                   {Object.entries(result.regex_hits).length === 0 ? (
-                    <p className="text-xs text-zinc-400">无命中</p>
+                    <p className="text-xs text-zinc-400">没发现</p>
                   ) : (
                     <ul className="flex flex-col gap-1">
                       {Object.entries(result.regex_hits).map(([k, v]) => (
@@ -192,7 +192,7 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
                 <div className="panel-head">
                   <h2 className="panel-title">
                     <span className="panel-step">4</span>
-                    密度指纹
+                    句长统计
                   </h2>
                   <span className="panel-hint">句长与连接词</span>
                 </div>
@@ -200,17 +200,17 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
                       <div className="flex justify-between text-sm"><span className="text-zinc-500">句数</span><span className="font-mono">{result.density.sentences}</span></div>
                       <div className="flex justify-between text-sm"><span className="text-zinc-500">平均句长</span><span className="font-mono">{result.density.avg_sentence_len.toFixed(1)}</span></div>
-                      <div className="flex justify-between text-sm"><span className="text-zinc-500">句长标准差</span><span className="font-mono">{result.density.std_sentence_len.toFixed(1)}</span></div>
+                      <div className="flex justify-between text-sm"><span className="text-zinc-500">句子长短的整齐程度</span><span className="font-mono">{result.density.std_sentence_len.toFixed(1)}</span></div>
                       <div className="flex justify-between text-sm"><span className="text-zinc-500">短句比</span><span className="font-mono">{(result.density.short_ratio * 100).toFixed(0)}%</span></div>
                       <div className="flex justify-between text-sm"><span className="text-zinc-500">长句比</span><span className="font-mono">{(result.density.long_ratio * 100).toFixed(0)}%</span></div>
                       <div className="flex justify-between text-sm"><span className="text-zinc-500">逗号/句</span><span className="font-mono">{result.density.commas_per_sentence.toFixed(2)}</span></div>
                       <div className="flex justify-between text-sm"><span className="text-zinc-500">连接词密度</span><span className="font-mono">{result.density.transition_density.toFixed(2)}</span></div>
                       <div className="flex justify-between text-sm"><span className="text-zinc-500">感叹比</span><span className="font-mono">{(result.density.exclamation_ratio * 100).toFixed(0)}%</span></div>
                       <div className="flex justify-between text-sm"><span className="text-zinc-500">对话比</span><span className="font-mono">{(result.density.dialogue_ratio * 100).toFixed(0)}%</span></div>
-                      <div className="flex justify-between text-sm"><span className="text-zinc-500">虚词密度</span><span className="font-mono">{result.density.stopword_density.toFixed(2)}</span></div>
+                      <div className="flex justify-between text-sm"><span className="text-zinc-500">助词/连接词占比</span><span className="font-mono">{result.density.stopword_density.toFixed(2)}</span></div>
                     </div>
                   ) : (
-                    <p className="text-xs text-zinc-400">无密度数据</p>
+                    <p className="text-xs text-zinc-400">没有统计数据</p>
                   )}
               </div>
             </section>
@@ -223,16 +223,16 @@ export default function DetectPanel({ novelId }: { novelId: string }) {
           <div className="panel-head">
             <h3 className="panel-title">说明</h3>
           </div>
-          <p className="text-zinc-500">本检测为三层信号参考（词法规则 / 密度指纹 / 突发性启发式），不设硬阈值、不阻断写作，仅作提示。</p>
+          <p className="text-zinc-500">这个体检只看三样东西——用词习惯、句子长短、节奏变化。它只是提醒你，不会拦着你写作，结果仅供参考。</p>
         </div>
         <div className="panel text-sm">
           <div className="panel-head">
             <h3 className="panel-title">判读提示</h3>
           </div>
           <ul className="list-inside list-disc space-y-1 text-zinc-500">
-            <li>句长标准差小 + 连接词密集 + 感叹比低 → 偏模板化</li>
-            <li>突发性高（长短句交替）→ 更接近人类书写节奏</li>
-            <li>「疑似 AI」时优先在写作指令 L1 中加强风格约束</li>
+            <li>句子长短太整齐 + 连接词多 + 感叹号少 → 像是模板套出来的</li>
+            <li>长短句错落 → 更像人写的</li>
+            <li>怀疑是 AI 写的时，可以到设置里加强你的文风要求</li>
           </ul>
         </div>
       </aside>

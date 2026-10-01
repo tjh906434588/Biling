@@ -207,7 +207,7 @@ export function ChapterSidebar({
                   aiBusy
                     ? reviewing
                       ? "评价进行中，暂不能新增章节"
-                      : "提取记忆层中，暂不能新增章节"
+                      : "正在记进 AI 记忆中，暂不能新增章节"
                     : generating && genIsRegenerate
                       ? "重新生成正文中，暂不能新增章节"
                       : generating
@@ -330,10 +330,10 @@ export function ChapterSidebar({
                   : aiBusy
                     ? reviewing
                       ? "评价进行中，暂不能重新生成正文"
-                      : "提取记忆层中，暂不能重新生成正文"
+                      : "正在记进 AI 记忆中，暂不能重新生成正文"
                     : generating && !genIsRegenerate
                       ? "新增正文生成中，暂不能重新生成正文"
-                      : "复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）"
+                      : "重新写一版正文，新的一版会保留下来"
               }
             >
               重新生成正文
@@ -351,9 +351,9 @@ export function ChapterSidebar({
                     : aiBusy
                       ? reviewing
                         ? "评价进行中，暂不能定稿"
-                        : "提取记忆层中，暂不能定稿"
+                        : "正在记进 AI 记忆中，暂不能定稿"
                       : selectedVersion.signing_blocked
-                        ? "该版本签约未过签（存在内容红线/抄袭类高危问题），定稿需二次确认"
+                        ? "这一版有红线或抄袭风险，定稿需要二次确认"
                         : "将当前选中的草稿版本定稿为本章正文"
                 }
               >
@@ -375,27 +375,27 @@ export function ChapterSidebar({
                   : activeNo == null
                     ? "请先在章节目录选择一章"
                     : isStaleForActiveOutline
-                      ? "当前正文基于旧版大纲生成，只能查看；请基于当前激活大纲重新生成正文并定稿后再提取"
-                      : reviewing
-                        ? "评价进行中，暂不能提取记忆层"
-                        : !selectedVersion
-                          ? "先选定版本再提取"
-                          : !selectedIsFinal
-                            ? "只有已定稿的正文才能提取入记忆层，请先在「本章操作」点「定稿」"
-                            : extractPending
-                              ? "当前版本尚未提取记忆层，重新提取后才会进入记忆（或已切到新版本）"
-                              : "把本章摘要/角色状态/伏笔写进记忆层"
+                      ? "当前正文基于旧版大纲生成，只能查看；请基于当前正在用的大纲重新生成正文并定稿后再记进 AI 记忆"
+                    : reviewing
+                      ? "评价进行中，暂不能记进 AI 记忆"
+                      : !selectedVersion
+                        ? "先选定版本再记进 AI 记忆"
+                        : !selectedIsFinal
+                          ? "只有已定稿的正文才能记进 AI 记忆，请先在「本章操作」点「定稿」"
+                          : extractPending
+                            ? "这版正文还没记进 AI 记忆，点一下「记进 AI 记忆」就好（或已切到新版本）"
+                            : "把本章摘要/角色状态/伏笔写进 AI 记忆"
               }
             >
-              {extracting ? "提取中…" : "提取记忆层"}
+              {extracting ? "正在记进…" : "记进 AI 记忆"}
               <span
                 className="absolute right-2 top-1/2 -translate-y-1/2"
                 onClick={(e) => e.stopPropagation()}
               >
                 <InfoTip side="right" onOpenChange={setTipOpen}>
                   <p className="font-medium text-zinc-700 dark:text-zinc-200">提取本章 = 给 AI 记账。</p>
-                  把这一章的摘要、角色当前状态、新埋的伏笔等写进「记忆层」。
-                  下一章生成时小说家会自动读到，角色性格的变化也靠它跟踪。
+                  把这一章的摘要、角色当前状态、新埋的伏笔等写进 AI 记忆。
+                  下一章生成时 AI 写作会自动读到，角色性格的变化也靠它跟踪。
                   <span className="mt-1.5 block text-zinc-400">
                     每写完一章记得点一下，不然下一章可能「忘了」刚才发生了什么。
                   </span>

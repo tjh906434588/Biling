@@ -10,9 +10,9 @@ import type { Tab } from "@/types/workspace";
 // 世界背景类型：决定签约核查口径（realistic 对照真实时代 / alternate 现实框架+虚构 / pure_fantasy 只查设定账本自洽）。
 // 默认不选；不确定可不选，导入蓝图时 AI 按素材推断、作者确认后落库。
 export const BACKGROUND_TYPES: { value: Exclude<Novel["background_type"], null>; label: string; hint: string }[] = [
-  { value: "realistic", label: "现实年代", hint: "有真实世界参照，核查对照时代细节（如 2000 年扩招、机构命名）" },
-  { value: "alternate", label: "半架空", hint: "现实框架 + 虚构元素，虚构部分以设定账本为准" },
-  { value: "pure_fantasy", label: "纯架空", hint: "无现实参照（玄幻/仙侠/奇幻），只核查设定账本内部自洽" },
+  { value: "realistic", label: "现实年代", hint: "有真实世界对照，AI 会检查时代细节对不对（如 2000 年扩招、机构命名）" },
+  { value: "alternate", label: "半架空", hint: "大部分真实，加一些虚构设定" },
+  { value: "pure_fantasy", label: "纯架空", hint: "完全虚构的世界（玄幻/仙侠/奇幻），只要设定前后不矛盾就行" },
 ];
 
 // 常见题材预置（软性写作方向指引，可多选；区别于背景类型的硬性核查口径）
@@ -58,20 +58,20 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
   {
     key: "blueprint",
     title: "定下骨架",
-    desc: "蓝图师给出主题、核心冲突、角色弧光与伏笔计划，逐版保存，随时可回溯。",
+    desc: "AI 帮你定主题、冲突、主角成长线和伏笔安排，保存后随时能改回旧版本",
     note: "蓝图是整本书的底稿",
   },
   {
     key: "outline",
     title: "排好章节",
-    desc: "大纲师按蓝图排出每章的节拍与冲突，批准后会直接填进写作表单。",
-    note: "同时登记伏笔账本",
+    desc: "AI 排好每章的节奏和冲突，你点头后直接用于写作",
+    note: "同时记进伏笔记录",
   },
   {
     key: "write",
     title: "开写正文",
-    desc: "小说家生成定稿正文；提取师把它压成记忆，下一章还记得。",
-    note: "你的改动会被风格画像学走",
+    desc: "AI 写出正文并记住剧情，下一章不会前后矛盾。",
+    note: "你改的地方，它也会学着你的风格写",
   },
 ];
 

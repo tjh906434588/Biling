@@ -16,7 +16,7 @@ _DEFAULT_TASK_MODELS: dict[str, str] = {
     "creation": settings.default_writer_model,
     "review": settings.default_review_model,
     "extract": settings.default_extract_model,
-    "chat": settings.default_chat_model,
+    "chronicle": settings.default_chronicle_model,
 }
 
 
@@ -84,7 +84,9 @@ def resolve_route(db: Session, task_type: str, override: Optional[RouteConfig] =
             task_type=task_type,
             model=row.model,
             provider=row.provider,
-            temperature=row.temperature or 0.7,
+            # 保留 None（用户未配置温度）：由下游决定是否回落 agent 默认；不再提前归一为 0.7，
+            # 否则无法区分「用户显式配 0.7」与「未配置」，导致 agent 默认温度永远失效
+            temperature=row.temperature,
             max_tokens=row.max_tokens,
             context_window=row.context_window or 32_000,
         )

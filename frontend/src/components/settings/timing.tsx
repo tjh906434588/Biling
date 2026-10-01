@@ -346,7 +346,7 @@ function TimingBlock({ stages, onStagesChange, segments, onSegmentsChange, plan 
             </button>
           );
         })}
-        <span className="text-zinc-400">（不选不限）</span>
+        <span className="text-zinc-400">（不选 = 全程都生效）</span>
       </div>
 
       <div className="mt-2 flex flex-col gap-1">
@@ -354,7 +354,7 @@ function TimingBlock({ stages, onStagesChange, segments, onSegmentsChange, plan 
           <p className="text-[11px] leading-4 text-zinc-400">先选择生效阶段，才能把设定限定到具体章节。</p>
         ) : blocks.length === 0 && hideSegments ? (
           <p className="text-[11px] leading-4 text-zinc-400">
-            蓝图未分卷，设定按前/中/后期生效，无需限定具体章节。
+            没分卷，就按前/中/后期来生效，无需限定具体章节。
           </p>
         ) : blocks.length === 0 ? (
           <p className="text-[11px] leading-4 text-zinc-400">还没有可选的章节，先写一章再回来限定。</p>
@@ -381,7 +381,7 @@ function TimingBlock({ stages, onStagesChange, segments, onSegmentsChange, plan 
             </div>
             {plan.stageRanges ? (
               <p className="text-[11px] leading-4 text-zinc-400">
-                {stageRangeText ? `阶段范围：${stageRangeText}，按蓝图章数选择。` : "按蓝图前中后期章数选择。"}
+                {stageRangeText ? `阶段范围：${stageRangeText}，按全书规划章数选择。` : "按蓝图前中后期章数选择。"}
               </p>
             ) : (
               <p className="text-[11px] leading-4 text-zinc-400">

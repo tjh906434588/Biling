@@ -99,7 +99,8 @@ def _format_blueprint_block(blueprint) -> str:
 
 
 class SettingExtractorAgent(Agent[ConceptExtraction]):
-    task_type = "setting"
+    # 提取类：从正文/文档提取设定实体，归入 extract 档（轻量），不吃创作档高温
+    task_type = "extract"
     temperature = 0.3
     mock_output = {
         "concepts": [

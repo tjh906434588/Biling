@@ -779,18 +779,17 @@ export default function WritingPanel({ novelId }: Props) {
   const currentReviews = (reviews ?? []).filter((r) => r.chapter_version_id === selectedVersion?.id);
   const currentReview = currentReviews[0] ?? null;
   /** 全局运行中的后台任务（AgentTaskToasts 每 3 秒轮询 /stream/status 后写入共享状态）。
-   *  用于感知"自动评价是否还在后台跑"：评价栏据此显示加载态、禁用重复手动评价，
-   *  避免作者在自动评价进行中误点手动评价撞上后端 409「已有生成任务在后台运行」。 */
+   *  用于感知"评价/优化是否还在后台跑"：评价栏据此显示加载态、禁用重复手动评价，
+   *  避免作者在评价进行中重复点手动评价撞上后端 409「已有生成任务在后台运行」。 */
   const runningTask = useSyncExternalStore(subscribeRunningTask, getRunningTask, () => null);
-  /** 是否有评价/优化类后台任务在跑（critic/reviser：自动评价 + 手动评价共用同一并发位）。 */
+  /** 是否有评价/优化类后台任务在跑（critic/reviser：手动评价与优化共用同一并发位）。 */
   const reviewTaskRunning = runningTask?.agent === "critic" || runningTask?.agent === "reviser";
   /** 该后台评价任务是否对应当前章节（决定评价栏显示"评价处理中"加载态；对不上章的不打扰当前章）。 */
   const reviewBusyForChapter =
     reviewTaskRunning && (runningTask?.chapter_no == null || runningTask.chapter_no === detail?.chapter_no);
   /** 重新评价提示在评价栏顶部展示：正文改动过（reviewStale）且当前版本已有评价时才出现，
    *  按钮点击直接对当前版本重新评价。 */
-  /** 当前选中正文是否「刚生成」：生成后系统通常会在 1-2 分钟内异步自动评价落库，
-   *  此时打开弹窗若还没有评价，多半是自动评价还在跑（而非永远没有），提示作者稍候而非误以为要手动点。
+  /** 当前选中正文是否「刚生成」（3 分钟内）：提示作者该版本还没有评价、点下方「评价本章」手动评价。
    *  Date.now() 在渲染期读取会触发 react-hooks/purity 告警，改为选中版本变化时用 effect 计算。 */
   const [isRecentlyGenerated, setIsRecentlyGenerated] = useState(false);
   useEffect(() => {
@@ -903,7 +902,7 @@ export default function WritingPanel({ novelId }: Props) {
           const action = d.action as string | undefined;
           if (action === "alert") {
             showToast(
-              `第 ${form.chapter_no} 章生成内容未通过格式校验（已记录告警）。可点「生成正文」重试。`,
+              `第 ${form.chapter_no} 章生成内容没通过检查（已记录告警）。可点「生成正文」重试。`,
               "error",
             );
           } else if (action !== "dry_run") {
@@ -968,7 +967,7 @@ export default function WritingPanel({ novelId }: Props) {
       setDetail(updated);
       setSelectedVersionId(selectedVersion.id);
       showToast(
-        `第 ${updated.chapter_no} 章已定稿（v${selectedVersion.version_no} · ${sourceLabel(selectedVersion.source)}），可继续提取记忆层或生成下一章。`,
+        `第 ${updated.chapter_no} 章已定稿（第${selectedVersion.version_no}版 · ${sourceLabel(selectedVersion.source)}），可继续记进 AI 记忆或生成下一章。`,
         "success",
       );
       await loadChapters();
@@ -1012,14 +1011,14 @@ export default function WritingPanel({ novelId }: Props) {
     // 旧大纲版本生成的正文只读：不能提取入记忆层（防止把旧版本的人物状态写进记忆、污染当前大纲语境）
     if (isStaleForActiveOutline) {
       showToast(
-        "当前正文基于旧版大纲生成，只能查看，不能提取入记忆层。请先基于当前激活大纲重新生成一份正文，再定稿并提取。",
+        "当前正文基于旧版大纲生成，只能查看，不能记进 AI 记忆。请先基于当前正在用的大纲重新生成一份正文，再定稿并记进 AI 记忆。",
         "warning",
       );
       return;
     }
     // 提取记忆层只对已定稿版本开放：草稿正文还没定稿，先定稿再提取
     if (!selectedIsFinal) {
-      showToast("只有已定稿的正文才能提取入记忆层。请先在「本章操作」点「定稿」再提取。", "warning");
+      showToast("只有已定稿的正文才能记进 AI 记忆。请先在「本章操作」点「定稿」，再点「记进 AI 记忆」。", "warning");
       return;
     }
     // 提取记忆层二次确认：确认后才会真正发起提取（自定义弹窗，规避原生 confirm 在内嵌浏览器的异常）
@@ -1045,13 +1044,13 @@ export default function WritingPanel({ novelId }: Props) {
     // 旧大纲版本生成的正文只读：不能提取入记忆层（防止把旧版本的人物状态写进记忆、污染当前大纲语境）
     if (isStaleForActiveOutline) {
       showToast(
-        "当前正文基于旧版大纲生成，只能查看，不能提取入记忆层。请先基于当前激活大纲重新生成一份正文，再定稿并提取。",
+        "当前正文基于旧版大纲生成，只能查看，不能记进 AI 记忆。请先基于当前正在用的大纲重新生成一份正文，再定稿并记进 AI 记忆。",
         "warning",
       );
       return;
     }
     if (!selectedIsFinal) {
-      showToast("只有已定稿的正文才能提取入记忆层。请先在「本章操作」点「定稿」再提取。", "warning");
+      showToast("只有已定稿的正文才能记进 AI 记忆。请先在「本章操作」点「定稿」，再点「记进 AI 记忆」。", "warning");
       return;
     }
     // 提取时锁定「当前章节 + 当前选中版本」，用于后续判断正文是否被切换过
@@ -1079,7 +1078,7 @@ export default function WritingPanel({ novelId }: Props) {
               ? d.downstream_affected.filter((a) => a.chapter_no > 0)
               : [];
             setAffectedChapters(affected.length > 0 ? affected : null);
-            showToast(`第 ${chapterNo} 章已提取入记忆层`, "success");
+            showToast(`已把第 ${chapterNo} 章记进 AI 的长期记忆`, "success");
           } else if (ev.event === "stream_error") {
             showToast((ev.data as { message?: string }).message ?? "AI 提取出错，请稍后重试。", "error");
           }
@@ -1101,7 +1100,7 @@ export default function WritingPanel({ novelId }: Props) {
             // 实际已落库（只是回执丢失）：补齐状态，熄灭按钮高亮
             setExtractedChapterNo(chapterNo);
             setExtractedVersionId(versionId);
-            showToast(`第 ${chapterNo} 章已提取入记忆层`, "success");
+            showToast(`已把第 ${chapterNo} 章记进 AI 的长期记忆`, "success");
           } else {
             showToast("提取未完成，请稍后重试。", "warning");
           }
@@ -1139,7 +1138,7 @@ export default function WritingPanel({ novelId }: Props) {
     // 旧大纲版本生成的正文只读：不能评价（防止拿旧正文的评价结果反向影响当前大纲语境的写作决策）
     if (isStaleForActiveOutline) {
       showToast(
-        "当前正文基于旧版大纲生成，只能查看，不能评价。请先基于当前激活大纲重新生成一份正文，再对新的正文评价。",
+        "当前正文基于旧版大纲生成，只能查看，不能评价。请先基于当前正在用的大纲重新生成一份正文，再对新的正文评价。",
         "warning",
       );
       return;
@@ -1173,7 +1172,7 @@ export default function WritingPanel({ novelId }: Props) {
             setReviewRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
           } else if (ev.event === "schema_validate" && d.status !== "ok") {
             failed = true;
-            showToast("评价格式校验失败，可重试。", "error");
+            showToast("评价结果格式没通过检查，可重试。", "error");
           } else if (ev.event === "stored") {
             // 收到落库回执即先行刷新一次评价列表（早于流结束展示）；流结束后还会无条件校准一次。
             void listReviews(novelId, activeChapter.chapter_no)
@@ -1219,7 +1218,7 @@ export default function WritingPanel({ novelId }: Props) {
   }
 
   /** 「评价与优化」已改为右侧常驻内联面板：切换章节时 loadDetail 会按当前章重新拉取评价列表，
-   *  因此无需再靠打开弹窗触发刷新，进入面板即是最新（含生成后 1-2 分钟异步落库的自动评价）。 */
+   *  因此无需再靠打开弹窗触发刷新，进入面板即是最新（含手动评价完成后的结果）。 */
 
   /** 根部关系被删/改后，按序串行处理受影响的下游章节：
    *   第 A 章重写正文（按该章已批大纲，无大纲则自由草稿）→ 第 B 章重写 → …
@@ -1297,7 +1296,7 @@ export default function WritingPanel({ novelId }: Props) {
         const tip = [];
         if (remainingRewrite.length > 0) tip.push(`正文未重写：第 ${remainingRewrite.join("、")} 章`);
         showToast(
-          `第 ${failedChapter} 章处理失败，联动已停止。${tip.length > 0 ? `剩余 ${tip.join("；")}，请手动补齐。` : ""}`,
+          `第 ${failedChapter} 章处理失败，自动连续处理已停止。${tip.length > 0 ? `剩余 ${tip.join("；")}，请手动补齐。` : ""}`,
           "error",
         );
       } else {
@@ -1335,14 +1334,14 @@ export default function WritingPanel({ novelId }: Props) {
     // 旧大纲版本生成的正文只读：不能修订（与评价同口径，防止把旧正文基于旧大纲再改出一版）
     if (isStaleForActiveOutline) {
       showToast(
-        "当前正文基于旧版大纲生成，只能查看，不能优化。请先基于当前激活大纲重新生成一份正文，再评价优化。",
+        "当前正文基于旧版大纲生成，只能查看，不能优化。请先基于当前正在用的大纲重新生成一份正文，再评价优化。",
         "warning",
       );
       return;
     }
     if (review.chapter_version_id !== selectedVersion.id) {
       showToast(
-        `这条评价针对 v${review.version_no ?? "?"}，不是当前选中的正文。请先选中对应版本，或对当前正文重新评价。`,
+        `这条评价是对第${review.version_no ?? "?"}版写的，不是当前选中的正文。请先选中对应版本，或对当前正文重新评价。`,
         "warning",
       );
       return;
@@ -1395,7 +1394,7 @@ export default function WritingPanel({ novelId }: Props) {
             collectedGaps = items.length ? items : [];
           } else if (ev.event === "schema_validate" && d.status !== "ok") {
             failed = true;
-            showToast("优化格式校验失败，可重试。", "error");
+            showToast("优化结果格式没通过检查，可重试。", "error");
           } else if (ev.event === "stream_error") {
             failed = true;
             showToast((ev.data as { message?: string }).message ?? "AI 优化出错，请稍后重试。", "error");
@@ -1513,14 +1512,14 @@ export default function WritingPanel({ novelId }: Props) {
                     type="button"
                     onClick={() => setVersionOpen((o) => !o)}
                     className="ml-1 inline-flex cursor-pointer items-baseline rounded-md px-1.5 py-0.5 align-middle transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                    title="点击查看全部版本（多级版本树，可点击切换预览）"
+                    title="点击查看这一章的所有版本，可点击切换预览"
                   >
                     {selectedVersion ? (
                       <span className="text-xs font-semibold tabular-nums text-zinc-600 dark:text-zinc-300">
-                        v{selectedVersion.version_no}
+                        第{selectedVersion.version_no}版
                       </span>
                     ) : (
-                      <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">v?</span>
+                      <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">第?版</span>
                     )}
                   </button>
                   {versionOpen && detail && (
@@ -1533,7 +1532,7 @@ export default function WritingPanel({ novelId }: Props) {
                       />
                       <div className="absolute left-0 top-full z-50 mt-2 max-h-[60vh] w-72 overflow-y-auto rounded-lg border border-zinc-200 bg-surface p-2 shadow-book dark:border-zinc-700 dark:bg-zinc-900">
                         <p className="px-2 py-1 text-[11px] leading-5 text-zinc-400">
-                          新增 / 重新生成为根节点；「评价优化」挂在被优化版本之下，可一直递进。点节点切换预览。
+                          点开是这一章的版本列表，每次生成或重写都会新增一版；按评价优化出的新版会排在被优化那版的下面，可以一直改下去。点节点切换预览。
                         </p>
                         {detail.versions.length > 0 ? (
                           <VersionTree
@@ -1546,7 +1545,7 @@ export default function WritingPanel({ novelId }: Props) {
                             }}
                           />
                         ) : (
-                          <p className="py-4 text-center text-xs text-zinc-400">本章还没有任何版本。</p>
+                          <p className="py-4 text-center text-xs text-zinc-400">这章还没有生成过正文。</p>
                         )}
                       </div>
                     </>
@@ -1570,7 +1569,7 @@ export default function WritingPanel({ novelId }: Props) {
                 {/* 选中版本签约未过签：红色警示，提示需按评价修正或强制定稿 */}
                 {selectedVersion?.signing_blocked && (
                   <span className="ml-1.5 inline-flex items-center gap-1 rounded-md bg-red-600/10 px-1.5 py-0.5 text-xs font-medium text-red-600 ring-1 ring-inset ring-red-600/30 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/30">
-                    未过签·定稿需确认
+                    有红线问题 · 定稿需二次确认
                   </span>
                 )}
               </h3>
@@ -1598,7 +1597,7 @@ export default function WritingPanel({ novelId }: Props) {
               </h3>
             </div>
             <p className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs text-zinc-400 dark:border-zinc-700">
-              第 {activeNo} 章正文尚未生成或加载失败。
+              第 {activeNo} 章正文还没生成，或暂时没读到，请稍后重试。
             </p>
           </div>
         ) : (
@@ -1647,7 +1646,7 @@ export default function WritingPanel({ novelId }: Props) {
                       type="button"
                       onClick={() => setReviewWidth(w)}
                       aria-pressed={on}
-                      title={`评价栏宽度设为 ${w}px`}
+                      title={`评价栏宽度设为 ${w}`}
                       className={`rounded px-1.5 py-0.5 text-[11px] leading-none transition-colors ${
                         on
                           ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
@@ -1709,8 +1708,8 @@ export default function WritingPanel({ novelId }: Props) {
               ) : (
                 <div className="rounded-lg border border-dashed border-zinc-300 p-5 text-center dark:border-zinc-700">
                   {!reviewing && reviewBusyForChapter ? (
-                    /* 自动评价进行中：显示加载态，替代"还没有评价"空态——作者刚生成完正文时，
-                       评价在后台异步跑（约几分钟），此时不打扰、也不让作者误点手动评价（会撞 409）。
+                    /* 评价任务进行中：显示加载态——手动评价/优化在后台异步跑（约几分钟），
+                       此时不打扰、也不让作者重复点手动评价（会撞 409）。
                        任务完成由 agent-task-toasts 派发事件触发本面板刷新，评价会自动显示。 */
                     <div className="flex flex-col items-center gap-2.5 py-1">
                       <svg aria-hidden viewBox="0 0 24 24" fill="none" className="h-6 w-6 animate-spin text-seal">
@@ -1718,10 +1717,10 @@ export default function WritingPanel({ novelId }: Props) {
                         <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
                       </svg>
                       <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
-                        系统正在自动评价第 {detail.chapter_no} 章（后台异步处理中）…
+                        正在评价第 {detail.chapter_no} 章（正在后台处理，约几分钟，完成后会自动显示）…
                       </p>
                       <p className="text-xs leading-5 text-zinc-400 dark:text-zinc-500">
-                        评价完成后会自动显示在这里，无需手动操作
+                        评价完成后会自动显示在这里，无需重复操作
                       </p>
                     </div>
                   ) : (
@@ -1729,15 +1728,15 @@ export default function WritingPanel({ novelId }: Props) {
                       <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
                         {selectedVersion ? (
                           <>
-                            当前选中正文（v{selectedVersion.version_no}）还没有评价。
+                            当前选中的第{selectedVersion.version_no}版正文还没有评价。
                             {reviewTaskRunning ? (
                               <>当前已有评价任务在后台运行，请等待其完成后再手动评价。</>
                             ) : isRecentlyGenerated ? (
                               <>
-                                该版本刚生成，系统通常会在生成后 1-2 分钟内自动评价并出现在这里，可稍候查看；若仍未出现，再点下方手动评价。
+                                该版本刚生成，还没有评价。点下方「评价本章」手动评价。
                               </>
                             ) : (
-                              <>点下方「评价本章」，评价师会对照蓝图、伏笔账本与设定逐项打分。</>
+                              <>点下方「评价本章」，AI 会对照全书设定、已埋的伏笔逐项打分。</>
                             )}
                           </>
                         ) : (
@@ -1801,8 +1800,8 @@ export default function WritingPanel({ novelId }: Props) {
                 </h3>
                 <p className="mt-0.5 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
                   {regenerateNo != null
-                    ? `将基于当前章节设置重新生成第 ${form.chapter_no} 章正文（新增为一个版本），标题 / 大纲目标 / 章节功能等均可修改。`
-                    : `将追加为第 ${nextNo} 章（目录最新一章的下一章）。写正文前会先弹出「本章规划」（目标/节奏/视角/节拍/结尾钩子）供你确认，生成后为草稿，需手动定稿。`}
+                    ? `将重新写第 ${form.chapter_no} 章（会另存新的一版，原稿保留），标题 / 大纲目标 / 本章节奏定位等均可修改。`
+                    : `将追加为第 ${nextNo} 章（目录最新一章的下一章）。写正文前会先让你确认这一章的安排；生成后是草稿，确认满意后定稿。`}
                 </p>
               </div>
               <button
@@ -1824,11 +1823,11 @@ export default function WritingPanel({ novelId }: Props) {
             <>
               <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900">
                 <span className="flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-300">
-                  沿用该章已批大纲
+                  沿用该章已确认的大纲
                   <InfoTip portal>
-                    <p className="font-medium text-zinc-700 dark:text-zinc-200">第 {form.chapter_no} 章有已批大纲</p>
-                    开启：自动回填到下方「本章目标」，写正文前仍会弹出本章规划供你确认沿用或另选
-                    <br />关闭：当作自由草稿，不预填大纲，标题由 AI 根据内容生成
+                    <p className="font-medium text-zinc-700 dark:text-zinc-200">第 {form.chapter_no} 章有已确认的大纲</p>
+                    开启：自动填到下方「本章目标」，写正文前仍会弹出本章规划供你确认沿用或另选
+                    <br />关闭：不用大纲，让 AI 自由发挥，标题由 AI 根据内容生成
                   </InfoTip>
                 </span>
                 <button
@@ -1851,13 +1850,13 @@ export default function WritingPanel({ novelId }: Props) {
               </div>
               {useOutline ? (
                 <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5 text-xs leading-5 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300">
-                  将基于已批大纲：第 {targetOutline.chapter_no} 章
+                  将基于已确认的大纲：第 {targetOutline.chapter_no} 章
                   {targetOutline.title ? `《${targetOutline.title}》` : ""}（大纲内容已自动填入下方「本章目标」，
                   写正文前仍会弹出本章规划，你可确认沿用或另选一套）。
                 </div>
               ) : (
                 <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs leading-5 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400">
-                  已关闭大纲沿用：本章按自由草稿写作，不预填大纲，标题由 AI 根据内容生成
+                  已关闭大纲沿用：本章不用大纲，让 AI 自由发挥，标题由 AI 根据内容生成
                   （写正文前仍会弹出本章规划供你确认）。
                 </div>
               )}
@@ -1879,17 +1878,17 @@ export default function WritingPanel({ novelId }: Props) {
           )}
 
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">章节功能</span>
+            <span className="text-xs text-zinc-500">本章节奏定位</span>
             <select
               className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
               value={form.chapter_function}
               onChange={(e) => setForm({ ...form, chapter_function: e.target.value })}
               disabled={generating}
             >
-              <option value="">章节功能：自动判定</option>
+              <option value="">本章节奏定位：自动判定</option>
               {FUNCTIONS.map(([v, l]) => (
                 <option key={v} value={v}>
-                  章节功能：{l}
+                  本章节奏定位：{l}
                 </option>
               ))}
             </select>
@@ -1904,7 +1903,7 @@ export default function WritingPanel({ novelId }: Props) {
               disabled={generating}
               placeholder={
                 targetOutline && useOutline
-                  ? "已自动来自该章已批大纲（可微调）。写正文前仍会弹出本章规划供确认"
+                  ? "已自动来自该章已确认的大纲（可微调）。写正文前仍会弹出本章规划供确认"
                   : "本章目标/写作要求（可选）。写正文前会弹出本章规划供确认，不填则按蓝图自动规划"
               }
               className="resize-none rounded-lg border border-zinc-300 bg-zinc-50 p-3 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
@@ -1914,10 +1913,10 @@ export default function WritingPanel({ novelId }: Props) {
           {/* 信息控制：高级可选项，点开独立弹窗填写/清空 */}
           <div className="flex items-center justify-between border-t border-zinc-200 pt-3 dark:border-zinc-800">
             <span className="text-xs text-zinc-500">
-              信息控制（高级，可选）
+              谁知道了什么（可选）
               <InfoTip portal>
                 <p className="font-medium text-zinc-700 dark:text-zinc-200">控制「谁知道了什么」</p>
-                防止 AI 提前剧透或逻辑穿帮；全部留空则交给小说家自行把握。
+                防止 AI 提前剧透或逻辑穿帮；全部留空则让 AI 自己把握。
                 <span className="mt-1.5 block text-zinc-400">
                   读者已知 / 主角已知 / 必须向读者隐瞒 / 只能点到为止（伏笔暗示）
                 </span>
@@ -1976,7 +1975,7 @@ export default function WritingPanel({ novelId }: Props) {
       {/* ── 信息控制弹窗（本地 draft：取消丢弃 / 清空只清本地 / 完成才提交） ── */}
       <Modal
         open={showInfoModal}
-        title="信息控制（高级，可选）"
+        title="谁知道了什么（可选）"
         subtitle="控制本章「谁知道了什么」，防止 AI 提前剧透或逻辑穿帮。"
         onClose={() => setShowInfoModal(false)}
         footer={
@@ -2038,7 +2037,7 @@ export default function WritingPanel({ novelId }: Props) {
             onChange={(e) => setInfoDraft({ ...infoDraft, hint_only: e.target.value })}
           />
           <p className="text-xs leading-relaxed text-zinc-500">
-            全部留空则交给小说家自行把握。点「完成」才保存；点「清空」只清当前输入、不立即生效；点「取消」则放弃本次改动。
+            全部留空则让 AI 自己把握。点「完成」才保存；点「清空」只清当前输入、不立即生效；点「取消」则放弃本次改动。
           </p>
         </div>
       </Modal>
@@ -2049,42 +2048,42 @@ export default function WritingPanel({ novelId }: Props) {
       <AgentStreamModal
         open={showGenRun}
         onClose={() => setShowGenRun(false)}
-        title={`小说家 · 第 ${regenerateNo ?? form.chapter_no} 章 · ${regenerateNo != null ? "重新生成正文" : "新增正文"}`}
+        title={`AI 写作 · 第 ${regenerateNo ?? form.chapter_no} 章 · ${regenerateNo != null ? "重新生成正文" : "新增正文"}`}
         running={genRun?.running ?? false}
         draftText={genRun?.output ?? ""}
         thinkingText={genRun?.thinking ?? ""}
         elapsed={genElapsed}
         novelId={novelId}
         emptyRunningText={
-          "小说家正在构思正文（推理模型思考期约 1-3 分钟，此阶段通常没有正文输出），\n正文开始生成后会在这里实时滚动显示…"
+          "AI 写作正在构思正文（AI 思考期约 1-3 分钟，此阶段通常没有正文输出），\n正文开始生成后会在这里实时滚动显示…"
         }
-        emptyDoneText="生成完成，正文已落库为草稿版本，请手动定稿。"
+        emptyDoneText="生成完成，正文已保存为新的一版，请手动确认定稿。"
       />
       <AgentStreamModal
         open={showReviewRun}
         onClose={() => setShowReviewRun(false)}
-        title={`评价师 · 评价第 ${activeNo ?? "?"} 章`}
+        title={`AI 评审 · 第 ${activeNo ?? "?"} 章`}
         running={reviewRun?.running ?? false}
         draftText={reviewRun?.output ?? ""}
         thinkingText={reviewRun?.thinking ?? ""}
         elapsed={reviewElapsed}
         novelId={novelId}
         emptyRunningText={
-          "评价师正在对照蓝图、伏笔账本与设定逐项评审（推理模型思考期约 1-3 分钟），\n评价内容开始输出后会在这里实时滚动显示…"
+          "AI 正在对照全书设定和已埋伏笔逐项评审（思考期约1-3分钟，通常没字，属正常），\n评价内容开始输出后会在这里实时滚动显示…"
         }
         emptyDoneText="评价完成，结果已展示在下方评价卡片。"
       />
       <AgentStreamModal
         open={showReviseRun}
         onClose={() => setShowReviseRun(false)}
-        title={`修订师 · 优化第 ${activeNo ?? "?"} 章`}
+        title={`AI 优化 · 第 ${activeNo ?? "?"} 章`}
         running={reviseRun?.running ?? false}
         draftText={reviseRun?.output ?? ""}
         thinkingText={reviseRun?.thinking ?? ""}
         elapsed={reviseElapsed}
         novelId={novelId}
         emptyRunningText={
-          "修订师正在逐条对照评价问题优化正文（推理模型思考期约 1-3 分钟），\n优化后的正文开始输出后会在这里实时滚动显示…"
+          "AI 正在逐条对照评价问题优化正文（AI 思考期约 1-3 分钟），\n优化后的正文开始输出后会在这里实时滚动显示…"
         }
         emptyDoneText="优化完成，已生成新草稿版本，请手动定稿。"
       />
@@ -2094,16 +2093,16 @@ export default function WritingPanel({ novelId }: Props) {
         open={confirmDialog != null}
         title={
           confirmDialog?.kind === "finalize-force"
-            ? "强制定稿（未过签约检查）"
+            ? "强制定稿（有红线或抄袭风险）"
             : confirmDialog?.kind === "finalize"
               ? "确认定稿"
               : "确认提取到记忆层"
         }
         message={
           confirmDialog?.kind === "finalize-force"
-            ? "该版本签约未过签（评价存在内容红线/抄袭类高危问题）。\n\n强制定稿会把未通过签约检查的正文作为本章正文，请先按评价师建议修改，或确认风险后继续。\n\n仍要强制定稿吗？"
+            ? "这一版有红线或抄袭风险，不能直接定稿。\n\n强制定稿会把有问题的正文作为本章正式正文，请先按 AI 的修改建议改一下，或确认风险后继续。\n\n仍要强制定稿吗？"
             : confirmDialog?.kind === "finalize"
-              ? `确认将当前草稿版本（v${selectedVersion?.version_no ?? "?"} · ${sourceLabel(selectedVersion?.source ?? "")}）定稿为本章正文？\n\n原已定稿版本将自动变回草稿（同一时间只能定稿一个版本）。`
+              ? `确认把第${selectedVersion?.version_no ?? "?"}版（${sourceLabel(selectedVersion?.source ?? "")}）作为本章正式正文？\n\n之前定稿的那版会自动变回草稿（一章只能有一个正式版）。`
               : "确认提取本章到记忆层？\n\n会把本章摘要、角色当前状态、新埋伏笔等写入记忆层，下一章生成时小说家会自动读到。\n\n每写完一章记得提取一次，否则下一章可能「忘了」刚才发生了什么。"
         }
         confirmText={confirmDialog?.kind === "finalize-force" ? "仍要强制定稿" : "确认"}

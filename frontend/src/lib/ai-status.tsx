@@ -76,13 +76,15 @@ export function AiStatusProvider({ children }: { children: ReactNode }) {
    *  未设默认模型时后端会自动回退选择可用模型。 */
   const ready = catalog.some((p) => p.configured);
 
-  /** 当前默认模型展示标签（provider/model）；未配置默认模型时为 null */
-  const label = defaultModel ? `${defaultModel.provider}/${defaultModel.model}` : null;
+  /** 当前默认模型展示标签（中文服务商名/模型）；未配置默认模型时为 null */
+  const label = defaultModel
+    ? `${catalog.find((p) => p.provider === defaultModel.provider)?.label ?? defaultModel.provider}/${defaultModel.model}`
+    : null;
 
   const ensureReady = useCallback(() => {
     if (!ready) {
       throw new Error(
-        "AI 模型未接入：本功能需要调用 AI（会消耗 Token）。请先到「模型」页添加模型并填入 API Key 启用后再使用。",
+        "还没配好 AI 模型：这个功能要用到 AI（会消耗你的用量）。请先到「模型」页添加模型并填入密钥，再回来使用。",
       );
     }
   }, [ready]);
@@ -124,10 +126,10 @@ export function AiNotReadyBanner({ onConfigure }: { onConfigure?: () => void }) 
           }
         : null;
       notifIdRef.current = notification.error({
-        title: `AI 模型未接入${label ? `（当前选中 ${label} 但未配置密钥）` : ""}`,
+        title: `AI 模型还没配好${label ? `（当前选中了 ${label}，但还没填密钥）` : ""}`,
         message: (
           <>
-            没有可用的 AI 模型，所有 AI 功能（生成/提取/评价/大纲/蓝图/风格学习）暂不可用。
+            还没有可用的 AI 模型，写正文、提取、评价这些功能都暂时用不了。
             {button && (
               <div className="mt-2">
                 <button
@@ -168,7 +170,7 @@ export function AiNotReadyBanner({ onConfigure }: { onConfigure?: () => void }) 
 export function CostHint({ children }: { children?: ReactNode }) {
   return (
     <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-      {children ?? "调用 AI · 消耗额度"}
+      {children ?? "使用 AI · 会消耗你的用量"}
     </span>
   );
 }

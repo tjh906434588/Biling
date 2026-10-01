@@ -109,7 +109,7 @@ export default function AgentTaskToasts({ novelId, tab }: { novelId: string; tab
             }
           }
           // 通知当前面板：后台任务已落库，可刷新数据（如写作页章节目录）。
-          // 评价/优化任务（critic/reviser）无条件派发：自动评价是写作页内发起、页内完成的，
+          // 评价/优化任务（critic/reviser）无条件派发：评价在写作页内发起、页内完成的，
           // crossPage 恒为 false，若沿用「仅离开发起页才派发」的逻辑，评价落库后写作页评价栏不会刷新，
           // 作者看不到结果。手动评价已由写作页自身流式收尾刷新，此处重复派发仅触发一次幂等重拉，无副作用。
           if (shouldNotify || isWritingTask) {

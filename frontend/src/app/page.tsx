@@ -107,7 +107,7 @@ function CreateDialog({
           <div>
             <span className="mb-1.5 block text-[12px] font-medium tracking-wide text-zinc-500">
               世界背景类型
-              <span className="ml-2 font-normal text-zinc-400">不确定可不选，导入蓝图时 AI 引导确认</span>
+              <span className="ml-2 font-normal text-zinc-400">不选也行，之后 AI 会根据故事内容帮你选</span>
             </span>
             <BackgroundTypePicker value={backgroundType} onChange={setBackgroundType} />
           </div>
@@ -121,7 +121,7 @@ function CreateDialog({
           </div>
 
           <div className="mt-1 flex items-center justify-between gap-3">
-            <span className="text-[11.5px] text-zinc-400">只在本机保存，正文不上传</span>
+            <span className="text-[11.5px] text-zinc-400">只保存在你自己电脑上，正文不会上传</span>
             <div className="flex gap-2">
               <button type="button" className="btn btn-ghost px-3.5 py-1.5 text-[13px]" onClick={onClose}>
                 取消
@@ -225,7 +225,7 @@ function EditDialog({
           <div>
             <span className="mb-1.5 block text-[12px] font-medium tracking-wide text-zinc-500">
               世界背景类型
-              <span className="ml-2 font-normal text-zinc-400">不确定可不选，导入蓝图时 AI 引导确认</span>
+              <span className="ml-2 font-normal text-zinc-400">不选也行，之后 AI 会根据故事内容帮你选</span>
             </span>
             <BackgroundTypePicker value={backgroundType} onChange={setBackgroundType} />
           </div>
@@ -285,7 +285,7 @@ function DeleteDialog({
       >
         <h2 className="font-serif text-[17px] font-medium text-zinc-900">删除《{novel.title}》？</h2>
         <p className="mt-2 text-[12.5px] leading-6 text-zinc-500">
-          该小说的全部章节、正文、设定、蓝图、伏笔账本、记忆层与评价都会一并删除，且无法恢复。
+          这本小说的全部章节、正文、设定、蓝图、伏笔记录、AI 记忆与评价都会一并删除，且无法恢复。
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" className="btn btn-ghost px-3.5 py-1.5 text-[13px]" onClick={onClose} disabled={busy}>
@@ -426,7 +426,7 @@ export default function Home() {
                   到一部写完的小说
                 </h1>
                 <p className="mt-4 text-[13.5px] leading-7 text-zinc-500">
-                  六个 AI 角色分工协作，共用一份记忆层。按下面四步走完，第一本书的闭环就转起来了。
+                  几个 AI 助手分工合作，共用一份『故事记忆』。按下面四步走完，第一本就通了。
                 </p>
                 <ol className="mt-7 flex flex-col gap-3.5">
                   {ONBOARDING_STEPS.map((s, i) => (
@@ -668,7 +668,7 @@ function EmptyCreate({ onCreated }: { onCreated: (n: Novel) => void }) {
       <div>
         <span className="mb-1.5 block text-[12px] font-medium tracking-wide text-zinc-500">
           世界背景类型
-          <span className="ml-2 font-normal text-zinc-400">不确定可不选，导入蓝图时 AI 引导确认</span>
+          <span className="ml-2 font-normal text-zinc-400">不选也行，之后 AI 会根据故事内容帮你选</span>
         </span>
         <BackgroundTypePicker value={backgroundType} onChange={setBackgroundType} />
       </div>

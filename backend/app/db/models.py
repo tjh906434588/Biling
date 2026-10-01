@@ -359,7 +359,7 @@ class ModelRoute(Base):
     __tablename__ = "model_routes"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    task_type: Mapped[str] = mapped_column(String(16), index=True)  # setting|creation|review|extract|chat
+    task_type: Mapped[str] = mapped_column(String(16), index=True)  # setting|creation|review|extract|chronicle
     provider: Mapped[str] = mapped_column(String(64))
     model: Mapped[str] = mapped_column(String(128))
     temperature: Mapped[Optional[float]] = mapped_column(Float)

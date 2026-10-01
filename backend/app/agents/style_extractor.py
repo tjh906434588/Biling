@@ -25,7 +25,8 @@ SYSTEM_PROMPT = """你是「风格提取师」。从作者的大纲文档中，�
 
 
 class StyleExtractorAgent(Agent[StyleExtraction]):
-    task_type = "setting"
+    # 提取类：从文档提炼文风，归入 extract 档（轻量），不吃创作档高温
+    task_type = "extract"
     temperature = 0.2
 
     def __init__(self, db: Session):

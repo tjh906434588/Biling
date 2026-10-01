@@ -516,7 +516,7 @@ function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[
         })()}
 
       <span className="pointer-events-none absolute bottom-2 left-2 rounded bg-zinc-100/90 px-1.5 py-0.5 text-[10px] text-zinc-400 dark:bg-zinc-900/90 dark:text-zinc-500">
-        拖拽节点/空白平移 · 滚轮缩放 · 悬浮节点查看关系详情
+        拖拽圆点/拖空白处移动 · 滚轮放大缩小 · 鼠标放圆点上查看关系
       </span>
     </div>
   );
@@ -594,9 +594,9 @@ export default function GraphPanel({ novelId }: { novelId: string }) {
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
             {Object.keys(memory.character_states).length === 0 ? (
               memory.progress_chapter > 0 ? (
-                <p className="text-xs text-zinc-400">已有章节但缺少角色状态链（建议对已完成章节运行提取师）</p>
+                <p className="text-xs text-zinc-400">还缺角色状态。写完章节后点『记进 AI 记忆』重新提取一次即可</p>
               ) : (
-                <p className="text-xs text-zinc-400">尚无章节。写完章节并运行提取师后，这里会展示各角色的最新状态</p>
+                <p className="text-xs text-zinc-400">还没有章节。写完章节后，AI 会自动整理出每个角色当前的状态</p>
               )
             ) : (
               <ul className="flex flex-col gap-2">
@@ -607,7 +607,7 @@ export default function GraphPanel({ novelId }: { novelId: string }) {
                       {st.state}
                       <span className="font-normal text-zinc-400 dark:text-zinc-500"> · 第{st.chapter_no}章</span>
                       {st.confidence === "low" && (
-                        <span className="ml-1.5 shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900 dark:text-amber-300">低置信</span>
+                        <span className="ml-1.5 shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900 dark:text-amber-300">存疑</span>
                       )}
                     </span>
                   </li>
@@ -629,20 +629,20 @@ export default function GraphPanel({ novelId }: { novelId: string }) {
       <section className="panel flex min-h-0 flex-1 flex-col gap-3.5">
         <div className="panel-head mb-0 shrink-0">
           <h2 className="panel-title">
-            关系图谱
+            人物关系图
             <span className="group relative inline-flex items-center">
               <span
-                aria-label="关系图谱说明"
+                aria-label="人物关系图说明"
                 className="grid h-4 w-4 cursor-help place-items-center rounded-full border border-zinc-300 text-[10px] font-semibold text-zinc-400 hover:border-zinc-400 hover:text-zinc-600 dark:border-zinc-700 dark:text-zinc-500 dark:hover:border-zinc-500 dark:hover:text-zinc-300"
               >
                 ?
               </span>
               <span className="invisible absolute left-0 top-full z-30 mt-1.5 w-80 rounded-lg border border-zinc-200 bg-white p-3 text-xs leading-relaxed text-zinc-700 opacity-0 shadow-lg transition-opacity duration-150 group-hover:visible group-hover:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
                 <p>
-                  剧情层关系每章写完后自动抽取；同一对实体的所有关系合并成一条线，线上只标注关系名，具体章节信息可悬浮节点查看。被取代的旧关系自动隐藏。
+                  每章写完后自动整理人物关系。两人之间多条关系会合并显示，鼠标放到线上可看详情；过时的关系自动隐藏。
                 </p>
                 <div className="mt-2.5 border-t border-zinc-100 pt-2 dark:border-zinc-800">
-                  <p className="mb-1.5 font-medium text-zinc-800 dark:text-zinc-100">节点身份字</p>
+                  <p className="mb-1.5 font-medium text-zinc-800 dark:text-zinc-100">圆点上的身份字</p>
                   <ul className="grid grid-cols-2 gap-x-3 gap-y-1.5">
                     {(
                       [
@@ -671,15 +671,15 @@ export default function GraphPanel({ novelId }: { novelId: string }) {
               </span>
             </span>
             <span className="text-xs font-normal text-zinc-500">
-              {visible.edges.length} 条关系 · {visible.nodes.length} 个实体
+              {visible.edges.length} 对关系 · {visible.nodes.length} 个人/势力
             </span>
           </h2>
           <span className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setFullscreen(true)}
-              title="全屏查看图谱"
-              aria-label="全屏查看图谱"
+              title="全屏查看人物关系"
+              aria-label="全屏查看人物关系"
               className="grid h-6 w-6 place-items-center rounded-md border border-zinc-200 text-zinc-500 transition-colors hover:border-zinc-300 hover:text-zinc-700 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-200"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
@@ -695,7 +695,7 @@ export default function GraphPanel({ novelId }: { novelId: string }) {
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
           {visible.edges.length === 0 ? (
             <div className="grid h-full place-items-center text-xs text-zinc-400">
-              暂无角色/势力关系。写完章节并运行提取师后，这里会展示实体关系图谱
+              还没有关系图。写完章节后由 AI 自动生成
             </div>
           ) : (
             <RelationGraph nodes={visible.nodes} edges={visible.edges} />
@@ -724,7 +724,7 @@ export default function GraphPanel({ novelId }: { novelId: string }) {
         <div className="min-h-0 flex-1">
           {visible.edges.length === 0 ? (
             <div className="grid h-full place-items-center text-xs text-zinc-400">
-              暂无角色/势力关系。写完章节并运行提取师后，这里会展示实体关系图谱
+              还没有关系图。写完章节后由 AI 自动生成
             </div>
           ) : (
             <RelationGraph nodes={visible.nodes} edges={visible.edges} />

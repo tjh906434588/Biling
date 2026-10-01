@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import { message } from "@/components/message";
 import InfoTip from "./info-tip";
+import ConfirmDialog from "./confirm-dialog";
 
 interface Props {
   open: boolean;
@@ -44,6 +45,10 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
   const [apiKey, setApiKey] = useState("");
   /** 任一保存/探测/删除操作进行中，禁用按钮防重复提交 */
   const [busy, setBusy] = useState(false);
+  /** 当前点击的是哪个按钮（默认/仅添加）：只有被点击的按钮显示「保存中…」，另一个保持原文案 */
+  const [savingWhich, setSavingWhich] = useState<"default" | "plain" | null>(null);
+  /** 是否正在「刷新模型列表」（独立于 busy：点添加/测试连接不该让刷新按钮变「刷新中」） */
+  const [refreshing, setRefreshing] = useState(false);
   const [probeModels, setProbeModels] = useState<string[] | null>(null);
   /** 当前服务商 Key 是否已通过「测试连接」，用于按钮状态展示。 */
   const [connected, setConnected] = useState(false);
@@ -51,6 +56,8 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
   const [configMode, setConfigMode] = useState<string | null>(null);
   /** 当前服务商已接入的模型清单（本地副本，添加/移除后即时更新）。 */
   const [enabled, setEnabled] = useState<{ model: string; label: string }[]>([]);
+  /** 待移除确认的模型（非 null 时弹出二次确认弹窗）。 */
+  const [pendingRemove, setPendingRemove] = useState<{ model: string; label: string } | null>(null);
   /** 「刷新模型列表」结果覆盖：用有效 Key 从服务商拉到的账号真实模型，覆盖静态种子下拉（刷新后优先展示）。 */
   const [liveOverride, setLiveOverride] = useState<{ provider: string; models: { id: string; label: string }[]; updatedAt: string } | null>(null);
 
@@ -107,6 +114,17 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
     setProbeModels(null);
   }, [apiKey]);
 
+  // 父级 catalog 刷新（添加/移除后 onSaved 触发 loadModels）后，initialProvider 变成新对象
+  // （enabledModels 为后端最新）：弹窗正定位到该服务商时，用后端数据同步本地已接入列表，
+  // 保证「已接入模型」立即反映最新状态（不能只靠添加/移除时的本地 setEnabled）。
+  useEffect(() => {
+    if (!open || !initialProvider) return;
+    if (view !== "custom" && view.provider === initialProvider.provider) {
+      setEnabled(initialProvider.enabledModels ?? []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialProvider, open]);
+
   /** 当前打开详情的服务商；custom 视图下为 null */
   const activeProvider: CatalogProvider | null = view !== "custom" ? view : null;
 
@@ -129,8 +147,9 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
     defaultModel.provider === activeProvider.provider &&
     defaultModel.model === model;
 
-  /** 探测连接（Key + 当前模型），返回是否成功；不管理 busy，由调用方负责。 */
-  const runProbe = async (): Promise<boolean> => {
+  /** 探测连接（Key + 当前模型），返回是否成功；不管理 busy，由调用方负责。
+   *  silent=true 时不弹成功提示（添加流程里探测只是前置校验，成功提示由添加自己的 message 承担，避免双提示）。 */
+  const runProbe = async (silent = false): Promise<boolean> => {
     if (!activeProvider) return false;
     setProbeModels(null);
     try {
@@ -142,7 +161,9 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
       );
       setProbeModels(models);
       setConnected(true);
-      message.success(`连接成功，账号下可用 ${models.length} 个模型`);
+      if (!silent) {
+        message.success(`检查通过，账号下可用 ${models.length} 个模型`);
+      }
       return true;
     } catch (e) {
       setConnected(false);
@@ -155,7 +176,7 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
   const testConnect = async () => {
     if (!activeProvider || busy) return;
     if (!apiKey.trim()) {
-      message.error("请先填写 API Key 再测试连接");
+      message.error("请先填写密钥，再点「检查密钥」");
       return;
     }
     setBusy(true);
@@ -165,12 +186,12 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
 
   /** 刷新模型列表：用 Key 从服务商拉取账号真实模型并缓存（替代静态种子目录），供本次选择与下次打开复用。 */
   const refreshList = async () => {
-    if (!activeProvider || busy) return;
+    if (!activeProvider || busy || refreshing) return;
     if (!apiKey.trim()) {
-      message.error("请先填写 API Key 再刷新模型列表");
+      message.error("请先填写密钥，再更新模型列表");
       return;
     }
-    setBusy(true);
+    setRefreshing(true);
     try {
       const r = await refreshCatalogModels(
         activeProvider.provider,
@@ -182,12 +203,12 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
       setModelId(r.models[0]?.id ?? "");
       setUseOther(false);
       setConnected(true);
-      message.success(`已刷新：账号可用 ${r.models.length} 个模型（已缓存，下次打开自动使用）`);
+      message.success(`已更新：账号可用 ${r.models.length} 个模型（已记住，下次打开自动使用）`);
       onSaved();
     } catch (e) {
       message.error((e as Error).message);
     } finally {
-      setBusy(false);
+      setRefreshing(false);
     }
   };
 
@@ -198,17 +219,19 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
   const addModel = async (enableDefault: boolean) => {
     if (!activeProvider) return;
     if (!modelId.trim()) {
-      message.error("请选择或输入模型 ID");
+      message.error("请选择或输入模型编号");
       return;
     }
     if (!apiKey.trim()) {
-      message.error("请填写该模型的 API Key（每个模型独立保存）");
+      message.error("请填写这个模型的密钥（每个模型各存各的）");
       return;
     }
     setBusy(true);
+    setSavingWhich(enableDefault ? "default" : "plain");
     try {
-      // 点「添加」自动先测试连接（Key + 当前模型），连接成功才保存
-      const ok = await runProbe();
+      // 点「添加」自动先测试连接（Key + 当前模型），连接成功才保存；
+      // 探测静默（silent=true）：成功提示由下方「已接入」一条承担，避免双提示
+      const ok = await runProbe(true);
       if (!ok) return;
       await addAccessModel(
         activeProvider.provider,
@@ -225,13 +248,14 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
         prev.some((e) => e.model === modelId.trim()) ? prev : [...prev, { model: modelId.trim(), label }],
       );
       setApiKey("");
-      message.success(enableDefault ? "已接入并设为默认，所有写作任务将使用该模型" : "已接入，可继续添加同服务商的其他模型");
+      message.success(enableDefault ? "已添加并设为默认用，所有写作任务都会用它" : "已添加，可继续添加同服务商的其他模型");
       onSaved();
-      if (enableDefault) onClose();
+      // 添加成功不自动关闭弹窗：用户可能还要继续添加其他模型，关闭由用户手动进行（Esc / ✕）
     } catch (e) {
       message.error((e as Error).message);
     } finally {
       setBusy(false);
+      setSavingWhich(null); // 恢复被点按钮的文案（否则一直停留在「保存中…」）
     }
   };
 
@@ -241,7 +265,7 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
     setBusy(true);
     try {
       await setDefaultModel(activeProvider.provider, model);
-      message.success("已切换为默认模型");
+      message.success("已切换为默认用的模型");
       onSaved();
       onClose();
     } catch (e) {
@@ -258,7 +282,7 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
     try {
       await removeAccessModel(activeProvider.provider, model);
       setEnabled((prev) => prev.filter((e) => e.model !== model));
-      message.success("已从接入清单移除");
+      message.success("已从清单移除");
       onSaved();
     } catch (e) {
       message.error((e as Error).message);
@@ -270,7 +294,7 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
   /** 保存自定义配置：写入后直接设为默认模型。 */
   const saveCustom = async () => {
     if (!cust.label.trim() || !cust.base_url.trim() || !cust.model_id.trim() || !cust.api_key.trim()) {
-      message.error("请完整填写展示名称、请求地址、模型 ID 和 API Key");
+      message.error("请完整填写模型名称、连接地址、模型编号和密钥");
       return;
     }
     setBusy(true);
@@ -321,16 +345,16 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
             <div className="flex flex-col gap-3">
               <div className="grid grid-cols-2 gap-3">
                 <label className={labelCls}>
-                  模型展示名称
+                  模型名称（自己起个名）
                   <input
                     className={inputCls}
-                    placeholder="给模型起个名字，默认用模型 ID"
+                    placeholder="给模型起个名字（不填就用模型编号）"
                     value={cust.label}
                     onChange={(e) => setCust({ ...cust, label: e.target.value })}
                   />
                 </label>
                 <label className={labelCls}>
-                  API 格式
+                  接口类型
                   <select
                     className={inputCls}
                     value={cust.api_format}
@@ -339,10 +363,11 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                     <option value="openai">OpenAI Chat Completions</option>
                     <option value="anthropic">Anthropic Messages</option>
                   </select>
+                  <span className="mt-0.5 block text-[11px] text-zinc-400">一般选第一个；不确定就保持默认</span>
                 </label>
               </div>
               <label className={labelCls}>
-                请求地址（基础地址）
+                连接地址（服务器地址）
                 <input
                   className={inputCls}
                   placeholder={cust.api_format === "openai" ? "https://api.xxx.com/v1" : "https://api.xxx.com"}
@@ -351,12 +376,12 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                 />
                 <span className="mt-0.5 block text-[11px] text-zinc-400">
                   {cust.api_format === "openai"
-                    ? "填基础地址即可，系统会自动拼 /chat/completions"
-                    : "填基础地址即可，系统会自动拼 /v1/messages"}
+                    ? "填服务器地址就行，剩下的系统会自动补齐"
+                    : "填服务器地址就行，剩下的系统会自动补齐"}
                 </span>
               </label>
               <label className={labelCls}>
-                模型 ID
+                模型编号
                 <input
                   className={inputCls}
                   placeholder="如 my-model-id"
@@ -365,7 +390,7 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                 />
               </label>
               <label className={labelCls}>
-                API Key
+                密钥（API Key）
                 <input
                   type="password"
                   className={inputCls}
@@ -399,22 +424,22 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{activeProvider.label}</h3>
                   <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                    已接入 {enabled.length} 个模型
+                    已添加 {enabled.length} 个模型
                   </span>
                   {/* 刷新模型列表：服务商模型会持续更新，用 Key 拉取账号真实模型并缓存，替代静态种子列表。
                       按钮 + 问号提示都放服务商名字右侧，不占独立一行。 */}
                   <button
                     className="ml-auto inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 text-xs font-medium text-blue-700 transition-colors hover:border-blue-400 hover:bg-blue-100 disabled:opacity-50 disabled:hover:border-blue-300 disabled:hover:bg-blue-50 dark:border-blue-700 dark:bg-blue-950/50 dark:text-blue-300 dark:hover:border-blue-500 dark:hover:bg-blue-900/60 dark:disabled:hover:border-blue-700 dark:disabled:hover:bg-blue-950/50"
                     onClick={refreshList}
-                    disabled={busy || !apiKey.trim()}
+                    disabled={busy || refreshing || !apiKey.trim()}
                     title={
                       liveOverride && liveOverride.provider === activeProvider?.provider
-                        ? `已按账号刷新（${liveOverride.updatedAt}）`
+                        ? `已按账号更新（${liveOverride.updatedAt}）`
                         : undefined
                     }
                   >
                     <svg
-                      className={`h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`}
+                      className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
@@ -426,9 +451,9 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                       <path d="M21 12a9 9 0 1 1-2.64-6.36" />
                       <path d="M21 3v6h-6" />
                     </svg>
-                    {busy ? "刷新中…" : "刷新模型列表"}
+                    {refreshing ? "更新中…" : "更新模型列表"}
                     <InfoTip>
-                      服务商模型会更新，填 Key 后点刷新拉到你的账号真实模型并记住
+                      AI 服务公司会不断上架新模型，填好密钥后点这里，把你账号里真实能用的模型拉下来并记住。
                     </InfoTip>
                   </button>
                 </div>
@@ -437,10 +462,10 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
 
               {/* 已接入模型清单（一个 Key 可用同服务商多个模型） */}
               <div className="flex flex-col gap-1.5">
-                <span className={labelCls}>已接入模型（{enabled.length}）</span>
+                <span className={labelCls}>已添加的模型（{enabled.length}）</span>
                 {enabled.length === 0 ? (
                   <p className="rounded-lg border border-dashed border-zinc-300 p-3 text-xs leading-relaxed text-zinc-400 dark:border-zinc-700">
-                    尚未接入任何模型。从下方选择一个模型，填入该模型的 API Key 点「添加」即可——每个模型独立保存自己的 Key，各负责各，互不影响。
+                    还没添加任何模型。从下面选一个，填上它的密钥点「添加」就行——每个模型各存各的密钥，互不影响。
                   </p>
                 ) : (
                   <div className="flex flex-col gap-1.5">
@@ -457,7 +482,7 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                         </div>
                         {isDefault(e.model) ? (
                           <span className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-600 dark:bg-blue-900 dark:text-blue-300">
-                            默认
+                            当前在用
                           </span>
                         ) : (
                           <button
@@ -465,12 +490,12 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                             onClick={() => setDefault(e.model)}
                             disabled={busy}
                           >
-                            设为默认
+                            设为默认用
                           </button>
                         )}
                         <button
                           className="shrink-0 rounded border border-red-300 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
-                          onClick={() => removeModel(e.model)}
+                          onClick={() => setPendingRemove({ model: e.model, label: e.label || e.model })}
                           disabled={busy}
                         >
                           移除
@@ -484,7 +509,7 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
               {/* 多配置方式服务商（如火山方舟）：先选配置方式，模型与地址跟着变 */}
               {activeModes && (
                 <label className={labelCls}>
-                  配置方式
+                  接入方式
                   <select
                     className={inputCls}
                     value={currentMode?.key ?? ""}
@@ -507,7 +532,7 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                     ))}
                   </select>
                   <span className="mt-0.5 block text-[11px] text-zinc-400">
-                    {currentMode?.hint ?? "选择该配置方式下的模型"}
+                    {currentMode?.hint ?? "选这个接入方式对应的模型"}
                   </span>
                 </label>
               )}
@@ -526,7 +551,7 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                 ) : (
                   <input
                     className={inputCls}
-                    placeholder="输入模型 ID"
+                    placeholder="输入模型编号"
                     value={modelId}
                     onChange={(e) => setModelId(e.target.value)}
                   />
@@ -538,34 +563,41 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                     setModelId(!useOther ? "" : modeModels[0]?.id ?? "");
                   }}
                 >
-                  {useOther ? "使用预置模型" : "使用其他模型"}
+                  {useOther ? "用列表里的模型" : "自己输入其他模型"}
                 </span>
               </label>
 
               <label className={labelCls}>
-                API Key
+                密钥
                 <input
                   type="password"
                   className={inputCls}
-                  placeholder="输入该模型的 API Key（独立保存）"
+                  placeholder="输入这个模型的密钥（各存各的）"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                 />
               </label>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 {activeProvider.key_url ? (
-                  <a
-                    href={activeProvider.key_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs text-blue-500 underline hover:text-blue-600"
-                  >
-                    获取 Key ↗
-                  </a>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <a
+                      href={activeProvider.key_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="shrink-0 text-xs text-blue-500 underline hover:text-blue-600"
+                    >
+                      去获取密钥 ↗
+                    </a>
+                    {!connected && apiKey.trim() && (
+                      <span className="truncate text-[11px] text-zinc-400">
+                        点「添加」后会自动检查密钥是否正确，检查通过就保存。
+                      </span>
+                    )}
+                  </div>
                 ) : (
                   <span />
                 )}
-                <span className="text-[11px] text-zinc-400">Key 仅存本地，不回显</span>
+                <span className="shrink-0 text-[11px] text-zinc-400">密钥只存在你电脑里，不会显示出来</span>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -574,14 +606,14 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                   onClick={() => addModel(true)}
                   disabled={busy}
                 >
-                  {busy ? "保存中…" : "添加并设为默认"}
+                  {savingWhich === "default" ? "保存中…" : "添加并设为默认用"}
                 </button>
                 <button
                   className="rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
                   onClick={() => addModel(false)}
                   disabled={busy}
                 >
-                  添加
+                  {savingWhich === "plain" ? "保存中…" : "添加"}
                 </button>
                 <button
                   className={
@@ -592,12 +624,9 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
                   onClick={testConnect}
                   disabled={busy || !apiKey.trim()}
                 >
-                  {connected ? "✓ 已连接" : "测试连接"}
+                  {connected ? "✓ 检查通过" : "检查密钥"}
                 </button>
               </div>
-              {!connected && apiKey.trim() && (
-                <p className="text-[11px] text-zinc-400">点「添加」会自动测试连接，通过后即保存</p>
-              )}
 
               {probeModels && probeModels.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -620,6 +649,21 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
           )}
         </div>
       </div>
+
+      {/* 移除模型二次确认 */}
+      <ConfirmDialog
+        open={pendingRemove != null}
+        title="移除模型"
+        message={`确定要把「${pendingRemove?.label ?? ""}」移除吗？\n移除后就不能再用它了；如果它现在是默认用的模型，系统会自动改用其他可用模型。`}
+        confirmText="移除"
+        cancelText="取消"
+        onConfirm={() => {
+          const target = pendingRemove?.model;
+          setPendingRemove(null);
+          if (target) void removeModel(target);
+        }}
+        onCancel={() => setPendingRemove(null)}
+      />
     </div>
   );
 }

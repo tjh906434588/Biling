@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     default_writer_model: str = "deepseek/deepseek-chat"
     default_extract_model: str = "deepseek/deepseek-chat"
     default_review_model: str = "deepseek/deepseek-chat"
-    default_chat_model: str = "deepseek/deepseek-chat"
     default_setting_model: str = "deepseek/deepseek-chat"
+    default_chronicle_model: str = "deepseek/deepseek-chat"
 
     # 未配置任何 API Key 时是否允许 Mock 流式输出（演示模式）。生产/正式使用必须为 False，
     # 未接入模型时 AI 功能直接报错并引导用户去「模型」页配置，而不是静默输出示例。

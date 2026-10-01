@@ -31,8 +31,8 @@ export default function Onboarding({ href, onDismiss }: Props) {
             从一句脑洞，到一章成稿
           </h2>
           <p className="mt-3 text-sm leading-7 text-zinc-500">
-            五个 AI 角色分工协作，共用一份记忆层。你不必一次学完——按顺序走完这四步，
-            第一本书的闭环就转起来了。
+            几个 AI 助手分工合作，共用一份『故事记忆』。不用一次学会，
+            跟着四步走完第一本就通了。
           </p>
         </div>
 

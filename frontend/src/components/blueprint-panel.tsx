@@ -182,10 +182,10 @@ export default function BlueprintPanel({ novelId }: Props) {
           const t = r.task;
           if (t && t.status === "error") {
             setActivatingId(null);
-            message.error(`蓝图激活失败：${friendlyTaskError(t.error, "请稍后重试")}`);
+            message.error(`切换失败：${friendlyTaskError(t.error, "请稍后重试")}`);
           } else if (t && t.blueprint_id) {
             setActivatingId(null);
-            message.success(t.msg ?? "已设为生效中，设定与文风已跟随切换。");
+            message.success(t.msg ?? "已设为当前使用，设定和文风已跟随切换。");
             if (t.warning) message.warning(t.warning);
           } else {
             // 无任务记录（异常情况）：直接退出激活中
@@ -359,10 +359,10 @@ export default function BlueprintPanel({ novelId }: Props) {
         if (checkAbortRef.current !== ctrl) return;
         setOutlineCheck({ status: "done", source: "llm", modules: r.modules });
         if (r.modules.length > 0 && r.modules.every((m) => m.ok)) {
-          message.success("AI 校验通过：大纲骨架完整，可直接生成蓝图");
+          message.success("AI 检查通过：大纲该有的内容都齐了，可直接生成蓝图");
         } else {
           const missing = r.modules.filter((m) => !m.ok).length;
-          message.warning(`AI 校验完成：${missing} 个模块建议补充（见弹窗提示，可跳过直接生成）`);
+          message.warning(`AI 检查完成：${missing} 项建议补上（可跳过，见弹窗提示）`);
         }
       })
       .catch(() => {
@@ -410,7 +410,7 @@ export default function BlueprintPanel({ novelId }: Props) {
       await copyText(OUTLINE_TEMPLATE_TEXT);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-      message.warning("已复制本地缓存模板（拉取最新模板失败）");
+      message.warning("已复制模板（网络不好，用的是备用版）");
     } catch {
       message.error("复制失败，请手动复制模板。");
     }
@@ -441,7 +441,7 @@ export default function BlueprintPanel({ novelId }: Props) {
     if (!res.running) {
       // 已生效（并发下其他请求已完成）：无需轮询，直接刷新展示
       setActivatingId(null);
-      message.success(`v${b.version} 已设为生效中，设定与文风已跟随切换。`);
+      message.success(`v${b.version} 已设为当前使用，设定和文风已跟随切换。`);
       void load();
       return;
     }
@@ -518,9 +518,9 @@ export default function BlueprintPanel({ novelId }: Props) {
   /** 生效状态徽章（纯展示）：生效中 / 未生效。 */
   const statusBadge = (s: Blueprint["status"]) =>
     s === "active" ? (
-      <span className="shrink-0 whitespace-nowrap rounded bg-green-100 px-1.5 py-0.5 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">生效中</span>
+      <span className="shrink-0 whitespace-nowrap rounded bg-green-100 px-1.5 py-0.5 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">正在使用</span>
     ) : (
-      <span className="shrink-0 whitespace-nowrap rounded bg-zinc-200 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">未生效</span>
+      <span className="shrink-0 whitespace-nowrap rounded bg-zinc-200 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">未使用</span>
     );
 
   return (
@@ -533,7 +533,7 @@ export default function BlueprintPanel({ novelId }: Props) {
             type="button"
             onClick={openAddModal}
             disabled={activatingId !== null}
-            title={activatingId !== null ? "蓝图正在激活中，完成后方可新增" : "让蓝图师整理新的世界蓝图"}
+            title={activatingId !== null ? "蓝图正在切换中，完成后方可新增" : "让 AI 帮你整理一份全新的全书方案"}
             className="btn btn-primary px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
           >
             新增蓝图
@@ -541,7 +541,7 @@ export default function BlueprintPanel({ novelId }: Props) {
         </div>
         {items.length === 0 ? (
           <p className="rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
-            还没有蓝图。点右上角「新增蓝图」，让蓝图师整理世界蓝图（规则/人物弧/分卷/伏笔计划）。
+            还没有蓝图。点右上角「新增蓝图」，让 AI 帮你整理全书方案（规则/人物弧/分卷/伏笔计划）。
           </p>
         ) : (
           <ul className="flex min-h-0 flex-col gap-1.5 overflow-y-auto">
@@ -574,7 +574,7 @@ export default function BlueprintPanel({ novelId }: Props) {
               <h3 className="panel-title">蓝图详情</h3>
             </div>
             <p className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
-              还没有蓝图。点左侧「新增蓝图」，让蓝图师整理世界蓝图（规则/人物弧/分卷/伏笔计划）。
+              还没有蓝图。点左侧「新增蓝图」，让 AI 帮你整理全书方案（规则/人物弧/分卷/伏笔计划）。
             </p>
           </div>
         )}
@@ -594,7 +594,7 @@ export default function BlueprintPanel({ novelId }: Props) {
                     onClick={() => handleActivateClick(selected)}
                     disabled={activatingId !== null}
                   >
-                    {activatingId !== null ? "激活中…" : "设为生效中"}
+                    {activatingId !== null ? "正在切换…" : "设为当前使用"}
                   </button>
                 )}
                 {selected.status !== "active" && (
@@ -608,7 +608,7 @@ export default function BlueprintPanel({ novelId }: Props) {
                 )}
                 {selected.status === "active" && (
                   <span className="rounded-lg border border-green-200 bg-green-50 px-3 py-1.5 text-xs text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300">
-                    当前生效中 · 不可删除，切换前请先激活其他蓝图
+                    当前正在使用 · 不可删除，想删需先切换到另一版
                   </span>
                 )}
               </div>
@@ -749,8 +749,8 @@ export default function BlueprintPanel({ novelId }: Props) {
       {/* 切换生效中风险确认：所有未生效蓝图激活前一律弹风险确认框（新增蓝图不自动生效） */}
       <ConfirmDialog
         open={activateTarget !== null}
-        title={activateTarget ? `将 v${activateTarget.version} 设为生效中？` : "设为生效中？"}
-        message={`确认后将把 v${activateTarget ? activateTarget.version : ""} 设为生效中：若该版本为导入生成（有原文），会同步抽取设定与文风并注入设定库、全局文风，注入完成按钮的「激活中」才会结束；若为手工创建（无导入原文），激活后不会自动注入设定/文风，仅切换生效状态。当前生效蓝图导入的内容将被隐藏（不会删除，可随时切回）、改用新蓝图的内容。\n\n若后续的正文、大纲已基于旧蓝图生成，切换后可能导致设定不一致、影响写作连贯性。已生成的大纲和文章不会被修改。\n\n确定切换吗？`}
+        title={activateTarget ? `将 v${activateTarget.version} 设为当前使用？` : "设为当前使用？"}
+        message={`切到这一版后：\n1) 写正文、写大纲、写设定都会按这一版来；\n2) 之前那版里的设定先收起来，不会丢，随时能切回去；\n3) 已经写好的正文和章节不会动。\n\n要切换吗？`}
         confirmText="确定切换"
         tone="primary"
         onConfirm={confirmActivate}
@@ -761,7 +761,7 @@ export default function BlueprintPanel({ novelId }: Props) {
       <Modal
         open={showAddModal}
         title="新增蓝图"
-        subtitle="蓝图 = 整本书的底稿：主题、核心冲突、人物弧光、分卷和伏笔计划。每一版都会保留，激活生效的那版才是大纲师/小说家遵循的。"
+        subtitle="蓝图 = 整本书的底稿：主题、核心冲突、人物弧光、分卷和伏笔计划。每一版都会保留，AI 写正文和大纲时只照着最新选中这版来。"
         onClose={closeAddModal}
         maxWidth="max-w-xl"
         fill
@@ -784,7 +784,7 @@ export default function BlueprintPanel({ novelId }: Props) {
                 disabled={running || importing || outlineCheck?.status === "pending" || !inputText.trim()}
                 className="btn btn-primary px-4 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {running ? "生成中…" : importName ? "识别为蓝图" : "生成蓝图"}
+                {running ? "生成中…" : importName ? "按这份大纲生成全书方案" : "生成蓝图"}
               </button>
               {/* 点击生成后出现：打开生成过程弹窗（DeepSeek 风格，思考+正文流式滚动）；生成完毕即隐藏 */}
               {run.novelId === novelId && running && (
@@ -845,7 +845,7 @@ export default function BlueprintPanel({ novelId }: Props) {
                     <li><b>人物设定</b>：主角 = 姓名/性格/起点→终点/成长转折；重要配角有则必写</li>
                     <li><b>主线与支线</b>：主线剧情走向 + 长效支线</li>
                     <li><b>世界观/规则</b>：题材相关才写（系统/力量体系/世界规则）</li>
-                    <li><b>伏笔计划</b>：选填，有具体埋/揭安排才写（无则留空，由大纲师规划）</li>
+                    <li><b>伏笔计划</b>：选填，有具体埋/揭安排才写（无则留空，由 AI 规划）</li>
                     <li><b>爽点/节奏规划</b>：通用模块，按前期/中期/后期排爽点·钩子·糖点，防节奏枯竭</li>
                     <li><b>差异化/卖点定位</b>：通用模块，对标作品 · 独特设定 · 立意/平台卖点，回答&ldquo;凭什么被记住&rdquo;</li>
                   </ol>
@@ -871,7 +871,7 @@ export default function BlueprintPanel({ novelId }: Props) {
               running
                 ? "蓝图正在生成中，输入框暂时锁定；生成完成后即可继续编辑或重新导入。"
                 : importName
-                  ? `已导入「${importName}」：下面是文档全文，可直接修改，完成后点「识别为蓝图」。`
+                  ? `已导入「${importName}」：下面是文档全文，可直接修改，完成后点「按这份大纲生成全书方案」。`
                   : "作者补充要求（可选：类型/主题/风格取向…），也可以先点「导入大纲」把文档填进来。"
             }
             value={inputText}
@@ -891,17 +891,17 @@ export default function BlueprintPanel({ novelId }: Props) {
                   <div className="flex items-center gap-2">
                     <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
                     <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
-                      正在用 AI 校验大纲骨架…（校验期间输入框暂时锁定，完成后即可编辑）
+                      AI 正在检查你的大纲缺不缺东西…（检查期间输入框暂时锁定，完成后即可编辑）
                     </p>
                   </div>
                 ) : (
                   <>
                     <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
                       {outlineCheck.status === "pending"
-                        ? "大纲骨架快速扫描：以下模块建议补充（AI 语义校验中…）"
+                        ? "检查发现以下几项可以补全（AI 正在细看…）"
                         : outlineCheck.source === "llm"
-                          ? "大纲骨架 AI 语义校验：以下模块建议补充（可跳过直接生成）"
-                          : "大纲骨架快速扫描：以下模块建议补充（AI 校验暂不可用，可跳过直接生成）"}
+                          ? "检查发现以下几项可以补全（可跳过直接生成）"
+                          : "检查发现以下几项可以补全（AI 检查暂时不可用，可跳过直接生成）"}
                     </p>
                     <ul className="mt-1.5 flex flex-col gap-1.5">
                       {outlineCheck.modules
@@ -927,7 +927,7 @@ export default function BlueprintPanel({ novelId }: Props) {
       <AgentStreamModal
         open={showStreamModal}
         onClose={() => setShowStreamModal(false)}
-        title="蓝图师生成过程"
+        title="AI 生成过程"
         running={running}
         draftText={run.draftText}
         thinkingText={run.thinkingText}
@@ -935,7 +935,7 @@ export default function BlueprintPanel({ novelId }: Props) {
         elapsed={elapsed}
         novelId={novelId}
         emptyRunningText={
-          "模型正在深度思考与整理蓝图（推理模型思考期约 1-3 分钟，此阶段通常没有正文输出），\n正文开始生成后会在这里实时滚动显示…"
+          "AI 正在思考整理，头1-3分钟通常没字，属正常，\n正文开始生成后会在这里实时滚动显示…"
         }
         emptyDoneText="生成完成，新蓝图已出现在版本列表，可关闭此弹窗查看。"
       />
@@ -1053,8 +1053,8 @@ const OUTLINE_TEMPLATE_TEXT = `请把我的大纲信息，按下面模板整理�
 五、世界观/规则（题材相关才写）
 - 世界规则 / 力量体系 / 系统设定：
 - 系统/面板/界面的固定栏位结构（如面板固定展示哪些栏、界面固定字段），统一按「面板固定展示：栏位1+栏位2+栏位3」措辞列出，并注明「栏位值可为「-」」；这是界面结构定义，不是剧情内容要求
-- 剧情内容若要求"某场景/章节必须同时出现一组元素"（硬约束，如战斗必写敌人+地形+道具），用「必须包含：元素A+元素B+元素C」格式写（用+号分隔，别用、号），系统会作为每章必现项核对
-- 涉及明确时间的事实（成立/入职/创业/搬迁/重大事件/人物关系变化）务必写清年份或时间段（如"2000年成立""2010—2022"），系统会转成可核对的硬事实，写作/评价不得与它矛盾
+- 剧情内容若要求"某场景/章节必须同时出现一组元素"（硬约束，如战斗必写敌人+地形+道具），用「必须包含：元素A+元素B+元素C」格式写（用+号分隔，别用、号），系统会作为每一章都必须出现的内容来核对
+- 涉及明确时间的事实（成立/入职/创业/搬迁/重大事件/人物关系变化）务必写清年份或时间段（如"2000年成立""2010—2022"），系统会记成固定事实，写作和检查时不能跟它冲突
 - 出现机构/组织/单位时尽量写全：成立时间；负责人；人员规模；业务范围；位置布局；时代特征（材料没给的写"待定"）
 
 六、伏笔计划（选填，有具体埋设/回收安排才写）

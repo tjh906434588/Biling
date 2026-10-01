@@ -74,7 +74,7 @@ export default function LedgerPanel({ novelId }: Props) {
           </span>
           {item.urgency != null && (
             <span className={`rounded px-1.5 py-0.5 text-[11px] ${urgencyColor(item.urgency)}`}>
-              紧迫度 {item.urgency}
+              重要度 {item.urgency}
             </span>
           )}
           {item.overdue && (
@@ -117,8 +117,7 @@ export default function LedgerPanel({ novelId }: Props) {
         >
           {overdue.length > 0 && (
             <span>
-              <span className="font-semibold">伏笔超期预警：</span>
-              {overdue.length} 条伏笔已写到目标揭示章仍未回收。
+              <span className="font-semibold">有 {overdue.length} 条伏笔已经写到该回收的章节还没回收。</span>
             </span>
           )}
           {staleOnly.length > 0 && (
@@ -142,7 +141,7 @@ export default function LedgerPanel({ novelId }: Props) {
           </div>
           {openItems.length === 0 ? (
             <p className="rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs text-zinc-400 dark:border-zinc-700">
-              暂无未回收伏笔。
+              暂无未回收伏笔。伏笔 = 你埋下的悬念，回收 = 在后面揭晓。
             </p>
           ) : (
             <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">{openItems.map(renderItem)}</ul>

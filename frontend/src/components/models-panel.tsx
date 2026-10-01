@@ -24,22 +24,24 @@ import Loading from "@/components/loading";
 import { useAiStatus } from "@/lib/ai-status";
 import { message } from "@/components/message";
 
-/** 可在高级设置里按任务类型指定模型的四类任务 */
-type TaskKey = "setting" | "creation" | "review" | "extract";
+/** 可在高级设置里按任务类型指定模型的五类任务 */
+type TaskKey = "setting" | "creation" | "review" | "extract" | "chronicle";
 const TASK_TYPES: Array<{ key: TaskKey; label: string; hint: string }> = [
-  { key: "setting", label: "设定", hint: "蓝图师/大纲师：世界设定与章节大纲" },
-  { key: "creation", label: "创作", hint: "小说家：章节正文创作" },
-  { key: "review", label: "评价", hint: "评价师：质量审稿（可单独换更强模型）" },
-  { key: "extract", label: "提取", hint: "提取师/风格学习：记忆抽取与风格提炼" },
+  { key: "setting", label: "设定", hint: "规划世界观、人物与大章节大纲，定下故事骨架" },
+  { key: "creation", label: "创作", hint: "写每一章的正文内容" },
+  { key: "extract", label: "提取", hint: "把已写的章节自动整理成剧情要点和人物信息，供后续写作参考" },
+  { key: "chronicle", label: "编年", hint: "定期把前文浓缩成故事脉络，防止写久了忘掉早期伏笔" },
+  { key: "review", label: "评价", hint: "审读章节质量，发现问题并给出修改建议" },
 ];
 
-/** 四类任务各自的配置表单（provider/model/temperature；留空 = 用默认模型） */
+/** 五类任务各自的配置表单（provider/model/temperature；留空 = 用默认模型） */
 type TaskForm = Record<TaskKey, { provider: string; model: string; temperature: string }>;
 const EMPTY_TASK_FORMS: TaskForm = {
   setting: { provider: "", model: "", temperature: "" },
   creation: { provider: "", model: "", temperature: "" },
   review: { provider: "", model: "", temperature: "" },
   extract: { provider: "", model: "", temperature: "" },
+  chronicle: { provider: "", model: "", temperature: "" },
 };
 
 export default function ModelsPanel() {
@@ -48,7 +50,7 @@ export default function ModelsPanel() {
   const [loading, setLoading] = useState(true);
   // 模型目录 / 默认模型加载中：遮罩过渡，加载完成后解除
   const [loadingModels, setLoadingModels] = useState(true);
-  // ---- 高级设置弹窗：四类任务各自配置 ----
+  // ---- 高级设置弹窗：五类任务各自配置 ----
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedSaving, setAdvancedSaving] = useState(false);
   const [formByTask, setFormByTask] = useState<TaskForm>(EMPTY_TASK_FORMS);
@@ -167,6 +169,7 @@ export default function ModelsPanel() {
         }
       }
       await load();
+      message.success("高级设置已保存");
       setAdvancedOpen(false);
     } catch (e) {
       message.error((e as Error).message);
@@ -181,9 +184,9 @@ export default function ModelsPanel() {
       {/* ---------- 模型接入：当前使用 + 服务商状态 + 添加/切换模型（弹窗） ---------- */}
       <section className="panel flex flex-col gap-4">
         <div>
-          <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">模型接入</h2>
+          <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">AI 模型设置</h2>
           <p className="mt-0.5 text-xs text-zinc-400">
-            从下方服务商（或最后的「自定义模型」）点进去，选模型、填 API Key 保存即用。未接入模型时 AI 功能不可用（页面顶部会有红色提示条）。Key 仅存本地，不回显明文。
+            在下方选一家 AI 服务（或点最后的「自定义模型」），选好模型、填上密钥保存就能用。没配好模型时 AI 功能暂时用不了（页面顶部会有红色提示条）。密钥只存在你电脑里，不会显示出来。
           </p>
         </div>
 
@@ -191,14 +194,16 @@ export default function ModelsPanel() {
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-zinc-50 px-3 py-2.5 dark:bg-zinc-900">
           <span className="text-xs text-zinc-500">当前使用：</span>
           <span className="rounded bg-zinc-900 px-2 py-0.5 font-mono text-sm text-white dark:bg-zinc-100 dark:text-zinc-900">
-            {defaultModel ? `${defaultModel.provider}/${defaultModel.model}` : "未接入（AI 功能不可用）"}
+            {defaultModel
+              ? `${catalog.find((p) => p.provider === defaultModel.provider)?.label ?? defaultModel.provider} · ${defaultModel.model}`
+              : "未配置模型（AI 功能不可用）"}
           </span>
-          {defaultModel && <span className="text-xs text-zinc-400">所有设定/蓝图/大纲/写作任务默认走它</span>}
+          {defaultModel && <span className="text-xs text-zinc-400">设定、蓝图、大纲、写作这些功能默认都用它</span>}
         </div>
 
         {/* 服务商状态：已配置标绿，点击打开该服务商详情 */}
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-zinc-400">服务商：</span>
+          <span className="text-xs text-zinc-400">AI 服务：</span>
           {catalog.length === 0 && <span className="text-xs text-zinc-400">加载中…</span>}
           {catalog.map((p) => (
             <button
@@ -229,34 +234,46 @@ export default function ModelsPanel() {
       <section className="panel flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">高级设置：按任务类型指定模型</h2>
+            <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">高级设置：为不同写作环节选不同的模型</h2>
             <p className="mt-0.5 text-xs text-zinc-400">
-              可选。不配置时全部任务用「模型接入」的默认模型；点「配置」在弹窗里为「设定 / 创作 / 评价 / 提取」四类任务分别指定模型后，对应任务优先用指定模型。
+              可不用。不设置时所有环节都用前面配好的默认模型。点「设置」可以给设定、创作、提取、编年、评价五种写作环节分别选模型。
             </p>
           </div>
           <button
             className="btn btn-ghost"
             onClick={openAdvanced}
           >
-            配置{loading ? "" : `（已指定 ${routes.length} 类）`}
+            设置{loading ? "" : `（已设置 ${routes.length} 项）`}
           </button>
         </div>
         {loading ? (
           <p className="text-xs text-zinc-400">加载中…</p>
         ) : routes.length === 0 ? (
-          <p className="text-xs text-zinc-400">尚未指定任何类型，所有任务都使用「模型接入」的默认模型。</p>
+          <div className="rounded-lg border border-dashed border-zinc-300 px-4 py-5 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
+            还没做设置，所有写作环节都用前面配好的默认模型。
+          </div>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {routes.map((r) => {
-              const t = TASK_TYPES.find((x) => x.key === r.task_type);
+          /* 四类任务逐行展示：任务名 + 用途说明在左，右侧显示该类型当前用的模型（已指定/默认模型） */
+          <div className="flex flex-col divide-y divide-zinc-100 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+            {TASK_TYPES.map((t) => {
+              const r = routes.find((x) => x.task_type === t.key);
+              const providerLabel = r ? catalog.find((p) => p.provider === r.provider)?.label ?? r.provider : null;
               return (
-                <span
-                  key={r.id}
-                  className="inline-flex items-center gap-1 rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-                >
-                  {t?.label ?? r.task_type}
-                  <span className="font-mono">{r.provider}/{r.model}</span>
-                </span>
+                <div key={t.key} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{t.label}</span>
+                    <span className="ml-2 text-[11px] text-zinc-400">{t.hint}</span>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded px-2 py-0.5 font-mono text-[11px] ${
+                      r
+                        ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
+                        : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500"
+                    }`}
+                  >
+                    {r ? `${providerLabel}/${r.model}` : "默认模型"}
+                  </span>
+                </div>
               );
             })}
           </div>
@@ -280,8 +297,8 @@ export default function ModelsPanel() {
       {/* ---------- 高级设置弹窗：四类任务分别指定模型 ---------- */}
       <Modal
         open={advancedOpen}
-        title="高级设置：按任务类型指定模型"
-        subtitle="四类任务可分别指定模型；留空表示该类型用「模型接入」的默认模型。保存后立即生效。"
+        title="高级设置：为不同写作环节选不同的模型"
+        subtitle="可以给每种写作环节分别选模型；不选就用前面配好的默认模型。保存后立即生效。"
         onClose={() => setAdvancedOpen(false)}
         maxWidth="max-w-2xl"
         footer={
@@ -314,51 +331,62 @@ export default function ModelsPanel() {
                     <p className="text-[11px] text-zinc-400">{t.hint}</p>
                   </div>
                   <span className="shrink-0 rounded bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                    {f.provider && f.model ? `${f.provider}/${f.model}` : "默认模型"}
+                    {f.provider && f.model
+                      ? `${catalog.find((p) => p.provider === f.provider)?.label ?? f.provider}/${f.model}`
+                      : "默认模型"}
                   </span>
                 </div>
                 <div className="grid grid-cols-[1fr_1fr_110px] gap-2">
-                  <select
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-2 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
-                    value={f.provider}
-                    onChange={(e) => setTask(t.key, { provider: e.target.value, model: "" })}
-                  >
-                    <option value="">默认模型（不指定）</option>
-                    {accessProviders.map((p) => (
-                      <option key={p.provider} value={p.provider}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-2 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900"
-                    value={f.model}
-                    onChange={(e) => setTask(t.key, { model: e.target.value })}
-                    disabled={!f.provider}
-                  >
-                    <option value="">{f.provider ? "请选择模型" : "先选服务商"}</option>
-                    {ms.map((m) => (
-                      <option key={m.model} value={m.model}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="2"
-                    placeholder="温度 0.7"
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-2 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
-                    value={f.temperature}
-                    onChange={(e) => setTask(t.key, { temperature: e.target.value })}
-                  />
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-zinc-400">AI 服务</span>
+                    <select
+                      className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-2 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
+                      value={f.provider}
+                      onChange={(e) => setTask(t.key, { provider: e.target.value, model: "" })}
+                    >
+                      <option value="">用默认模型（不单独指定）</option>
+                      {accessProviders.map((p) => (
+                        <option key={p.provider} value={p.provider}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-zinc-400">模型</span>
+                    <select
+                      className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-2 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900"
+                      value={f.model}
+                      onChange={(e) => setTask(t.key, { model: e.target.value })}
+                      disabled={!f.provider}
+                    >
+                      <option value="">{f.provider ? "请选择模型" : "先选 AI 服务"}</option>
+                      {ms.map((m) => (
+                        <option key={m.model} value={m.model}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-zinc-400">创意程度（温度）</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="2"
+                      placeholder="0.7"
+                      className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-2 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
+                      value={f.temperature}
+                      onChange={(e) => setTask(t.key, { temperature: e.target.value })}
+                    />
+                  </label>
                 </div>
               </div>
             );
           })}
           <p className="text-xs text-zinc-400">
-            温度留空用默认 0.7；值越高回答越有创意、越不稳定，值越低越严谨稳定。全部留空则恢复为该类型的默认模型。
+            温度留空用默认 0.7；值越高回答越有创意、越不稳定，值越低越严谨稳定。都留空就用默认模型。
           </p>
         </div>
       </Modal>

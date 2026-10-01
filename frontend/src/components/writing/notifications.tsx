@@ -115,15 +115,15 @@ function renderRewriteFailNotif(novelId: string) {
   rewriteNotifId = notification.error({
     duration: 0, // 不由通知组件自动关（计时在 WritingPanel 内，只累计页面可见时间）
     closable: false, // 无 ✕：只能自动关闭
-    title: "联动重写中断",
+    title: "自动连续重写中断",
     message: (
       <div className="space-y-2">
         {/* 根因 */}
         <div className="rounded-md bg-red-100/80 px-2.5 py-1.5 dark:bg-red-900/50">
           <p className="text-[12px] font-semibold leading-5 text-red-900 dark:text-red-100">根因</p>
           <p className="mt-0.5 text-[12px] leading-5 text-red-800/90 dark:text-red-200/90">
-            第 <span className="font-medium">{data.failedChapter}</span> 章处理失败，联动已停止；
-            失败之后还没轮到处理的章节同样未完成，请到章节目录手动补齐。
+            第 <span className="font-medium">{data.failedChapter}</span> 章处理失败，自动连续处理已停止；
+            失败之后还没轮到处理的章节同样未完成，剩下的章节请手动逐个处理。
           </p>
         </div>
         {/* 未完成清单 */}
@@ -255,7 +255,7 @@ function renderAffectedNotif() {
           <p className="mt-0.5 text-[12px] leading-5 text-amber-800/90 dark:text-amber-200/90">
             第 {originChapter} 章的
             {originRelations.length > 0 ? originRelations.map((r) => `「${r}」`).join("、") : "关系"}
-            被删除/替换，以下章节的正文仍建立在旧递进链上，需按各章当前大纲重写并重新提取记忆层。
+            被删除/替换，以下章节的正文还建立在之前的剧情线上，需要按当前大纲重写，并重新记进记忆。
           </p>
         </div>
         {/* 受影响章节清单 */}
@@ -290,7 +290,7 @@ function renderAffectedNotif() {
           }}
           className="w-full rounded-lg bg-amber-700 px-3 py-2 text-[12px] font-medium text-white transition-colors hover:bg-amber-800 dark:bg-amber-600 dark:hover:bg-amber-500"
         >
-          挨个重写第 {byChapter.map(([no]) => no).join("、")} 章并重提取
+          挨个重写这几章，并重新记进记忆
         </button>
       </div>
     ),
@@ -340,18 +340,18 @@ export function fireGapNotif(
   gapsNotifChapter = chapterNo;
   gapsNotifId = notification.warning({
     duration: 0, // 常驻：等作者处理（重新生成 / 忽略 / 手动关闭）
-    title: `设定自检：第 ${chapterNo} 章发现 ${contentGaps.length} 处设定问题`,
+    title: `设定检查：第 ${chapterNo} 章发现 ${contentGaps.length} 处问题`,
     message: (
       <div className="space-y-1">
         {contentGaps.map((g) => (
           <div key={`${g.rule}-${g.missing.join("-")}`} className="leading-5">
-            《{g.rule}》要求 [{g.group.join(" + ")}] 同时出现，已写到 {g.present.join("、")}，缺失{" "}
+            按设定，本章应有 [{g.group.join(" 和 ")}]，但只写了 {g.present.join("、")}，还缺{" "}
             <span className="font-medium text-amber-900 dark:text-amber-100">{g.missing.join("、")}</span>
           </div>
         ))}
         <div className="pt-0.5 text-[11px] leading-5 opacity-75">
-          属机器字面核对：若本章确实不该写到该项可忽略；否则建议重新生成，
-          或到「评价与优化」的【作者批注】里写明补写内容，让修订师补上。
+          这是按设定逐字比对出来的，如果本章确实不该有这一项可以忽略；否则建议重新生成，
+          让 AI 补上。
         </div>
       </div>
     ),

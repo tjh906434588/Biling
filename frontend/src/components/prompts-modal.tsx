@@ -143,15 +143,15 @@ export default function PromptsModal({
   const scopeNote = !active
     ? ""
     : active.configured
-      ? "已自定义：留空的字段不传给 AI。优先级低于本小说的「风格」与「蓝图」——冲突时以风格和蓝图为准；不冲突时必须严格执行。"
-      : "当前使用该角色的内置默认指令，可直接修改或删掉留空（留空的字段不传给 AI）；点「恢复默认」随时找回初始值。";
+      ? "你填的规则 AI 会遵守；但如果和这本书的「风格」「蓝图」冲突，以风格和蓝图为准。"
+      : "现在是 AI 自带的默认规则，你可以改或清空；点「恢复默认」能找回。";
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title="写作指令"
-      subtitle="为当前小说配置创作/评审角色的写作人设，仅本小说生效。"
+      subtitle="给这本书的 AI 助手立写作规矩，只对这一本生效。"
       maxWidth="max-w-3xl"
       footer={
         <div className="flex w-full items-center justify-between gap-3">
@@ -217,7 +217,7 @@ export default function PromptsModal({
                     autoGrow(e.target);
                   }}
                   rows={2}
-                  placeholder="留空则不传给 AI"
+                  placeholder="留空则 AI 不采用"
                   className="resize-none overflow-hidden rounded-md border border-zinc-300 bg-white p-2.5 text-[13px] leading-5 outline-none placeholder:text-zinc-400 focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                 />
               </label>

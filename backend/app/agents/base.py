@@ -58,8 +58,12 @@ class ContextPack:
 class Agent(ABC, Generic[T]):
     """角色基类。task_type 对应 model_routes 任务路由。"""
 
-    task_type: str = "chat"
+    # task_type 对应 model_routes 任务路由；具体角色都必须显式指定，这里只是兜底默认
+    task_type: str = "setting"
     temperature: float = 0.7
+    # 温度是否固定用本 agent 默认值（不走路由配置）。默认 False = 路由配置的温度优先；
+    # 少数任务（如修订师，需稳定输出）设 True，避免被同 task_type 的高温（如创作 0.8）带偏。
+    temperature_fixed: bool = False
     version_count: int = 1
     mock_output: dict | None = None  # 无 Key 时 Mock 流的合法 JSON 样例（演示完整链路）
 
@@ -123,7 +127,14 @@ class Agent(ABC, Generic[T]):
         return stream_completion(
             messages,
             route,
-            temperature=ctx.temperature or self.temperature,
+            # 温度优先级：temperature_fixed=True 的任务（如修订师）固定用 agent 默认，稳定优先；
+            # 否则：用户在该任务类型的 model_routes 里配置的温度 > 本次调用 ctx 温度 > agent 默认
+            # （route.temperature 已保留 None 表示未配置，见 resolve_route）
+            temperature=(
+                self.temperature
+                if self.temperature_fixed
+                else (route.temperature if route.temperature is not None else (ctx.temperature or self.temperature))
+            ),
             max_tokens=ctx.max_tokens,
             mock_output=json.dumps(self.mock_output, ensure_ascii=False) if self.mock_output else None,
             db=self.db,
