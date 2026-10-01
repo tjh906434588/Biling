@@ -3,16 +3,16 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-
-# 让 app 各模块的 INFO 日志可见（uvicorn 默认不配置应用 logger，会吞掉）
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+from fastapi.responses import JSONResponse
 
 from app.api import (
     blueprints,
     chapters,
     concepts,
     detect,
+    diagnostics,
     graph,
     ledger,
     memory,
@@ -24,11 +24,19 @@ from app.api import (
     style,
 )
 from app.config import get_settings
+from app.logging_config import setup_logging
+
+settings = get_settings()
+
+# 日志落盘：data/logs/biling.log（桌面版排查问题的基础，详见 logging_config）
+setup_logging(settings.resolved_data_dir)
+
+# 让 app 各模块的 INFO 日志可见（uvicorn 默认不配置应用 logger，会吞掉）
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+
 from app.db.base import Base
 from app.db.migrate import ensure_columns, ensure_novel_background_type_nullable, ensure_prompts_schema
 from app.db.session import engine
-
-settings = get_settings()
 
 
 @asynccontextmanager
@@ -84,6 +92,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_logger = logging.getLogger("app.main")
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exc_handler(request, exc: RequestValidationError):
+    """请求参数不合法：记录明细（含字段错误）到日志，返回友好 422。"""
+    _logger.warning("[validation] %s %s -> %s", request.method, request.url.path, exc.errors()[:5])
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "请求参数不合法", "errors": exc.errors()[:5]},
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exc_handler(request, exc: Exception):
+    """未捕获异常兜底：完整堆栈落日志（桌面版导出日志排查的关键），返回统一 500。"""
+    _logger.exception("[unhandled] %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "服务器内部错误，详情见日志"})
+
 app.include_router(novels.router)
 app.include_router(chapters.router)
 app.include_router(outlines.router)
@@ -97,6 +124,7 @@ app.include_router(memory.router)
 app.include_router(stream.router)
 app.include_router(models.router)
 app.include_router(prompts.router)
+app.include_router(diagnostics.router)
 
 
 @app.get("/api/health")

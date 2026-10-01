@@ -26,6 +26,19 @@ port_check.txt
 _tian_tmp.json
 backend/seed_outline_preview.py
 
+# 桌面版：运行期数据（数据库/日志，桌面版程序旁 data\）与打包产物
+data/
+/build/
+dist-desktop/
+backend/dist/
+backend/build/
+desktop/node_modules/
+desktop/dist/
+# 图标：只提交设计源与主图标，其余尺寸由 npm run make:icon 重新生成
+desktop/build/*
+!desktop/build/icon.svg
+!desktop/build/icon.png
+
 # 编辑器 / 系统
 .idea/
 .vscode/

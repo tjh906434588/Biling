@@ -12,7 +12,14 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# 数据目录：SQLite 文件落 data_dir，迁移前确保目录存在
+_settings = get_settings()
+if _settings.database_url == "" and _settings.resolved_database_url.startswith("sqlite:///"):
+    from pathlib import Path
+
+    Path(_settings.resolved_data_dir).mkdir(parents=True, exist_ok=True)
+
+config.set_main_option("sqlalchemy.url", _settings.resolved_database_url)
 target_metadata = Base.metadata
 
 

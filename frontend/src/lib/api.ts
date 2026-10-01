@@ -5,6 +5,7 @@
  * 请求前缀 BASE 等共享常量统一维护在 @/constants。
  */
 import { BASE } from "@/constants/api";
+import { log } from "@/lib/logging";
 import type {
   ActivateBlueprintResult,
   AgentPrompt,
@@ -737,6 +738,7 @@ export async function runAgent(
     timeoutMs != null
       ? setTimeout(() => controller.abort(), timeoutMs)
       : undefined;
+  log.info(`runAgent start agent=${agent} novel=${novelId.slice(0, 8)} dryRun=${dryRun}`);
   try {
     const res = await fetch(`${BASE}/stream/agents/${agent}/run`, {
       method: "POST",
@@ -745,6 +747,7 @@ export async function runAgent(
       signal: controller.signal,
     });
     if (!res.ok || !res.body) {
+      log.error(`runAgent response !ok agent=${agent} status=${res.status}`);
       throw new Error("请求失败");
     }
     const reader = res.body.getReader();

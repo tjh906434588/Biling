@@ -19,9 +19,10 @@
 |---|---|
 | 前端 | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS 4 |
 | 后端 | Python + FastAPI + Uvicorn + SQLAlchemy 2 + Alembic |
-| 数据库 | SQLite（开发）/ PostgreSQL + pgvector（生产，语义检索） |
+| 数据库 | SQLite（本地/桌面版默认，位于数据目录 data\）/ PostgreSQL + pgvector（云部署，语义检索） |
 | LLM 网关 | LiteLLM（DeepSeek / Qwen / Claude / GPT / Ollama 可切换） |
 | 流式 | SSE（正文 / 思考过程实时滚动） |
+| 桌面打包 | Electron 壳 + PyInstaller（绿色版 zip；本地脚本 / GitHub Actions 自动打包） |
 
 ## 目录结构
 
@@ -34,16 +35,19 @@ biling/
 ├─ backend/             # FastAPI 后端（端口 8000）
 │  └─ app/
 │     ├─ agents/        # AI 角色（蓝图师/大纲师/小说家/评价师/提取师…）
-│     ├─ api/           # REST + SSE 路由
+│     ├─ api/           # REST + SSE 路由（含 diagnostics：日志收集与导出）
 │     ├─ services/      # 编排与落库逻辑（pipeline.py 等）
 │     ├─ llm/           # LiteLLM 网关
 │     └─ db/            # 模型 / 会话 / 迁移
+├─ desktop/             # Electron 桌面壳（拉起前后端、托盘、导出日志）
+├─ .github/workflows/   # GitHub Actions：打 tag 自动打包桌面版
+├─ build-desktop.ps1    # 本地一键打包脚本
 └─ docs/                # PRD 与技术设计
 ```
 
 ## 环境要求
 
-- Node.js 18+ / 20+
+- Node.js 20+ / 22
 - Python 3.11+
 - 一个或多个 LLM Provider 的 API Key（DeepSeek / Qwen / Claude / OpenAI 等，未配置时可用 Mock 流跑通链路）
 
@@ -83,14 +87,29 @@ npm run dev
 
 ## 配置说明
 
-- **模型 Key**：在 `backend/.env` 中配置（如 `DEEPSEEK_API_KEY=sk-xxx`）。未配置任何 Key 时默认用 Mock 流跑通 SSE 链路；如需强制真实模型，设置 `BILING_ALLOW_MOCK_WITHOUT_KEY=false`。
-- **数据库**：默认 SQLite `backend/biling.db`（首次启动自动建表）；生产迁移用 `alembic upgrade head`。
+- **模型 Key**：推荐直接在应用「AI 设置」页填写（写入本地数据库，运行时不需要 `.env`）；也可在 `backend/.env` 配置（如 `DEEPSEEK_API_KEY=sk-xxx`）。未配置任何 Key 时默认用 Mock 流跑通 SSE 链路；如需强制真实模型，设置 `BILING_ALLOW_MOCK_WITHOUT_KEY=false`。
+- **数据目录**：所有用户数据（数据库 / 日志 / 导入文件）统一放数据目录。开发默认 `backend/data\`（首次启动自动建目录，并自动迁移旧库 `backend/biling.db`）；桌面版为程序旁的 `data\` 子文件夹，由壳层通过 `BILING_DATA_DIR` 指定。
+- **数据库**：默认 SQLite 位于数据目录下（`backend/data/biling.db`），首次启动自动建表；生产迁移用 `alembic upgrade head`。
 - **文风**：手动文风（`style_directive_manual`）与蓝图文风互不覆盖；蓝图切换生效时全局文风跟随生效蓝图。
+
+## 桌面版（Windows 绿色版）
+
+把前后端打成单个解压即用的 zip：`Biling-<版本>-win.zip`，无需安装 Python / Node。
+
+- **两种打包方式（产物相同）**：
+  - 本地一键打包：仓库根目录执行 `.\build-desktop.ps1`，产物在 `dist-desktop\`。
+  - GitHub Actions 自动打包：在 `main` 分支打 `v*` 格式标签（如 `v1.0.0`）自动打包并上传到 Releases；普通 push / 非 main 分支打标签不触发。
+- **绿色版约定**：
+  - 解压后双击 `Biling.exe` 即用（自动拉起内置后端与前端服务）。
+  - 用户数据（数据库 / 日志 / 导入文件 / 模型配置）保存在解压目录下的 `data\` 子文件夹；**升级 = 下载新版 zip 覆盖解压，数据不丢失**（zip 内不含 data 目录）。
+  - 模型 API Key 直接在应用「AI 设置」页填写，写入本地数据库。
+- **日志与排查**：前后端日志统一落盘 `data\logs\`（自动轮转，2MB × 5）。出问题时点书架顶栏「导出日志」图标（或系统托盘右键「导出日志」），会打包后端日志 + 前端日志 + 系统信息为一个 zip，发给作者即可定位问题。
 
 ## 安全说明
 
-- 小说正文数据、数据库文件（`*.db`）、本地环境变量（`.env`）均不纳入版本库
+- 小说正文数据、数据库文件（`*.db`）、本地环境变量（`.env`）、运行期数据目录（`data\`）均不纳入版本库
 - 本仓库仅包含源码与开发脚本，不包含任何真实的小说内容或模型密钥
+- 日志与「导出日志」产物不包含模型 API Key（Key 只存本地数据库）
 
 ## License
 

@@ -1,0 +1,38 @@
+{
+  "name": "biling-desktop",
+  "version": "1.0.0",
+  "description": "笔灵 Biling 桌面版壳层（Electron）：拉起本地前后端服务，提供原生窗口与托盘",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win zip",
+    "dist:dir": "electron-builder --win dir",
+    "make:icon": "node scripts/make-icon.js"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.4.2",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.biling.desktop",
+    "productName": "Biling",
+    "directories": {
+      "output": "../dist-desktop",
+      "buildResources": "build"
+    },
+    "files": ["main.js"],
+    "asar": true,
+    "win": {
+      "icon": "build/icon.png",
+      "target": [{ "target": "zip", "arch": ["x64"] }]
+    },
+    "extraResources": [
+      { "from": "build/icon.png", "to": "icon.png" },
+      { "from": "../build/backend", "to": "backend" },
+      { "from": "../build/server", "to": "server" },
+      { "from": "../build/node", "to": "node" }
+    ]
+  }
+}

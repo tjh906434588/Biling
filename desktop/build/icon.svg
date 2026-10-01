@@ -1,0 +1,24 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 笔灵 Biling 应用图标
+       构图：朱砂红圆角方（品牌色 #B7472A）+ 纸色钢笔笔尖 + 金色四芒星（"灵"） -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#C2502F"/>
+      <stop offset="1" stop-color="#9E3A1E"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景圆角方 -->
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <!-- 内圈细描边：印章感 -->
+  <rect x="36" y="36" width="440" height="440" rx="90" stroke="#F6F1E6" stroke-opacity="0.16" stroke-width="8"/>
+
+  <!-- 钢笔笔尖（纸色，宽头朝上、笔尖朝下） -->
+  <path d="M168 132 C196 112 316 112 344 132 C374 206 376 302 256 400 C136 302 138 206 168 132 Z" fill="#F6F1E6"/>
+  <!-- 呼吸孔 + 剖缝（露出背景色，形成"切口"） -->
+  <circle cx="256" cy="198" r="16" fill="url(#bg)"/>
+  <rect x="250" y="214" width="12" height="180" rx="6" fill="url(#bg)"/>
+
+  <!-- 四芒星：灵感火花 -->
+  <path d="M392 96 C400 118 416 134 438 142 C416 150 400 166 392 188 C384 166 368 150 346 142 C368 134 384 118 392 96 Z" fill="#F2C14E"/>
+</svg>

@@ -1,0 +1,84 @@
+name: 桌面版打包
+
+# 仅在 main 分支打 v* 格式 tag（如 v1.1.0）时触发；普通 push / 上传代码 / 非 main 分支打 tag 不打包。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-desktop:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 守卫：tag 必须位于 main 分支，否则跳过
+        shell: bash
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "当前 tag 不在 main 分支历史中，跳过打包。"
+            exit 1
+          fi
+          echo "tag 位于 main 分支，继续打包。"
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 下载 Node 运行时（随包携带，供 Next standalone 使用）
+        shell: pwsh
+        run: |
+          $ver = "v22.14.0"
+          $zip = "node-$ver-win-x64.zip"
+          Invoke-WebRequest "https://nodejs.org/dist/$ver/$zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath node_extract
+          New-Item -ItemType Directory -Force -Path build/node
+          Copy-Item "node_extract/node-$ver-win-x64/node.exe" build/node/
+
+      - name: 打包后端（PyInstaller onedir）
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pyinstaller
+          Push-Location backend
+          python -m PyInstaller --noconfirm desktop.spec
+          Pop-Location
+          New-Item -ItemType Directory -Force -Path build/backend
+          Copy-Item -Recurse -Force backend/dist/backend/* build/backend/
+
+      - name: 打包前端（Next standalone）
+        shell: pwsh
+        working-directory: frontend
+        run: |
+          npm ci
+          npx next build
+          # standalone 需要 static（与 public，若有）一并携带
+          Copy-Item -Recurse -Force .next/static .next/standalone/.next/static
+          if (Test-Path public) { Copy-Item -Recurse -Force public .next/standalone/public }
+          New-Item -ItemType Directory -Force -Path ..\build\server
+          Copy-Item -Recurse -Force .next/standalone/* ..\build\server\
+
+      - name: 打包桌面壳（electron-builder → 绿色版 zip）
+        shell: pwsh
+        working-directory: desktop
+        run: |
+          if (Test-Path package-lock.json) { npm ci } else { npm install }
+          npx electron-builder --win zip
+
+      - name: 上传到 GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-desktop/*.zip
+          generate_release_notes: true

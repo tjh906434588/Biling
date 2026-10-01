@@ -12,6 +12,7 @@ import { AiStatusProvider } from "@/lib/ai-status";
 import { MessageHost } from "@/components/message";
 import { NotificationHost } from "@/components/notification";
 import { ConfirmNotifier } from "@/components/author-confirm";
+import GlobalLogging from "@/components/global-logging";
 
 // Geist 只提供拉丁字形，中文由 globals.css 中的 --sans-stack 回退链接管
 // （Noto Sans SC / 苹方 / 微软雅黑），避免引入体积巨大的中文字体包。
@@ -56,6 +57,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <AiStatusProvider>{children}</AiStatusProvider>
+        {/* 全局前端日志：捕获未处理错误并上报后端落盘（导出日志排查问题用） */}
+        <GlobalLogging />
         {/* 全局悬浮提示体系：Message（居中靠上）/ Notification（右上角），页面内统一走这两个全局 API */}
         <MessageHost />
         <NotificationHost />

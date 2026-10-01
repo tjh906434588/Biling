@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // 桌面版打包：产出 self-contained 的 Node 服务目录（server.js + 最小 node_modules），
+  // 供 Electron 壳层用内嵌 Node 运行时拉起；rewrite 代理在 standalone 模式下同样生效。
+  output: "standalone",
   // 关掉开发模式左下角的 Next.js Dev Tools 气泡（生产构建不出现，纯开发期干扰）
   devIndicators: false,
   // 关键：关闭 Next 的 gzip 响应压缩。浏览器 fetch 默认发送 Accept-Encoding: gzip，
