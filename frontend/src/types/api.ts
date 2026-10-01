@@ -402,6 +402,9 @@ export interface CatalogProvider {
   note?: string;
   custom?: boolean;
   api_format?: string;
+  /** 该服务商已用有效 Key 刷新过模型列表（live=true 时 models 为账号真实模型，非静态种子）。 */
+  live?: boolean;
+  live_updated_at?: string;
   /** 该服务商已接入的模型清单（一个 Key 可接入多个模型，其中一个是默认）。 */
   enabledModels?: { model: string; label: string }[];
 }

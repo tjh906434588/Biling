@@ -59,6 +59,8 @@ export default function ModelsPanel() {
   const [pickerOpen, setPickerOpen] = useState(false);
   /** 从页面服务商状态点进来时记录的目标服务商名，弹窗据此定位到其详情 */
   const [pendingProvider, setPendingProvider] = useState<string | null>(null);
+  /** 打开弹窗是否直接进自定义模型配置表单（点「自定义模型」服务商入口时） */
+  const [pickerCustom, setPickerCustom] = useState(false);
 
   /** 拉取任务路由列表（高级设置当前配置现状）。 */
   const load = useCallback(async () => {
@@ -91,9 +93,10 @@ export default function ModelsPanel() {
     loadModels();
   }, [load, loadModels]);
 
-  /** 打开添加模型弹窗；传入 provider 时定位到该服务商详情，否则停在列表视图。 */
-  const openPicker = (provider?: string) => {
-    setPendingProvider(provider ?? null);
+  /** 打开添加模型弹窗；传入 provider 时定位到该服务商详情；custom=true 直接进自定义配置表单。 */
+  const openPicker = (provider?: string, custom = false) => {
+    setPendingProvider(custom ? null : (provider ?? null));
+    setPickerCustom(custom);
     setPickerOpen(true);
   };
 
@@ -180,7 +183,7 @@ export default function ModelsPanel() {
         <div>
           <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">模型接入</h2>
           <p className="mt-0.5 text-xs text-zinc-400">
-            点击「添加模型」，从自定义模型或预设服务商中选择，填 API Key 保存即用。未接入模型时 AI 功能不可用（页面顶部会有红色提示条）。Key 仅存本地，不回显明文。
+            从下方服务商（或最后的「自定义模型」）点进去，选模型、填 API Key 保存即用。未接入模型时 AI 功能不可用（页面顶部会有红色提示条）。Key 仅存本地，不回显明文。
           </p>
         </div>
 
@@ -212,14 +215,12 @@ export default function ModelsPanel() {
               {p.enabledModels && p.enabledModels.length > 0 ? `（${p.enabledModels.length}）` : ""}
             </button>
           ))}
-        </div>
-
-        <div>
+          {/* 自定义模型：接入未预设的模型 / 中转站，放在服务商列表最后 */}
           <button
-            className="btn btn-primary"
-            onClick={() => openPicker()}
+            onClick={() => openPicker(undefined, true)}
+            className="rounded border border-dashed border-blue-300 px-2 py-0.5 text-xs text-blue-600 transition-colors hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-950/40"
           >
-            {defaultModel ? "切换模型 / 添加模型" : "添加模型"}
+            + 自定义模型
           </button>
         </div>
       </section>
@@ -265,9 +266,9 @@ export default function ModelsPanel() {
       {/* ---------- 添加模型弹窗 ---------- */}
       <ModelPickerModal
         open={pickerOpen}
-        catalog={catalog}
         defaultModel={defaultModel}
         initialProvider={initialProvider}
+        initialCustom={pickerCustom}
         onClose={() => setPickerOpen(false)}
         onSaved={() => {
           loadModels();

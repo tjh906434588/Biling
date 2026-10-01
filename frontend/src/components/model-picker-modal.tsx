@@ -6,10 +6,11 @@
  */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   addAccessModel,
   probeProvider,
+  refreshCatalogModels,
   removeAccessModel,
   saveCustomModel,
   setDefaultModel,
@@ -17,25 +18,25 @@ import {
   type DefaultModel,
 } from "@/lib/api";
 import { message } from "@/components/message";
+import InfoTip from "./info-tip";
 
 interface Props {
   open: boolean;
-  catalog: CatalogProvider[];
   defaultModel: DefaultModel | null;
   /** 打开时定位到指定服务商详情（页面服务商状态点进来） */
   initialProvider?: CatalogProvider | null;
+  /** 打开时直接进自定义模型配置表单（页面点「自定义模型」入口） */
+  initialCustom?: boolean;
   onClose: () => void;
   onSaved: () => void;
 }
 
-type View = "list" | "custom" | CatalogProvider;
+type View = "custom" | CatalogProvider;
 
-/** 参考 TRAE「添加模型」弹窗：自定义模型置顶 + 预设服务商列表 + 详情表单（选模型→填Key→保存即用）。 */
-export default function ModelPickerModal({ open, catalog, defaultModel, initialProvider, onClose, onSaved }: Props) {
-  /** 当前所处视图：来源列表 / 自定义表单 / 某个服务商详情 */
-  const [view, setView] = useState<View>("list");
-  /** 来源列表搜索关键词（按服务商名或模型 id 过滤） */
-  const [query, setQuery] = useState("");
+/** 参考 TRAE「添加模型」弹窗：预设服务商详情 / 自定义模型表单（选模型→填Key→保存即用）。 */
+export default function ModelPickerModal({ open, defaultModel, initialProvider, initialCustom, onClose, onSaved }: Props) {
+  /** 当前所处视图：自定义表单 / 某个服务商详情 */
+  const [view, setView] = useState<View>("custom");
   /** 当前选中（或手输）的模型 ID */
   const [modelId, setModelId] = useState("");
   /** 是否使用「其他模型」手输模式（不限于预置下拉列表） */
@@ -50,6 +51,8 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
   const [configMode, setConfigMode] = useState<string | null>(null);
   /** 当前服务商已接入的模型清单（本地副本，添加/移除后即时更新）。 */
   const [enabled, setEnabled] = useState<{ model: string; label: string }[]>([]);
+  /** 「刷新模型列表」结果覆盖：用有效 Key 从服务商拉到的账号真实模型，覆盖静态种子下拉（刷新后优先展示）。 */
+  const [liveOverride, setLiveOverride] = useState<{ provider: string; models: { id: string; label: string }[]; updatedAt: string } | null>(null);
 
   // 自定义配置表单
   const [cust, setCust] = useState({
@@ -73,16 +76,18 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
     setProbeModels(null);
     setConnected(false);
     setEnabled(p.enabledModels ?? []);
+    setLiveOverride(null);
   };
 
   useEffect(() => {
     if (open) {
-      setQuery("");
       setProbeModels(null);
-      if (initialProvider) {
+      if (initialCustom) {
+        // 直接进自定义配置表单（页面「自定义模型」入口）：空表单起步
+        setView("custom");
+        setCust({ label: "", api_format: "openai", base_url: "", model_id: "", api_key: "" });
+      } else if (initialProvider) {
         openProvider(initialProvider);
-      } else {
-        setView("list");
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -102,28 +107,20 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
     setProbeModels(null);
   }, [apiKey]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return catalog;
-    return catalog.filter(
-      (p) => p.label.toLowerCase().includes(q) || p.models.some((m) => m.id.toLowerCase().includes(q)),
-    );
-  }, [catalog, query]);
-
-  /** 当前打开详情的服务商；list/custom 视图下为 null */
-  const activeProvider: CatalogProvider | null = view !== "list" && view !== "custom" ? view : null;
+  /** 当前打开详情的服务商；custom 视图下为 null */
+  const activeProvider: CatalogProvider | null = view !== "custom" ? view : null;
 
   // 多配置方式服务商（如火山方舟）：模型列表与 base_url 随所选配置方式联动
   const activeModes = activeProvider?.config_modes ?? null;
   const currentMode = activeModes ? (activeModes.find((m) => m.key === configMode) ?? activeModes[0]) : null;
-  const modeModels = currentMode ? currentMode.models : (activeProvider?.models ?? []);
+  const modeModels =
+    // 「刷新模型列表」结果优先：账号真实模型（任何服务商都生效；多配置方式服务商刷新的是当前配置方式的端点）
+    liveOverride && activeProvider && liveOverride.provider === activeProvider.provider
+      ? liveOverride.models
+      : currentMode
+        ? currentMode.models
+        : (activeProvider?.models ?? []);
   const modeBaseUrl = currentMode ? currentMode.base_url : activeProvider?.base_url;
-
-  /** 进入自定义配置表单，重置为全新空表单。 */
-  const openCustom = () => {
-    setView("custom");
-    setCust({ label: "", api_format: "openai", base_url: "", model_id: "", api_key: "" });
-  };
 
   /** 该模型是否当前默认模型（用于展示「默认」标记、隐藏「设为默认」按钮）。 */
   const isDefault = (model: string) =>
@@ -164,6 +161,34 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
     setBusy(true);
     await runProbe();
     setBusy(false);
+  };
+
+  /** 刷新模型列表：用 Key 从服务商拉取账号真实模型并缓存（替代静态种子目录），供本次选择与下次打开复用。 */
+  const refreshList = async () => {
+    if (!activeProvider || busy) return;
+    if (!apiKey.trim()) {
+      message.error("请先填写 API Key 再刷新模型列表");
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await refreshCatalogModels(
+        activeProvider.provider,
+        apiKey.trim(),
+        modeBaseUrl,
+        modelId.trim() || undefined,
+      );
+      setLiveOverride({ provider: activeProvider.provider, models: r.models, updatedAt: r.updated_at });
+      setModelId(r.models[0]?.id ?? "");
+      setUseOther(false);
+      setConnected(true);
+      message.success(`已刷新：账号可用 ${r.models.length} 个模型（已缓存，下次打开自动使用）`);
+      onSaved();
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   /** 添加模型：每个模型独立填 Key 保存（各负责各，互不覆盖）；可同时设为默认。
@@ -291,51 +316,9 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {/* ---------- 视图一：来源列表（自定义模型 + 服务商网格） ---------- */}
-          {view === "list" && (
-            <div className="flex flex-col gap-3">
-              <input
-                className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
-                placeholder="搜索服务商或模型…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {/* 自定义模型：置顶（对应 TRAE 的自定义配置） */}
-                <button
-                  onClick={openCustom}
-                  className="flex flex-col items-start gap-1 rounded-lg border border-dashed border-blue-300 bg-blue-50/50 p-3 text-left hover:border-blue-400 hover:bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 dark:hover:bg-blue-950/60"
-                >
-                  <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">自定义模型</span>
-                  <span className="text-[11px] leading-snug text-zinc-400">接入未预设的模型 / 中转站</span>
-                </button>
-                {filtered.map((p) => (
-                  <button
-                    key={p.provider}
-                    onClick={() => openProvider(p)}
-                    className="flex flex-col items-start gap-1 rounded-lg border border-zinc-200 p-3 text-left hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
-                  >
-                    <span className="flex w-full items-center justify-between gap-1">
-                      <span className="truncate text-sm font-medium text-zinc-700 dark:text-zinc-300">{p.label}</span>
-                      {p.enabledModels && p.enabledModels.length > 0 && (
-                        <span className="shrink-0 text-xs text-green-600 dark:text-green-400">
-                          {p.enabledModels.length} ✓
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-[11px] text-zinc-400">{p.models.length} 个预置模型</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ---------- 视图二：自定义配置表单 ---------- */}
+          {/* ---------- 视图一：自定义配置表单 ---------- */}
           {view === "custom" && (
             <div className="flex flex-col gap-3">
-              <button className="w-fit text-xs text-zinc-400 hover:text-zinc-600" onClick={() => setView("list")}>
-                ← 返回服务商列表
-              </button>
               <div className="grid grid-cols-2 gap-3">
                 <label className={labelCls}>
                   模型展示名称
@@ -401,7 +384,7 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
                 </button>
                 <button
                   className="rounded-lg border border-zinc-300 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                  onClick={() => setView("list")}
+                  onClick={onClose}
                 >
                   取消
                 </button>
@@ -412,15 +395,42 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
           {/* ---------- 视图三：服务商详情表单 ---------- */}
           {activeProvider && (
             <div className="flex flex-col gap-3">
-              <button className="w-fit text-xs text-zinc-400 hover:text-zinc-600" onClick={() => setView("list")}>
-                ← 返回服务商列表
-              </button>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{activeProvider.label}</h3>
                   <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                     已接入 {enabled.length} 个模型
                   </span>
+                  {/* 刷新模型列表：服务商模型会持续更新，用 Key 拉取账号真实模型并缓存，替代静态种子列表。
+                      按钮 + 问号提示都放服务商名字右侧，不占独立一行。 */}
+                  <button
+                    className="ml-auto inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 text-xs font-medium text-blue-700 transition-colors hover:border-blue-400 hover:bg-blue-100 disabled:opacity-50 disabled:hover:border-blue-300 disabled:hover:bg-blue-50 dark:border-blue-700 dark:bg-blue-950/50 dark:text-blue-300 dark:hover:border-blue-500 dark:hover:bg-blue-900/60 dark:disabled:hover:border-blue-700 dark:disabled:hover:bg-blue-950/50"
+                    onClick={refreshList}
+                    disabled={busy || !apiKey.trim()}
+                    title={
+                      liveOverride && liveOverride.provider === activeProvider?.provider
+                        ? `已按账号刷新（${liveOverride.updatedAt}）`
+                        : undefined
+                    }
+                  >
+                    <svg
+                      className={`h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden
+                    >
+                      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                      <path d="M21 3v6h-6" />
+                    </svg>
+                    {busy ? "刷新中…" : "刷新模型列表"}
+                    <InfoTip>
+                      服务商模型会更新，填 Key 后点刷新拉到你的账号真实模型并记住
+                    </InfoTip>
+                  </button>
                 </div>
                 {activeProvider.note && <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">{activeProvider.note}</p>}
               </div>
@@ -486,6 +496,8 @@ export default function ModelPickerModal({ open, catalog, defaultModel, initialP
                       setUseOther(false);
                       setProbeModels(null);
                       setConnected(false);
+                      // 配置方式切换 = 换端点：上次刷新的模型列表是旧端点的，不复用，等重新刷新
+                      setLiveOverride(null);
                     }}
                   >
                     {activeModes.map((m) => (

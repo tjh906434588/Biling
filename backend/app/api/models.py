@@ -1,4 +1,5 @@
 """模型路由/探测接口（技术设计 §13.3：模型可用性 = 声明式配置 + 探测辅助）。"""
+import datetime
 import os
 import uuid
 from typing import Optional
@@ -29,8 +30,9 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "DEEPSEEK_API_KEY",
         "key_url": "https://platform.deepseek.com/api_keys",
         "models": [
-            {"id": "deepseek-chat", "label": "DeepSeek-V3 · 对话/写作，便宜够用"},
-            {"id": "deepseek-reasoner", "label": "DeepSeek-R1 · 深度推理，更贵"},
+            {"id": "deepseek-v4-flash", "label": "DeepSeek-V4-Flash · 便宜够用，非思考+思考双模式"},
+            {"id": "deepseek-flash", "label": "DeepSeek-V4.1-Flash · 最新架构，原生多模态"},
+            {"id": "deepseek-v4-pro", "label": "DeepSeek-V4-Pro · 强推理，更贵"},
         ],
     },
     {
@@ -40,19 +42,23 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "MOONSHOT_API_KEY",
         "key_url": "https://platform.moonshot.cn/console/api-keys",
         "models": [
-            {"id": "kimi-k2-0905-preview", "label": "Kimi-K2 · 新一代旗舰"},
-            {"id": "moonshot-v1-128k", "label": "moonshot-v1-128k · 长上下文"},
+            {"id": "kimi-k3", "label": "Kimi-K3 · 旗舰，100万上下文"},
+            {"id": "kimi-k2.7-code", "label": "Kimi-K2.7-Code · 编程强"},
+            {"id": "kimi-k2.7-code-highspeed", "label": "Kimi-K2.7-Code-HighSpeed · 高速版"},
+            {"id": "kimi-k2.6", "label": "Kimi-K2.6 · 视觉+文本"},
         ],
     },
     {
         "provider": "qwen",
-        "label": "通义千问（阿里云）",
+        "label": "通义千问（阿里云百炼）",
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "key_env": "DASHSCOPE_API_KEY",
-        "key_url": "https://dashscope.console.aliyun.com/apiKey",
+        "key_url": "https://bailian.console.aliyun.com/#/api-key",
         "models": [
-            {"id": "qwen-plus", "label": "qwen-plus · 平衡"},
-            {"id": "qwen-max", "label": "qwen-max · 更强，更贵"},
+            {"id": "qwen3.8-max", "label": "Qwen3.8-Max · 旗舰"},
+            {"id": "qwen3.8-flash", "label": "Qwen3.8-Flash · 便宜快"},
+            {"id": "qwen3.7-max", "label": "Qwen3.7-Max · 上一代旗舰"},
+            {"id": "qwen-plus", "label": "qwen-plus · 稳定平衡"},
             {"id": "qwen-turbo", "label": "qwen-turbo · 便宜快"},
         ],
     },
@@ -63,9 +69,11 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "ZHIPU_API_KEY",
         "key_url": "https://open.bigmodel.cn/usercenter/apikeys",
         "models": [
+            {"id": "glm-5.3", "label": "GLM-5.3 · 最新旗舰"},
+            {"id": "glm-5.2", "label": "GLM-5.2 · Coding/长程任务强"},
+            {"id": "glm-5.3-flash", "label": "GLM-5.3-Flash · 高速低价"},
+            {"id": "glm-4.7", "label": "GLM-4.7 · 开源Coding"},
             {"id": "glm-4-flash", "label": "GLM-4-Flash · 免费"},
-            {"id": "glm-4-plus", "label": "GLM-4-Plus"},
-            {"id": "glm-4-air", "label": "GLM-4-Air · 便宜快"},
         ],
     },
     {
@@ -75,9 +83,10 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "OPENAI_API_KEY",
         "key_url": "https://platform.openai.com/api-keys",
         "models": [
+            {"id": "gpt-5.4", "label": "GPT-5.4 · 推理旗舰"},
+            {"id": "gpt-5.3", "label": "GPT-5.3"},
+            {"id": "gpt-5", "label": "GPT-5"},
             {"id": "gpt-4o-mini", "label": "GPT-4o mini · 便宜"},
-            {"id": "gpt-4o", "label": "GPT-4o"},
-            {"id": "gpt-4.1-mini", "label": "GPT-4.1 mini"},
         ],
     },
     {
@@ -87,8 +96,10 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "ANTHROPIC_API_KEY",
         "key_url": "https://console.anthropic.com/settings/keys",
         "models": [
-            {"id": "claude-sonnet-4-5", "label": "Claude Sonnet 4.5"},
-            {"id": "claude-3-5-haiku", "label": "Claude 3.5 Haiku · 便宜快"},
+            {"id": "claude-opus-5-5", "label": "Claude Opus 5.5 · 主力推荐"},
+            {"id": "claude-sonnet-5-5", "label": "Claude Sonnet 5.5 · 速度智能均衡"},
+            {"id": "claude-fable-5-1", "label": "Claude Fable 5.1 · 顶级推理（贵）"},
+            {"id": "claude-haiku-4-5", "label": "Claude Haiku 4.5 · 最快最便宜"},
         ],
     },
     {
@@ -98,8 +109,10 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "GEMINI_API_KEY",
         "key_url": "https://aistudio.google.com/apikey",
         "models": [
-            {"id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro"},
-            {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash · 便宜快"},
+            {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash · 最新"},
+            {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash"},
+            {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
+            {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite · 便宜"},
         ],
     },
     {
@@ -109,7 +122,9 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "XAI_API_KEY",
         "key_url": "https://console.x.ai/",
         "models": [
-            {"id": "grok-3", "label": "Grok 3"},
+            {"id": "grok-4.7", "label": "Grok 4.7 · 最新旗舰"},
+            {"id": "grok-4.6", "label": "Grok 4.6 · 长程Agent强"},
+            {"id": "grok-4.3", "label": "Grok 4.3"},
             {"id": "grok-3-mini", "label": "Grok 3 Mini · 便宜快"},
         ],
     },
@@ -120,6 +135,7 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "MINIMAX_API_KEY",
         "key_url": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
         "models": [
+            {"id": "MiniMax-M3", "label": "MiniMax-M3 · 最新"},
             {"id": "MiniMax-M2.7", "label": "MiniMax-M2.7"},
             {"id": "MiniMax-M2.1", "label": "MiniMax-M2.1"},
         ],
@@ -138,8 +154,12 @@ MODEL_CATALOG: list[dict] = [
                 "base_url": "https://ark.cn-beijing.volces.com/api/v3",
                 "hint": "按量计费端点，不会消耗订阅套餐额度",
                 "models": [
-                    {"id": "doubao-seed-1-6-250615", "label": "Doubao-Seed-1.6"},
-                    {"id": "doubao-1-5-pro-32k-250115", "label": "Doubao-1.5-Pro-32k"},
+                    {"id": "doubao-seed-2-1-pro-260915", "label": "Doubao-Seed-2.1-Pro · 最新推荐"},
+                    {"id": "doubao-seed-2-1-lite-260915", "label": "Doubao-Seed-2.1-Lite · 三模态/1M"},
+                    {"id": "doubao-seed-2-1-turbo-260628", "label": "Doubao-Seed-2.1-Turbo · 高性价比"},
+                    {"id": "doubao-seed-evolving", "label": "Doubao-Seed-Evolving · 周级迭代"},
+                    {"id": "doubao-seed-2-0-lite-260428", "label": "Doubao-Seed-2.0-Lite"},
+                    {"id": "doubao-seed-2-0-mini-260428", "label": "Doubao-Seed-2.0-Mini"},
                 ],
             },
             {
@@ -157,6 +177,7 @@ MODEL_CATALOG: list[dict] = [
                     {"id": "kimi-k2.6", "label": "Kimi-K2.6"},
                     {"id": "kimi-k2.7-code", "label": "Kimi-K2.7-Code"},
                     {"id": "glm-5.2", "label": "GLM-5.2"},
+                    {"id": "glm-5.3", "label": "GLM-5.3"},
                     {"id": "minimax-m2.7", "label": "MiniMax-M2.7"},
                     {"id": "minimax-m3", "label": "MiniMax-M3"},
                 ],
@@ -167,13 +188,15 @@ MODEL_CATALOG: list[dict] = [
                 "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
                 "hint": "从下方选择或输入模型 ID（官方 model-name 配置，TRAE 同款）",
                 "models": [
+                    {"id": "doubao-seed-2.1-turbo", "label": "Doubao-Seed-2.1-Turbo"},
+                    {"id": "doubao-seed-2.1-lite", "label": "Doubao-Seed-2.1-Lite"},
                     {"id": "doubao-seed-2.0-lite", "label": "Doubao-Seed-2.0-Lite"},
                     {"id": "doubao-seed-2.0-mini", "label": "Doubao-Seed-2.0-Mini"},
                     {"id": "kimi-k2.7-code", "label": "Kimi-K2.7-Code"},
                     {"id": "minimax-m3", "label": "MiniMax-M3"},
                     {"id": "doubao-seed-evolving", "label": "Doubao-Seed-Evolving"},
                     {"id": "kimi-k3", "label": "Kimi-K3"},
-                    {"id": "doubao-seed-2.1-turbo", "label": "Doubao-Seed-2.1-Turbo"},
+                    {"id": "doubao-seed-2.1-pro", "label": "Doubao-Seed-2.1-Pro"},
                     {"id": "deepseek-v4-flash", "label": "DeepSeek-V4-Flash · 快"},
                     {"id": "glm-5.3", "label": "GLM-5.3"},
                     {"id": "glm-5.3-flash", "label": "GLM-5.3-Flash"},
@@ -183,13 +206,15 @@ MODEL_CATALOG: list[dict] = [
         ],
         # 兼容字段（默认展示 Agent Plan 的模型清单；弹窗内以 config_modes 为准）
         "models": [
+            {"id": "doubao-seed-2.1-turbo", "label": "Doubao-Seed-2.1-Turbo"},
+            {"id": "doubao-seed-2.1-lite", "label": "Doubao-Seed-2.1-Lite"},
             {"id": "doubao-seed-2.0-lite", "label": "Doubao-Seed-2.0-Lite"},
             {"id": "doubao-seed-2.0-mini", "label": "Doubao-Seed-2.0-Mini"},
             {"id": "kimi-k2.7-code", "label": "Kimi-K2.7-Code"},
             {"id": "minimax-m3", "label": "MiniMax-M3"},
             {"id": "doubao-seed-evolving", "label": "Doubao-Seed-Evolving"},
             {"id": "kimi-k3", "label": "Kimi-K3"},
-            {"id": "doubao-seed-2.1-turbo", "label": "Doubao-Seed-2.1-Turbo"},
+            {"id": "doubao-seed-2.1-pro", "label": "Doubao-Seed-2.1-Pro"},
             {"id": "deepseek-v4-flash", "label": "DeepSeek-V4-Flash · 快"},
             {"id": "glm-5.3", "label": "GLM-5.3"},
             {"id": "glm-5.3-flash", "label": "GLM-5.3-Flash"},
@@ -203,8 +228,9 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "TENCENT_API_KEY",
         "key_url": "https://console.cloud.tencent.com/lkeap",
         "models": [
-            {"id": "deepseek-v3", "label": "DeepSeek-V3"},
+            {"id": "deepseek-v4", "label": "DeepSeek-V4"},
             {"id": "hunyuan-turbos-latest", "label": "混元 Turbo"},
+            {"id": "hunyuan-t1-latest", "label": "混元 T1 · 推理"},
         ],
     },
     {
@@ -214,8 +240,10 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "SILICONFLOW_API_KEY",
         "key_url": "https://cloud.siliconflow.cn/account/ak",
         "models": [
+            {"id": "deepseek-ai/DeepSeek-V4", "label": "DeepSeek-V4"},
             {"id": "deepseek-ai/DeepSeek-V3", "label": "DeepSeek-V3"},
-            {"id": "Qwen/Qwen2.5-72B-Instruct", "label": "Qwen2.5-72B"},
+            {"id": "Qwen/Qwen3.5-397B-A17B", "label": "Qwen3.5-397B"},
+            {"id": "Qwen/Qwen3-235B-A22B", "label": "Qwen3-235B"},
         ],
     },
     {
@@ -225,8 +253,10 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "OPENROUTER_API_KEY",
         "key_url": "https://openrouter.ai/settings/keys",
         "models": [
-            {"id": "deepseek/deepseek-chat", "label": "DeepSeek-V3"},
-            {"id": "anthropic/claude-sonnet-4-5", "label": "Claude Sonnet 4.5"},
+            {"id": "deepseek/deepseek-v4-flash", "label": "DeepSeek-V4-Flash"},
+            {"id": "deepseek/deepseek-v4-pro", "label": "DeepSeek-V4-Pro"},
+            {"id": "anthropic/claude-opus-5-5", "label": "Claude Opus 5.5"},
+            {"id": "anthropic/claude-sonnet-5-5", "label": "Claude Sonnet 5.5"},
         ],
     },
     {
@@ -236,8 +266,9 @@ MODEL_CATALOG: list[dict] = [
         "key_env": "OLLAMA_API_KEY",
         "key_url": "https://ollama.com/library",
         "models": [
-            {"id": "qwen2.5:7b", "label": "qwen2.5:7b"},
-            {"id": "llama3.1:8b", "label": "llama3.1:8b"},
+            {"id": "qwen3:8b", "label": "qwen3:8b"},
+            {"id": "llama3.3:8b", "label": "llama3.3:8b"},
+            {"id": "deepseek-r1:8b", "label": "deepseek-r1:8b"},
         ],
     },
 ]
@@ -324,6 +355,47 @@ def _list_enabled_models(db: Session) -> list[dict]:
     ]
 
 
+# ============ 模型列表「动态刷新」缓存 ============
+# 服务商的模型会持续更新，静态目录（MODEL_CATALOG）只能作为首次兜底种子。
+# 用户填入有效 Key 后，可一键「刷新模型列表」从服务商拉取账号下的真实模型，
+# 结果缓存到 AppPreference.catalog_live_models，catalog 接口优先用缓存覆盖静态目录。
+# 缓存结构：{provider: {"updated_at": iso, "models": [{id,label}]}}
+LIVE_MODELS_KEY = "catalog_live_models"
+
+
+def _get_live_models(db: Session) -> dict:
+    pref = db.get(AppPreference, LIVE_MODELS_KEY)
+    if pref is None or not isinstance(pref.value, dict):
+        return {}
+    return pref.value
+
+
+def _set_live_models(db: Session, provider: str, models: list[dict]) -> None:
+    pref = db.get(AppPreference, LIVE_MODELS_KEY)
+    if pref is None:
+        pref = AppPreference(key=LIVE_MODELS_KEY)
+        db.add(pref)
+    data = dict(pref.value or {})
+    data[provider] = {
+        "updated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "models": [{"id": m["id"], "label": m.get("label") or m["id"]} for m in models if m.get("id")],
+    }
+    pref.value = data
+    db.commit()
+
+
+def _clear_live_models(db: Session, provider: str) -> None:
+    """删除某服务商的刷新缓存（如用户删除该服务商全部模型时一并清理，避免残留）。"""
+    pref = db.get(AppPreference, LIVE_MODELS_KEY)
+    if pref is None or not isinstance(pref.value, dict):
+        return
+    data = dict(pref.value)
+    if provider in data:
+        data.pop(provider)
+        pref.value = data
+        db.commit()
+
+
 def _set_enabled_models(db: Session, items: list[dict]) -> None:
     """整体回写已接入模型清单（幂等，按 provider+model 去重）。"""
     unique: dict[tuple[str, str], dict] = {}
@@ -349,9 +421,15 @@ def _model_label(provider: str, model: str) -> str:
 
 @router.get("/catalog")
 def model_catalog(db: Session = Depends(get_db)):
-    """预置模型目录 + 自定义模型：服务商 + 官方地址 + 推荐模型 + Key 配置状态（前端「添加模型」弹窗一次拉取）。"""
+    """预置模型目录 + 自定义模型：服务商 + 官方地址 + 推荐模型 + Key 配置状态（前端「添加模型」弹窗一次拉取）。
+
+    模型列表 = 刷新缓存（用户用 Key 从服务商拉取的真实模型，带 live 标记）优先，
+    无缓存时回落静态目录（MODEL_CATALOG 种子）。刷新缓存的存在意味着用户已用真实 Key 校准过，
+    静态目录里的过时模型不会再展示。
+    """
     rows = {r.provider: r for r in db.execute(select(ProviderKey)).scalars().all()}
     enabled = _list_enabled_models(db)
+    live = _get_live_models(db)
     enabled_by_provider: dict[str, list[dict]] = {}
     for it in enabled:
         enabled_by_provider.setdefault(it["provider"], []).append(it)
@@ -366,17 +444,22 @@ def model_catalog(db: Session = Depends(get_db)):
         # 已接入模型（模型级独立 Key 存于 enabled_models）也算已配置，否则添加了模型 AI 仍被判为未就绪
         elif enabled_by_provider.get(p["provider"]):
             configured, source = True, "db"
+        # 刷新缓存优先：用户用真实 Key 从服务商拉到的模型列表，覆盖静态种子目录
+        live_item = live.get(p["provider"])
+        models = live_item["models"] if live_item else p["models"]
         out.append({
             "provider": p["provider"],
             "label": p["label"],
             "base_url": p["base_url"],
             "key_url": p.get("key_url"),
             "note": p.get("note"),
-            "models": p["models"],
+            "models": models,
             "config_modes": p.get("config_modes"),
             "configured": configured,
             "source": source,
             "custom": False,
+            "live": bool(live_item),
+            "live_updated_at": (live_item or {}).get("updated_at"),
             "enabledModels": [{"model": it["model"], "label": it.get("label") or it["model"]} for it in enabled_by_provider.get(p["provider"], [])],
         })
     # 自定义配置的模型（每个是一个独立"服务商"，内含单个模型）
@@ -740,3 +823,79 @@ async def probe_models(payload: ProbeRequest):
             return ProbeResponse(models=[payload.model])
 
         raise HTTPException(400, "无法探测：该端点不支持列出模型，请选择模型后重试")
+
+
+class CatalogRefresh(BaseModel):
+    """刷新某服务商的模型列表：用有效 Key 从服务商拉取账号下的真实模型并缓存。
+
+    provider/base_url/api_key 必填；model 可选（订阅套餐端点不支持 GET /models 时，
+    用该模型发最小 chat 请求验证并仅保留它）。刷新成功后，catalog 接口以缓存为准。
+    """
+    provider: str = Field(..., min_length=1)
+    api_key: str = Field(..., min_length=1)
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.post("/catalog/refresh")
+async def refresh_catalog_models(payload: CatalogRefresh, db: Session = Depends(get_db)):
+    """「刷新模型列表」：用 Key 拉取该服务商账号下的真实模型并缓存，替代静态种子目录。
+
+    返回 {provider, models, updated_at, source}：models 为真实列表（含 label 回退），
+    source 为 "live"（GET /models 拉到）或 "chat"（订阅端点，仅保留验证通过的模型）。
+    无 Key 无法调用（需 Key 才能验证账号可用模型），静态目录永远作为兜底。
+    """
+    base_url = (payload.base_url or "").strip()
+    if not base_url:
+        # 回落：预置目录里的官方地址（不维护第二份回落表，避免过时）
+        base_url = next((p["base_url"] for p in MODEL_CATALOG if p["provider"] == payload.provider), None)
+    if not base_url:
+        raise HTTPException(400, f"未知 provider：{payload.provider}，请提供 base_url")
+
+    headers = {"Authorization": f"Bearer {payload.api_key}"}
+    async with httpx.AsyncClient(timeout=20) as client:
+        # 1) 优先 GET /models 拿真实可用列表
+        try:
+            resp = await client.get(f"{base_url}/models", headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                models = [
+                    {"id": m.get("id"), "label": m.get("id")}
+                    for m in data.get("data", [])
+                    if m.get("id")
+                ]
+                if models:
+                    _set_live_models(db, payload.provider, models)
+                    return {
+                        "provider": payload.provider,
+                        "models": models,
+                        "updated_at": _get_live_models(db)[payload.provider]["updated_at"],
+                        "source": "live",
+                    }
+            if resp.status_code in (401, 403):
+                raise HTTPException(resp.status_code, f"连接失败：Key 无效或无权访问（HTTP {resp.status_code}）")
+            # 其它状态（如 404/405）：端点不支持列出模型，继续走 chat 验证
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"连接失败：无法访问 {base_url}（{type(e).__name__}）")
+
+        # 2) 用给定模型发最小 chat 请求验证（订阅套餐端点仅支持 /chat/completions）
+        if payload.model:
+            body = {
+                "model": payload.model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+                "stream": False,
+            }
+            resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=body)
+            if resp.status_code not in (200, 201):
+                raise HTTPException(resp.status_code, f"连接失败：{resp.text[:200]}")
+            models = [{"id": payload.model, "label": payload.model}]
+            _set_live_models(db, payload.provider, models)
+            return {
+                "provider": payload.provider,
+                "models": models,
+                "updated_at": _get_live_models(db)[payload.provider]["updated_at"],
+                "source": "chat",
+            }
+
+        raise HTTPException(400, "无法刷新：该端点不支持列出模型，请先选择模型并测试连接")

@@ -644,6 +644,25 @@ export async function probeProvider(
   return data.models ?? [];
 }
 
+/** 「刷新模型列表」：用 Key 从服务商拉取账号下的真实模型并缓存，替代静态种子目录。 */
+export async function refreshCatalogModels(
+  provider: string,
+  apiKey: string,
+  baseUrl?: string,
+  model?: string,
+): Promise<{ provider: string; models: { id: string; label: string }[]; updated_at: string; source: string }> {
+  const res = await fetch(`${BASE}/models/catalog/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl || null, model: model || null }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw httpError(err.detail, "刷新模型列表失败");
+  }
+  return res.json();
+}
+
 /**
  * 查询待作者确认的请求。
  * - 传 novelId：只查该小说（刷新后恢复当前工作台弹窗）；
