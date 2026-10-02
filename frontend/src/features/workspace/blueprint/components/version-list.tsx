@@ -26,7 +26,7 @@ export function BlueprintVersionList({
   onSelect: (id: string) => void;
 }) {
   return (
-    <aside className="panel flex min-w-0 max-h-[calc(100dvh-6rem)] flex-col gap-3">
+    <aside className="panel flex min-w-0 max-h-full flex-col gap-3 self-start overflow-hidden">
       <div className="panel-head mb-0">
         <h3 className="panel-title">蓝图版本</h3>
         <button
@@ -44,7 +44,7 @@ export function BlueprintVersionList({
           还没有蓝图。点右上角「新增蓝图」，让 AI 帮你整理全书方案（规则/人物弧/分卷/伏笔计划）。
         </p>
       ) : (
-        <ul className="flex min-h-0 flex-col gap-1.5 overflow-y-auto">
+        <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
           {items.map((b) => (
             <li key={b.id}>
               <button
