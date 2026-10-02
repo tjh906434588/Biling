@@ -11,11 +11,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { listNovels, updateNovel, deleteNovel, type Novel } from "@/lib/api";
-import NovelCover from "@/components/novel-cover";
+import NovelCover from "@/features/bookshelf/novel-cover";
 import { message } from "@/components/message";
-import { CreateDialog, DeleteDialog, EditDialog } from "@/components/bookshelf/dialogs";
-import { EmptyCreate } from "@/components/bookshelf/empty-create";
-import { Topbar } from "@/components/bookshelf/topbar";
+import { CreateDialog, DeleteDialog, EditDialog } from "@/features/bookshelf/dialogs";
+import { EmptyCreate } from "@/features/bookshelf/empty-create";
+import { Topbar } from "@/features/bookshelf/topbar";
 import { BACKGROUND_TYPES, GUIDE_KEY, ONBOARDING_STEPS } from "@/constants";
 import { formatDate } from "@/utils/format";
 

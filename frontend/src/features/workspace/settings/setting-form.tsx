@@ -8,8 +8,8 @@
 "use client";
 
 import type { Dispatch, SetStateAction } from "react";
-import Modal from "../modal";
-import InfoTip from "../info-tip";
+import Modal from "@/components/modal";
+import InfoTip from "@/components/info-tip";
 import { TimingBlock, type StagePlan } from "./timing";
 import { SPEC_OF, TYPE_LABEL, type FormState } from "./settings-utils";
 import { ROLE_RANKS, SETTING_SPECS, SETTING_TYPES } from "@/constants";

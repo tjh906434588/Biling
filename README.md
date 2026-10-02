@@ -67,7 +67,9 @@ biling/
 ├─ frontend/            # Next.js 前端（端口 3000）
 │  └─ src/
 │     ├─ app/           # 页面（书架 / 工作区）
-│     └─ components/    # 各功能面板（设定/蓝图/大纲/写作/风格/图谱/模型…）
+│     ├─ features/      # 业务功能（书架 / 工作台 / 各写作面板，含各自私有组件）
+│     ├─ components/    # 全局共享组件（modal/message/notification/loading 等）
+│     └─ lib/api/       # API 客户端（按后端域拆分，index.ts 统一出口）
 ├─ backend/             # FastAPI 后端（端口 8000）
 │  └─ app/
 │     ├─ agents/        # AI 角色（蓝图师/大纲师/小说家/评价师/提取师…）

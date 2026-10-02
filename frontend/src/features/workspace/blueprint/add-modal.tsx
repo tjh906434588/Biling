@@ -9,8 +9,8 @@
 
 import { useRef, type ChangeEvent } from "react";
 import type { OutlineCheckState } from "./blueprint-utils";
-import Modal from "../modal";
-import InfoTip from "../info-tip";
+import Modal from "@/components/modal";
+import InfoTip from "@/components/info-tip";
 import { CostHint } from "@/lib/ai-status";
 
 /** 「新增蓝图」弹窗：导入/清除/复制模板 + 输入框 + 骨架检测提示 + 生成操作栏。 */

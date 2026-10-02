@@ -12,7 +12,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_VOLUME, SOURCE_LABELS, formatVolumeLabel, type VolumeInfo } from "@/constants";
 import type { ChapterListItem, ChapterVersion } from "@/lib/api";
 import { CostHint } from "@/lib/ai-status";
-import InfoTip from "../info-tip";
+import InfoTip from "@/components/info-tip";
 
 export interface ChapterVolumeGroup {
   key: string;

@@ -7,7 +7,7 @@
 "use client";
 
 import type { Dispatch, SetStateAction } from "react";
-import Modal from "../modal";
+import Modal from "@/components/modal";
 import { EraField, type EraFormState } from "./era";
 
 interface Props {

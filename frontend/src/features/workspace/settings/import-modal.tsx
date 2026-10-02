@@ -6,7 +6,7 @@
  */
 "use client";
 
-import Modal from "../modal";
+import Modal from "@/components/modal";
 import { orderStages } from "./timing";
 import { STAGE_STYLE, TYPE_LABEL } from "./settings-utils";
 import { STAGE_LABEL } from "@/constants";

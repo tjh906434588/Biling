@@ -14,9 +14,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getGraph, getMemoryReview, type GraphView, type MemoryReview } from "@/lib/api";
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
-import { MemoryPanel } from "./graph/memory-panel";
-import { GraphLegend } from "./graph/graph-legend";
-import { GraphCanvas } from "./graph/relation-graph";
+import { MemoryPanel } from "./memory-panel";
+import { GraphLegend } from "./graph-legend";
+import { GraphCanvas } from "./relation-graph";
 
 /**
  * 关系图谱面板主组件：并行加载图谱与角色状态回顾。

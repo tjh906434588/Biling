@@ -7,14 +7,14 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import Modal from "./modal";
+import Modal from "@/components/modal";
 import {
   ConfirmPanel,
   getAuthorConfirms,
   removeConfirm,
   setInlineHost,
   subscribeAuthorConfirms,
-} from "./author-confirm";
+} from "@/components/author-confirm";
 import { formatElapsed } from "@/utils/format";
 
 /** SSR 服务端快照：恒为空，且引用稳定（避免 "getServerSnapshot should be cached" 警告） */

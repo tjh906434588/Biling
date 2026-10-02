@@ -9,7 +9,7 @@
 import { FUNCTIONS } from "@/constants";
 import type { Outline } from "@/lib/api";
 import { CostHint } from "@/lib/ai-status";
-import InfoTip from "../info-tip";
+import InfoTip from "@/components/info-tip";
 import { AutoTextarea } from "./auto-textarea";
 import type { GenForm } from "./panel-utils";
 

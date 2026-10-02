@@ -6,7 +6,7 @@
  */
 "use client";
 
-import Modal from "../modal";
+import Modal from "@/components/modal";
 import type { InfoDraft } from "./panel-utils";
 
 /** 信息控制弹窗 props：草稿值、变更/提交/关闭回调由 writing-panel 传入。 */

@@ -16,16 +16,16 @@ import { runAgent, commitAgent, listNovels, type StreamEventData } from "@/lib/a
 import { AGENTS } from "@/constants";
 import type { Tab } from "@/types/workspace";
 import { AiNotReadyBanner, useAiStatus } from "@/lib/ai-status";
-import SettingsPanel from "@/components/settings-panel";
-import WritingPanel, { hideWorkspaceNotifs, showWorkspaceNotifs } from "@/components/writing-panel";
-import OutlinePanel from "@/components/outline-panel";
-import LedgerPanel from "@/components/ledger-panel";
-import BlueprintPanel from "@/components/blueprint-panel";
-import StylePanel from "@/components/style-panel";
-import GraphPanel from "@/components/graph-panel";
-import ModelsPanel from "@/components/models-panel";
-import PromptsModal from "@/components/prompts-modal";
-import AgentTaskToasts from "@/components/agent-task-toasts";
+import SettingsPanel from "@/features/workspace/settings/settings-panel";
+import WritingPanel, { hideWorkspaceNotifs, showWorkspaceNotifs } from "@/features/workspace/writing/writing-panel";
+import OutlinePanel from "@/features/workspace/outline/outline-panel";
+import LedgerPanel from "@/features/workspace/ledger/ledger-panel";
+import BlueprintPanel from "@/features/workspace/blueprint/blueprint-panel";
+import StylePanel from "@/features/workspace/style/style-panel";
+import GraphPanel from "@/features/workspace/graph/graph-panel";
+import ModelsPanel from "@/features/workspace/models/models-panel";
+import PromptsModal from "@/features/workspace/prompts-modal";
+import AgentTaskToasts from "@/features/workspace/agent-task-toasts";
 import AuthorConfirmHost from "@/components/author-confirm";
 import { message } from "@/components/message";
 import {
@@ -34,12 +34,12 @@ import {
   defaultForm,
   type CommitItem,
   type LogItem,
-} from "@/components/workspace/workspace-config";
-import FirstRunGuide from "@/components/workspace/first-run-guide";
-import Topbar from "@/components/workspace/topbar";
-import Sidebar from "@/components/workspace/sidebar";
-import TabStrip from "@/components/workspace/tab-strip";
-import ToolsPanel from "@/components/workspace/tools-panel";
+} from "@/features/workspace/workspace-config";
+import FirstRunGuide from "@/features/workspace/first-run-guide";
+import Topbar from "@/features/workspace/topbar";
+import Sidebar from "@/features/workspace/sidebar";
+import TabStrip from "@/features/workspace/tab-strip";
+import ToolsPanel from "@/features/workspace/tools-panel";
 
 /** 工作台主页组件：tab 切换 + 各功能区面板挂载 + tools 调试运行器 */
 export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {

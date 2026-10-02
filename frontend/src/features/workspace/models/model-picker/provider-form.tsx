@@ -9,7 +9,7 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import type { CatalogModel, CatalogProvider } from "@/lib/api";
-import InfoTip from "../info-tip";
+import InfoTip from "@/components/info-tip";
 import EnabledList from "./enabled-list";
 import { inputCls, labelCls, type ConfigMode, type EnabledModel, type LiveOverride } from "./utils";
 

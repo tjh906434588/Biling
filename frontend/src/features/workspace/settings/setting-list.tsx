@@ -7,7 +7,7 @@
  */
 "use client";
 
-import InfoTip from "../info-tip";
+import InfoTip from "@/components/info-tip";
 import { SETTING_TYPES, STAGE_LABEL } from "@/constants";
 import { orderStages } from "./timing";
 import { splitSetting, settingMeta } from "./helpers";

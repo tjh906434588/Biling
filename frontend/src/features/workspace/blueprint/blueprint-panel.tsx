@@ -32,8 +32,8 @@ import {
 } from "@/lib/blueprint-run";
 import { useElapsed } from "@/lib/use-elapsed";
 import { copyText } from "@/utils/clipboard";
-import AgentStreamModal from "./agent-stream-modal";
-import ConfirmDialog from "./confirm-dialog";
+import AgentStreamModal from "../components/agent-stream-modal";
+import ConfirmDialog from "@/components/confirm-dialog";
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
 import { useAiStatus } from "@/lib/ai-status";
@@ -41,10 +41,10 @@ import {
   keywordOutlineCheck,
   OUTLINE_TEMPLATE_TEXT,
   type OutlineCheckState,
-} from "./blueprint/blueprint-utils";
-import { BlueprintVersionList } from "./blueprint/version-list";
-import { BlueprintDetail } from "./blueprint/detail";
-import { BlueprintAddModal } from "./blueprint/add-modal";
+} from "./blueprint-utils";
+import { BlueprintVersionList } from "./version-list";
+import { BlueprintDetail } from "./detail";
+import { BlueprintAddModal } from "./add-modal";
 
 interface Props {
   novelId: string;

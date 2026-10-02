@@ -20,7 +20,7 @@ import {
   type DefaultModel,
 } from "@/lib/api";
 import { message } from "@/components/message";
-import ConfirmDialog from "./confirm-dialog";
+import ConfirmDialog from "@/components/confirm-dialog";
 import CustomForm from "./model-picker/custom-form";
 import ProviderForm from "./model-picker/provider-form";
 import {

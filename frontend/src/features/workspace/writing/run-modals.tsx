@@ -6,8 +6,8 @@
  */
 "use client";
 
-import AgentStreamModal from "../agent-stream-modal";
-import ConfirmDialog from "../confirm-dialog";
+import AgentStreamModal from "../components/agent-stream-modal";
+import ConfirmDialog from "@/components/confirm-dialog";
 import type { ChapterVersion } from "@/lib/api";
 import { sourceLabel } from "./chapter-tree";
 import type { AiRunState, ConfirmDialogState } from "./panel-utils";

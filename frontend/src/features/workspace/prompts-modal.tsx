@@ -8,7 +8,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Modal from "./modal";
+import Modal from "@/components/modal";
 import Loading from "@/components/loading";
 import { message } from "@/components/message";
 import {

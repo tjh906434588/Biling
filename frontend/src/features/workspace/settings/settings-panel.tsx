@@ -29,7 +29,7 @@ import {
   type Setting,
 } from "@/lib/api";
 import { IMPORT_INSTRUCTION } from "@/constants";
-import ConfirmDialog from "./confirm-dialog";
+import ConfirmDialog from "@/components/confirm-dialog";
 import Loading from "@/components/loading";
 import { message } from "@/components/message";
 import { copyText } from "@/utils/clipboard";
@@ -39,16 +39,16 @@ import {
   deriveStageRanges,
   timingStructured,
   type StagePlan,
-} from "./settings/timing";
-import { EMPTY_ERA_FORM, eraFromForm, eraToForm, type EraFormState } from "./settings/era";
-import { parseImportText, type ImportItem } from "./settings/import";
-import { settingMeta, splitSetting } from "./settings/helpers";
-import { EMPTY_FORM, type FormState } from "./settings/settings-utils";
-import SettingsSidebar from "./settings/meta-panel";
-import SettingList from "./settings/setting-list";
-import SettingFormModal from "./settings/setting-form";
-import ImportModal from "./settings/import-modal";
-import EraEditModal from "./settings/era-form";
+} from "./timing";
+import { EMPTY_ERA_FORM, eraFromForm, eraToForm, type EraFormState } from "./era";
+import { parseImportText, type ImportItem } from "./import";
+import { settingMeta, splitSetting } from "./helpers";
+import { EMPTY_FORM, type FormState } from "./settings-utils";
+import SettingsSidebar from "./meta-panel";
+import SettingList from "./setting-list";
+import SettingFormModal from "./setting-form";
+import ImportModal from "./import-modal";
+import EraEditModal from "./era-form";
 
 interface Props {
   novelId: string;

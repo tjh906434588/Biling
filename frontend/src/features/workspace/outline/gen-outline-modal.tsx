@@ -8,7 +8,7 @@
 "use client";
 
 import type { Setting } from "@/lib/api";
-import Modal from "../modal";
+import Modal from "@/components/modal";
 import { CostHint } from "@/lib/ai-status";
 import { FUNCTIONS, ROLE_RANKS, STAGE_LABEL, type VolumeInfo } from "@/constants";
 import { inactiveReason, roleRankOf, type GenForm } from "./outline-utils";

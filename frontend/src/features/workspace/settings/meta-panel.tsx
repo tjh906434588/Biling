@@ -6,7 +6,7 @@
  */
 "use client";
 
-import InfoTip from "../info-tip";
+import InfoTip from "@/components/info-tip";
 import { BackgroundTypePicker, GenrePicker } from "@/components/novel-meta";
 import { EraListCard } from "./era";
 import type { Novel } from "@/lib/api";

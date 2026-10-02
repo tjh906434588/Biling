@@ -18,7 +18,7 @@ import {
   type DefaultModel,
   type ModelRoute,
 } from "@/lib/api";
-import Modal from "./modal";
+import Modal from "@/components/modal";
 import ModelPickerModal from "./model-picker-modal";
 import Loading from "@/components/loading";
 import { useAiStatus } from "@/lib/ai-status";

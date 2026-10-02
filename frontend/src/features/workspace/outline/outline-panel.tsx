@@ -27,17 +27,17 @@ import {
   type OutlineApprovalStatusResult,
   type Setting,
 } from "@/lib/api";
-import ConfirmDialog from "./confirm-dialog";
-import AgentStreamModal from "./agent-stream-modal";
-import { pushAuthorConfirm } from "./author-confirm";
+import ConfirmDialog from "@/components/confirm-dialog";
+import AgentStreamModal from "../components/agent-stream-modal";
+import { pushAuthorConfirm } from "@/components/author-confirm";
 import { useElapsed } from "@/lib/use-elapsed";
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
 import { useAiStatus } from "@/lib/ai-status";
 import { type VolumeInfo } from "@/constants";
-import OutlineList from "./outline/outline-list";
-import OutlineDetail from "./outline/outline-detail";
-import GenOutlineModal from "./outline/gen-outline-modal";
+import OutlineList from "./outline-list";
+import OutlineDetail from "./outline-detail";
+import GenOutlineModal from "./gen-outline-modal";
 import {
   deriveStage,
   groupByVolume,
@@ -47,7 +47,7 @@ import {
   type GenForm,
   type OutlineContent,
   type VolumeGroup,
-} from "./outline/outline-utils";
+} from "./outline-utils";
 
 interface Props {
   novelId: string;
