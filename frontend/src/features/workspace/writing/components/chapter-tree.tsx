@@ -363,20 +363,17 @@ export function ChapterSidebar({
                 定稿
               </button>
             )}
-            {/* 信息控制：查看本章已填写的信息控制（谁知道了什么）；修改需重新生成本章时在弹窗里调整 */}
-            <button
-              type="button"
-              onClick={onViewInfo}
-              disabled={activeNo == null}
-              className="btn btn-ghost w-full"
-              title={
-                activeNo == null
-                  ? "请先选择一章"
-                  : "查看本章已填写的信息控制（正文可不体现，但绝不能与它们冲突）"
-              }
-            >
-              信息控制
-            </button>
+            {/* 信息控制：仅选中章节时显示；查看本章已填写的信息控制（谁知道了什么），修改需重新生成时调整 */}
+            {activeNo != null && (
+              <button
+                type="button"
+                onClick={onViewInfo}
+                className="btn btn-ghost w-full"
+                title="查看本章已填写的信息控制（正文可不体现，但绝不能与它们冲突）"
+              >
+                信息控制
+              </button>
+            )}
             {/* 评价入口统一在右侧「评价与优化」，本章操作只保留提取与复制 */}
             <button
               className={`relative w-full cursor-pointer rounded-lg border py-2 pl-3 pr-7 text-sm transition-colors ${
