@@ -14,8 +14,8 @@ tools/fanqie_crawler/
 ├── build_mapping.py          # 换字体时重建映射（ddddocr，全自动）
 ├── decode_text.py            # 离线解码工具（纯 Python，无浏览器依赖）
 ├── extract_template.js       # 浏览器提取+解码脚本模板（Exec 环境）
-├── corpus/                   # 已解码章节正文（每本仅前 N 章，用于规则提炼，非全文）
-│   └── 十日终焉/dec_ch{1..10}.txt
+├── corpus/                   # 抓取样本（临时产物）：提炼完规则即删除，不入库（见「语料清理」）
+│   └── 十日终焉/dec_ch{1..10}.txt   # 示例（实际不提交）
 └── rules/                    # 题材族约束库（通用，样本持续追加）
     └── fanqie_rules.md        # 各族 storytelling/rhythm 规则 + 逐本观察记录
 ```
@@ -36,6 +36,10 @@ tools/fanqie_crawler/
 6. **提炼规则**：阅读前十章，按 `rules/fanqie_rules.md` 内的模板追加该书的规则总结
    （开篇黄金三章 / 金手指兑现节奏 / 事件组织 / 悬念管理 / 可写规则清单），
    并做同族多本比对融合（【必写】/【可选】分级），同步到 `backend/app/agents/platform_rules.py`。
+
+## 语料清理（重要）
+
+`corpus/` 是第三方小说正文，**只在本地用于提炼规则，提炼完即删除，绝不提交到仓库**（`.gitignore` 已忽略该目录）。规则结论沉淀在 `rules/fanqie_rules.md` 与 `backend/app/agents/platform_rules.py`，不依赖原始语料。
 
 ## 已知坑（务必看）
 
