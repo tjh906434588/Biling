@@ -12,7 +12,8 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 同一份数据、配置、规则、文案，**只在一个地方维护**（Single Source of Truth）。新增代码前先问"这份东西原来定义在哪"，去那里改，不要另起一份。
 
 - **类型从常量推导**：`types/api.ts` 引用 `@/constants`（如 `SETTING_TYPES`、`TASK_TYPES`），不重复写枚举/联合。
-- **常量收敛 constants/**：UI 标签、key、枚举值集中在 `frontend/src/constants/`，业务代码从 `@/constants` 导入。
+- **常量收敛 constants/**：UI 标签、key、枚举值集中在 `frontend/src/constants/`（按领域分文件：task-types / agents / outline / settings / meta / writing / api / storage），业务代码从 `@/constants` 导入。
+- **常量粒度边界（自动执行，无需用户提醒）**：仅被单个文件用到的常量**就地保留**（靠近使用处更可读），**不要**把所有常量物理塞进一个文件；拆分大文件时顺带把「跨文件重复」的常量提升到 `constants/`——提升的是消除重复，不是搬位置。
 - **跨端契约属例外**：后端 `backend/` 与前端 `frontend/` 各自维护一份接口契约（如任务类型、API 路径），这是合理的分端例外；变更时必须**两端同步**并在此类单源文件头部注释里写明"另一端在哪"。
 - **doc 与 code 镜像属例外**：规则文档（如 `rules/fanqie_rules.md`）与运行时代码（`platform_rules.py`）是同一内容的两种形态；文档为人类可读源、代码为运行时事实源，通过 skill 流程保证同步，不另立第三份。
 - 发现重复 → 合并回单一源，并在源文件注释里说明"谁从这里派生"。
@@ -61,6 +62,19 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - 错误提示走全局 `message` / `notification`；**不吞异常**——catch 里至少 `log.errorFrom`（见 `@/lib/logging`）留痕，前端错误经 `POST /api/logs` 落盘供「导出日志」排查。
 - 交互类改动（弹窗/确认/流式）遵循既有组件模式（modal.tsx / confirm-dialog.tsx / auto-textarea.tsx）。
 - **AI 生成任务**：走 `stream/agents/*` 接口与 `AgentTask` 持久化 + SSE 事件流约定（`context_ready → stream_delta* → schema_validate → stored`），新增/改动生成流程必须沿用，不得绕过任务持久化与作者确认机制。
+
+## 4.5 大文件自动拆分
+
+单文件（组件 / 页面 / hook）超过约 700 行时，**自动按逻辑边界拆分，无需用户提醒**；拆完保证行为、样式、文案、时序完全不变。
+
+- 模块级纯函数 / 类型 / 单文件常量 → 抽到同目录 `*-utils.ts` 或领域子目录。
+- 渲染 return 里的大型 JSX 区块 → 抽展示型子组件（props 显式声明 + 回调）；所有 state、数据加载、时序逻辑保留在主组件，子组件只做展示。
+- 编排逻辑（编辑器 / AI 流程 / 轮询恢复等）→ 抽自定义 hooks（如 `use-chapter-editor.ts` / `use-ai-flows.ts` / `use-resume-agent-task.ts`），共享状态经类型化 ctx 传入。
+- 明显重复的代码块 → 收敛成小 helper（先确认行为可证明等价再合）。
+- 子组件放对应领域子目录：`writing/ settings/ outline/ blueprint/ graph/ model-picker/ bookshelf/ workspace/ author-confirm/`；新文件顶部写 `@file 路径 · 作用 · 关键机制` 头注释，含 hooks 的加 `"use client"`。
+- 红线：不改防抖 / 竞态守卫 / useEffect 依赖 / SSE 与持久化逻辑；不把「依赖父组件闭包且无法干净传 props」的 JSX 强行抽出；不为拆分引入大型 ctx「上帝对象」之外的不必要抽象。
+- 页面文件（`app/**/page.tsx`）：默认导出必须留在 page 且导出名不变（Next.js 要求）；内联弹窗/表单/区块可拆到对应领域子目录。
+- 拆完必须 `cd frontend && npm run build`（含 TS 检查）验证通过后再提交。
 
 ## 5. 日志与诊断（添加 / 修改 / 删除规范）
 
