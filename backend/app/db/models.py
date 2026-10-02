@@ -391,18 +391,6 @@ class AppPreference(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
-class DetectorConfig(Base):
-    """AI 生成检测配置（可选，体检性质；不设硬阈值不阻断写作）。"""
-    __tablename__ = "detector_config"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    backend: Mapped[str] = mapped_column(String(24), default="local_heuristic")  # local_heuristic|local_model|zhuque_api
-    api_key: Mapped[Optional[str]] = mapped_column(Text)
-    base_url: Mapped[Optional[str]] = mapped_column(Text)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
-
-
 class PromptTemplate(Base):
     """提示词模板（存库可配置，后台可编辑）。"""
     __tablename__ = "prompts"

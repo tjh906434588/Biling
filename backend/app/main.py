@@ -11,7 +11,6 @@ from app.api import (
     blueprints,
     chapters,
     concepts,
-    detect,
     diagnostics,
     graph,
     ledger,
@@ -122,7 +121,6 @@ app.include_router(ledger.router)
 app.include_router(blueprints.router)
 app.include_router(concepts.router)
 app.include_router(style.router)
-app.include_router(detect.router)
 app.include_router(graph.router)
 app.include_router(memory.router)
 app.include_router(stream.router)

@@ -1,4 +1,4 @@
-"""蓝图/概念/风格/检测/图谱/记忆/模型路由冒烟：blueprints / concepts / style / detect / graph / memory / models routes。
+"""蓝图/概念/风格/图谱/记忆/模型路由冒烟：blueprints / concepts / style / graph / memory / models routes。
 
 用法：python scripts/smoke_blueprint_review.py [novel_id]
 缺省取库中第一本小说。
@@ -60,18 +60,7 @@ def main():
         ),
     )
 
-    # 4. detect
-    det = ok(
-        "POST detect",
-        client.post(
-            f"{BASE}/novels/{n}/detect",
-            json={
-                "text": "总而言之，这个故事终于迎来了结局。首先，他感到非常难过，但是仍然坚持着。其次，他仿佛看到了希望。最后，他决定继续前进。"
-            },
-        ),
-    )
-
-    # 5. graph
+    # 4. graph
     ok("GET graph", client.get(f"{BASE}/novels/{n}/graph"))
     rel = ok(
         "POST graph/relations",
@@ -83,10 +72,10 @@ def main():
     if rel.get("id"):
         ok("DELETE graph/relations", client.delete(f"{BASE}/novels/{n}/graph/relations/{rel['id']}"))
 
-    # 6. memory review
+    # 5. memory review
     ok("GET memory-review", client.get(f"{BASE}/novels/{n}/memory-review"))
 
-    # 7. models routes CRUD
+    # 6. models routes CRUD
     ok("GET models/routes", client.get(f"{BASE}/models/routes"))
     r = ok(
         "POST models/routes",

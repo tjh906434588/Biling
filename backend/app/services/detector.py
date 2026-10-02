@@ -183,8 +183,6 @@ class DetectionResult:
     signals: list[str] = field(default_factory=list)  # 供前端展示的信号说明
     # 句子级 AI 味句式 lint 结果（确定性正则）：[{category, sentence, snippet}]
     sentence_findings: list = field(default_factory=list)
-    # 三分类占比 {human, ai, suspected}（朱雀 labels_ratio 风格，合计≈100）
-    labels_ratio: dict = field(default_factory=dict)
     note: str = "体检参考，不设硬阈值、不阻断写作；若分数偏高请优先调优 L2 风格画像与 L3 节奏指令，而非针对阈值洗稿。"
 
 
@@ -226,61 +224,6 @@ def _score_from_stats(stats: DensityStats) -> tuple[int, list[str]]:
         signals.append("感叹/疑问语气偏少，情绪起伏弱")
 
     return min(score, 55), signals
-
-
-def _three_way_ratios(stats: DensityStats, total_regex: int, lint_by_cat: dict[str, int]) -> dict:
-    """三分类占比（朱雀 labels_ratio 风格：人工 / 疑似AI / AI，合计 100）。
-
-    - 人工特征分：句长起伏、感叹/疑问语气、对话占比、极端句搭配、语气词。
-    - AI 特征分：词法模板命中、AI 味句式、连接词堆叠、句长过平、超长句。
-    - 疑似 AI：两类证据都不足/两可的剩余部分（归因不明确，取 100 - 其余两项）。
-    """
-    human = 0
-    if stats.sentences >= 5:
-        cv = stats.std_sentence_len / max(stats.avg_sentence_len, 1)
-        if cv >= 0.7:
-            human += 30
-        elif cv >= 0.45:
-            human += 16
-        if stats.exclamation_ratio >= 0.15:
-            human += 20
-        elif stats.exclamation_ratio >= 0.05:
-            human += 10
-        if stats.dialogue_ratio >= 0.15:
-            human += 20
-        elif stats.dialogue_ratio >= 0.05:
-            human += 10
-        if stats.short_ratio >= 0.2 or stats.long_ratio >= 0.08:
-            human += 12
-        if stats.stopword_density >= 2:
-            human += 12
-    ai = 0
-    ai += min(total_regex, 8) * 3  # 模板词命中
-    lint_total = sum(min(c, _LINT_SCORE_CAP_PER_CATEGORY) for c in lint_by_cat.values())
-    ai += min(lint_total, 6) * 4  # AI 味句式
-    if stats.transition_density > 6:
-        ai += 16
-    elif stats.transition_density > 3.5:
-        ai += 8
-    if stats.sentences >= 10:
-        cv = stats.std_sentence_len / max(stats.avg_sentence_len, 1)
-        if cv < 0.45:
-            ai += 12
-    if stats.commas_per_sentence > 3.5:
-        ai += 8
-    if stats.long_ratio > 0.15:
-        ai += 8
-
-    human = min(human, 100)
-    ai = min(ai, 100)
-    total = human + ai
-    if total == 0:
-        return {"human": 0, "ai": 0, "suspected": 100}
-    if total >= 100:
-        # 两类证据都强时按占比归一（不出现双高相加超 100）
-        h = round(human / total * 100)
-        return {"human": h, "ai": 100 - h, "suspected": 0}
-    return {"human": human, "ai": ai, "suspected": 100 - total}
 
 
 def detect(text: str) -> DetectionResult:
@@ -353,7 +296,6 @@ def detect(text: str) -> DetectionResult:
 
         result.heuristic_score = min(score, 100)
         result.signals = signals
-        result.labels_ratio = _three_way_ratios(stats, total_regex, lint_by_cat)
         result.verdict = (
             "likely_ai" if score >= 62 else "mixed" if score >= 40 else "likely_human"
         )
