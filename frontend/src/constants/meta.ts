@@ -39,6 +39,28 @@ export const GENRE_PRESETS = [
   "职场",
 ];
 
+// 题材同义标签 → 标准标签（跨端契约：与 backend/app/agents/platform_rules.py 的 GENRE_ALIASES 同步维护，
+// 后端题材族匹配用它做归一化，前端用它做自定义输入的同义提示。改动必须两端同步。）
+export const GENRE_ALIASES: Record<string, string> = {
+  "修仙": "仙侠",
+  "修真": "仙侠",
+  "魔幻": "奇幻",
+  "末世": "科幻",
+  "末日": "科幻",
+  "上班流": "职场",
+  "打工人": "职场",
+  "甜文": "甜宠",
+  "宠文": "甜宠",
+  "现言": "言情",
+  "古言": "言情",
+  "古代言情": "言情",
+  "电竞": "游戏",
+  "游戏竞技": "游戏",
+  "规则怪谈": "悬疑",
+  "恐怖": "灵异",
+  "惊悚": "灵异",
+};
+
 /** 新手引导步骤的字段结构。 */
 export interface OnboardingStep {
   key: string;

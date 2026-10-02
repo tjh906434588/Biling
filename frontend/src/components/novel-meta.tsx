@@ -9,7 +9,7 @@
  */
 import { useState } from "react";
 import type { Novel } from "@/lib/api";
-import { BACKGROUND_TYPES, GENRE_PRESETS } from "@/constants";
+import { BACKGROUND_TYPES, GENRE_ALIASES, GENRE_PRESETS } from "@/constants";
 
 /* 世界背景类型：分段按钮单选；点击已选项可取消（回到未选择），默认不选 */
 /**
@@ -81,6 +81,8 @@ export function GenrePicker({
     onChange([...value, g]);
     setCustom("");
   };
+  /** 输入命中已知同义标签（GENRE_ALIASES，与后端题材族匹配同步）且标准标签未选中 → 提示改用标准标签 */
+  const aliasTarget = custom.trim() ? GENRE_ALIASES[custom.trim()] : undefined;
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-1.5">
@@ -137,6 +139,27 @@ export function GenrePicker({
           + 添加
         </button>
       </div>
+      {/* 同义提示：输入命中已知同义标签时引导改用标准标签（后端题材族匹配按标准标签命中） */}
+      {aliasTarget && !value.includes(aliasTarget) && (
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] leading-4 text-zinc-500">
+          <span>「{custom.trim()}」与标准标签「{aliasTarget}」同义，</span>
+          <button
+            type="button"
+            className="rounded-md bg-zinc-800 px-1.5 py-0.5 text-[10.5px] leading-none text-white hover:opacity-80 dark:bg-zinc-100 dark:text-zinc-900"
+            onClick={() => {
+              if (!aliasTarget) return;
+              onChange([...value, aliasTarget]);
+              setCustom("");
+            }}
+          >
+            改用「{aliasTarget}」
+          </button>
+          <span>·</span>
+          <button type="button" className="hover:underline" onClick={addCustom}>
+            仍用「{custom.trim()}」
+          </button>
+        </div>
+      )}
     </div>
   );
 }
