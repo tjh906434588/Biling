@@ -163,7 +163,7 @@ export function AddChapterDrawer({
           <AutoTextarea
             value={form.outline}
             onChange={(v) => onFormChange({ ...form, outline: v })}
-            maxHeight={200}
+            fill
             disabled={generating}
             placeholder={
               targetOutline && useOutline
