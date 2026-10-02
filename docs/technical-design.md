@@ -103,7 +103,7 @@ settings(
   embedding VECTOR(1024),                      -- pgvector；SQLite 开发期可为 NULL
   created_at, updated_at, deleted_at
 )
--- M2 增强（借鉴 NeuroBook nb-memory，防"同一角色两条设定"分身问题）：
+-- 增强（借鉴 NeuroBook nb-memory，防"同一角色两条设定"分身问题）：
 --   aliases JSONB —— 别名表（如"岚"与"占卜师岚"），带别名生效章节；检索与抽取按别名归一
 --   merged_into_id UUID NULL —— 分身合并：发现 A/B 是同一主体时合并并指向主条目，旧条目保留供审计
 
@@ -168,9 +168,9 @@ story_state(
   unresolved_hooks JSONB, next_chapter_implications JSONB,
   created_at
 )
--- M2 增强（借鉴 NeuroBook 双时间轴 + as-of 查询，解决"时间泄漏/前后矛盾"）：
+-- 增强（借鉴 NeuroBook 双时间轴 + as-of 查询，解决"时间泄漏/前后矛盾"）：
 --   当前为"每章覆盖式快照"，无法回答"第 N 章时世界是什么样、那时还不知道什么"。
---   M2 起为快照加失效区间：since_chapter INT / invalidated_at_chapter INT NULL；
+--   为快照加失效区间：since_chapter INT / invalidated_at_chapter INT NULL；
 --   查询任意时点状态 = 取 since_chapter <= N 且 (invalidated_at_chapter IS NULL OR invalidated_at_chapter > N) 的最新一条；
 --   提取师产出下一章时，对已失效的状态条目补 invalidated_at_chapter（不删除，保留审计）。
 
@@ -560,7 +560,7 @@ detector_config(
 
 - LiteLLM 单入口，`model_routes` 改配置即可切 provider，**代码零改动**。
 - **模型可用性 = 声明式配置**：可用模型列表即 `model_routes` 中已配置的行，前端下拉直接读此表（用户自带 API Key）。不做自动发现——模型是否可用取决于用户账号权限，系统无法替你判断。
-- **探测辅助接口**：`POST /api/models/probe`，入参 provider+api_key，调该 provider 的 OpenAI 兼容 `/v1/models` 拉取账号下真实可用模型，帮助用户快速填充 `model_routes`（避免手敲模型名出错）。M1 起提供。
+- **探测辅助接口**：`POST /api/models/probe`，入参 provider+api_key，调该 provider 的 OpenAI 兼容 `/v1/models` 拉取账号下真实可用模型，帮助用户快速填充 `model_routes`（避免手敲模型名出错）。
 
 ### 13.4 成本护栏
 
@@ -582,11 +582,11 @@ detector_config(
 
 | 后端 | 实现 | 成本 | 优先级 |
 |---|---|---|---|
-| `local_heuristic`（默认） | 本地小模型算 PPL + burstiness（GPTZero v1 同思路） | 离线零成本 | **M4（后期，早期不做）** |
+| `local_heuristic`（默认） | 本地小模型算 PPL + burstiness（GPTZero v1 同思路） | 离线零成本 | 后期再做 |
 | `local_model`（可选升级） | 离线推理开源检测模型：中文 `Hello-SimpleAI/chatgpt-detector-roberta-chinese`；或 **Binoculars 双模型（observer+reference）**——两个不同小模型组合，缓解单一分布自洽 | 离线，依赖本地小模型推理 | 参考性要求高时启用 |
 | `zhuque_api`（不优先） | 腾讯朱雀 `zhuque-text`，需企业版腾讯云 + EIU 计费，接入繁琐 | 企业版 + 计费 | 弃用，有企业账号再议 |
 
-**方法论升级（M4，借鉴 NeuroBook llmlint 的"先定位、后判断"闭环）**——不把检测做成黑箱打分，而是做成可证伪、能量化的体检：
+**方法论升级（借鉴 NeuroBook llmlint 的"先定位、后判断"闭环）**——不把检测做成黑箱打分，而是做成可证伪、能量化的体检：
 
 1. **三层信号**：`regex` 词法规则（中文黑话/句式模板，如"首先…其次…最后"）→ `density` 统计指纹（比喻/连接词密度，按可见字数归一，过门槛才命中）→ `local_heuristic` 神经分布（PPL + burstiness 热力图，分 chunk 输出）。
 2. **四象限交叉**：规则密集 × 文内高位 = 确认疑难；规则静默 × 高位 = 漏网新规则候选；规则密集 × 低位 = 需要人工裁决（低位不等于像人写）；静默 × 低位 = 不打扰。整篇层唯一绝对阈值（如 P(AI)≥0.85 才说"整体可疑"）。
@@ -627,13 +627,13 @@ detector_config(
 
 ---
 
-## 16. 里程碑
+## 16. 开发路线图
 
-1. **M0 骨架**：前后端脚手架、DB 迁移、LiteLLM 网关、SSE 通道、薄自研 Pipeline 核心（Agent 统一接口）。
-2. **M1 MVP**：设定库 + 小说家（单版本生成）+ 提取师 + 长文一致性冒烟测试；**章节信息控制字段**（`info_control` 入大纲 schema 与小说家 L3 指令，§5.3/§5.4）。
-3. **M2**：大纲师 + 伏笔账本 + 评价师（L1 同模型双态冷启动）+ 定向修订；**记忆层时间语义升级**——`story_state`/`plot_ledger` 加 `since_chapter`/`invalidated_at_chapter`（as-of 查询，§4.1）；**settings 别名与分身合并**（aliases/merged_into_id，§4.1）。
-4. **M3**：蓝图师 + 设定抽取 + 风格学习；评价师升级 L2（单独换更强模型）；**风格画像版本链 as-of**（检索时只给当时版本，§6）。
-5. **M4**：实体图谱、记忆审查、Ollama 支持、部署；**AI 检测方法论升级**——llmlint 式三层信号（regex/density/neural）+ 四象限交叉 + 人类终审 + 修复三判据（§13.5）。
+1. **骨架**：前后端脚手架、DB 迁移、LiteLLM 网关、SSE 通道、薄自研 Pipeline 核心（Agent 统一接口）。
+2. **MVP**：设定库 + 小说家（单版本生成）+ 提取师 + 长文一致性冒烟测试；**章节信息控制字段**（`info_control` 入大纲 schema 与小说家 L3 指令，§5.3/§5.4）。
+3. **记忆语义**：大纲师 + 伏笔账本 + 评价师（L1 同模型双态冷启动）+ 定向修订；**记忆层时间语义升级**——`story_state`/`plot_ledger` 加 `since_chapter`/`invalidated_at_chapter`（as-of 查询，§4.1）；**settings 别名与分身合并**（aliases/merged_into_id，§4.1）。
+4. **蓝图与风格**：蓝图师 + 设定抽取 + 风格学习；评价师升级 L2（单独换更强模型）；**风格画像版本链 as-of**（检索时只给当时版本，§6）。
+5. **图谱与检测**：实体图谱、记忆审查、Ollama 支持、部署；**AI 检测方法论升级**——llmlint 式三层信号（regex/density/neural）+ 四象限交叉 + 人类终审 + 修复三判据（§13.5）。
 
 ---
 
@@ -650,8 +650,8 @@ detector_config(
 | 3 | **伏笔健康度**：伏笔带 urgency、target_reveal_chapter，自动检测"埋下超期未回收"并给出健康度评分/建议 | §4.1 `plot_ledger` 已加 urgency/target_reveal_chapter；账本查询增加 overdue 视图 |
 | 4 | **RAG 五层信息架构与切分参数**：L1 蓝图(JSON, 不检索) / L2 正文分块(向量) / L3 章节摘要(向量) / L4 上一章摘要+结尾500字 / L5 当前章目标；chunk≈480、overlap≈120、Top-K 正文5+摘要3 | §7 token 预算细化参数 |
 | 5 | **自我批评-修订循环**：生成后同模型以评审态自检→修订→重评，最多2轮、目标分75 | §13.2 L1 双态冷启动的落地形态 |
-| 6 | **提示词模板存库可配置**：prompt 存 DB，管理员/作者可后台编辑调优 | 增加 `prompts` 表 + 提示词管理接口（M4） |
-| 7 | **节奏/情绪曲线指导**：按章节号/总章节数/弧线类型给出每章目标情绪强度，防止节奏失控 | M3+ 可选，情绪曲线服务 |
+| 6 | **提示词模板存库可配置**：prompt 存 DB，管理员/作者可后台编辑调优 | 增加 `prompts` 表 + 提示词管理接口 |
+| 7 | **节奏/情绪曲线指导**：按章节号/总章节数/弧线类型给出每章目标情绪强度，防止节奏失控 | 可选，情绪曲线服务 |
 
 ### 17.2 保持优于 Arboris 的设计（不复刻其短板）
 
@@ -684,21 +684,21 @@ detector_config(
 | 轻量两目录（FastAPI + Next.js），一人可维护 | 12+ workspace monorepo、.agents 治理、specs/standards 文档负担重 |
 | 角色流水线 + 三层写作指令（L1/L2/L3），产品闭环清晰 | 多 Agent 工作室 + Profile 即代码，工程完备但产品主线未收敛 |
 | 换模型连续性与模型可用性声明式配置 | 深度绑定 pi-agent-core 第三方框架 |
-| Pydantic 结构化输出 + 自纠错重试 | harness 的 parse-once/validate-reuse 更严谨（M2+ 可吸收其"外部边界只 parse 一次，恢复路径只 validate"思想） |
+| Pydantic 结构化输出 + 自纠错重试 | harness 的 parse-once/validate-reuse 更严谨（可吸收其"外部边界只 parse 一次，恢复路径只 validate"思想） |
 
-### 18.3 需要补强的差距（已按优先级映射进里程碑）
+### 18.3 需要补强的差距（已按优先级排序）
 
 | # | 差距 | NeuroBook 的做法 | 我们的落点 |
 |---|---|---|---|
-| 1 | **记忆无时间语义**：story_state 每章覆盖式快照，无法回答"第 N 章时世界什么样、那时还不知道什么"，是时间泄漏/前后矛盾的根源 | 双时间轴（tick/instant）+ 失效区间 + as-of 查询 + fail-closed | **M2**：§4.1 story_state/plot_ledger 加 since_chapter/invalidated_at_chapter |
-| 2 | **主体分身无兜底**：settings 无别名/合并，"同一角色两条设定"靠人肉发现 | SubjectRegistry 别名带生效时点 + 引擎不变量自动 merge（"一个名字不能既是 A 主名又是 B 别名"） | **M2**：§4.1 settings 加 aliases/merged_into_id |
-| 3 | **悬念管理未显式化**：读者/主角知道什么、必须隐瞒什么没有落到数据层 | StoryChapter.briefReaderKnows/briefProtagonistKnows/briefMustHide/briefHintOnly | **M1**：§5.3/§5.4 info_control 字段 + L3 指令 |
-| 4 | **AI 检测是黑箱打分** | llmlint 方法论：三层信号（regex/density/neural）+ 四象限交叉 + **人类判定终审** + 修复三判据 + 评测回流 | **M4**：§13.5 方法论升级 |
-| 5 | **风格画像只取最新版**，历史版本无法 as-of 检索 | ontology 版本链 + as-of 裁剪（检索时只给当时版本） | **M3**：§6 版本链查询 |
-| 6 | **上下文裁剪未实现**（token 预算器是设计稿） | harness compaction：token 触发 + 摘要前缀 + keepRecentTokens | **M1+**：§7 token 预算器按 model_routes.context_window 动态装配 |
+| 1 | **记忆无时间语义**：story_state 每章覆盖式快照，无法回答"第 N 章时世界什么样、那时还不知道什么"，是时间泄漏/前后矛盾的根源 | 双时间轴（tick/instant）+ 失效区间 + as-of 查询 + fail-closed | §4.1 story_state/plot_ledger 加 since_chapter/invalidated_at_chapter |
+| 2 | **主体分身无兜底**：settings 无别名/合并，"同一角色两条设定"靠人肉发现 | SubjectRegistry 别名带生效时点 + 引擎不变量自动 merge（"一个名字不能既是 A 主名又是 B 别名"） | §4.1 settings 加 aliases/merged_into_id |
+| 3 | **悬念管理未显式化**：读者/主角知道什么、必须隐瞒什么没有落到数据层 | StoryChapter.briefReaderKnows/briefProtagonistKnows/briefMustHide/briefHintOnly | §5.3/§5.4 info_control 字段 + L3 指令 |
+| 4 | **AI 检测是黑箱打分** | llmlint 方法论：三层信号（regex/density/neural）+ 四象限交叉 + **人类判定终审** + 修复三判据 + 评测回流 | §13.5 方法论升级 |
+| 5 | **风格画像只取最新版**，历史版本无法 as-of 检索 | ontology 版本链 + as-of 裁剪（检索时只给当时版本） | §6 版本链查询 |
+| 6 | **上下文裁剪**（token 预算器） | harness compaction：token 触发 + 摘要前缀 + keepRecentTokens | 已实现：§7 token 预算器按 model_routes.context_window 动态装配 |
 
 ### 18.4 明确不吸收的（避免过度工程）
 
 - monorepo 治理 / 事件溯源世界引擎全量重放 / nb-workflow journal 重放 —— 对单作者写作场景收益低于成本；
-- Electron + Tauri 双桌面壳 —— 浏览器优先，桌面化走 Tauri 单线（M4+ 可选）；
+- Electron + Tauri 双桌面壳 —— 浏览器优先，桌面化走 Tauri 单线（可选）；
 - 透明的 token 计费模型 —— 产品验证期不做。
