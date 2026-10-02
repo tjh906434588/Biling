@@ -301,6 +301,20 @@ export default function WritingPanel({ novelId }: Props) {
     setInfoDraft({ ...(chapter ?? { reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" }) });
     setShowInfoModal(true);
   }, [form.chapter_no, loadChapterInfo]);
+  /** 查看当前章已填的信息控制（只读弹窗）：生成后没有填写入口，从「本章操作」进入查看 */
+  const [infoView, setInfoView] = useState<InfoDraft | null>(null);
+  const [infoViewEffective, setInfoViewEffective] = useState<InfoControl>({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
+  const openInfoView = useCallback(async () => {
+    if (activeNo == null) return;
+    try {
+      const { chapter, effective } = await getChapterInfoControl(novelId, activeNo);
+      setInfoView({ ...chapter });
+      setInfoViewEffective({ ...effective });
+    } catch {
+      setInfoView({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
+      setInfoViewEffective({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
+    }
+  }, [novelId, activeNo]);
 
   /** AI 服务状态检查：各 AI 操作发起前确认模型已配置可用，未配置则抛错拦截（避免发起注定失败的空请求）。 */
   const { ensureReady } = useAiStatus();
@@ -720,6 +734,7 @@ export default function WritingPanel({ novelId }: Props) {
         onFinalize={() => void handleFinalizeSelected(flowCtx)}
         onExtract={() => void handleExtract(flowCtx)}
         onCopy={handleCopyContent}
+        onViewInfo={() => void openInfoView()}
       />
 
       {/* 右侧：正文（左，占据主区）+ 评价与优化（右，常驻侧栏）并排，各自独立滚动、互不挤压；
@@ -803,6 +818,17 @@ export default function WritingPanel({ novelId }: Props) {
           setInfoControl({ ...infoDraft });
           setShowInfoModal(false);
         }}
+      />
+
+      {/* 信息控制（查看）：生成后从「本章操作」进入，只读展示本章已填信息控制与生效合并 */}
+      <InfoModal
+        open={infoView != null}
+        onClose={() => setInfoView(null)}
+        draft={infoView ?? { reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" }}
+        effective={infoViewEffective}
+        onDraftChange={() => {}}
+        onSubmit={() => setInfoView(null)}
+        readonly
       />
 
       {/* 评价与优化、版本树已改为右侧常驻内联面板，不再使用弹窗 */}
