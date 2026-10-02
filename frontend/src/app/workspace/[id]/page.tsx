@@ -20,7 +20,6 @@ import OutlinePanel from "@/components/outline-panel";
 import LedgerPanel from "@/components/ledger-panel";
 import BlueprintPanel from "@/components/blueprint-panel";
 import StylePanel from "@/components/style-panel";
-import DetectPanel from "@/components/detect-panel";
 import GraphPanel from "@/components/graph-panel";
 import ModelsPanel from "@/components/models-panel";
 import PromptsModal from "@/components/prompts-modal";
@@ -42,7 +41,7 @@ function defaultForm(agent: string): Record<string, string> {
 const AGENT_KEYS = Object.keys(AGENTS);
 
 /** 会调用 AI（消耗 Token）的 tab：只有这些页面需要显示"AI 未接入"横幅。
- *  设定/账本/检测/关系图等纯本地功能不在此列。 */
+ *  设定/账本/关系图等纯本地功能不在此列。 */
 const AI_TABS: ReadonlySet<Tab> = new Set(["write", "outline", "blueprint", "style", "tools"]);
 
 /* ── 导航：带图标、按流程分组，像 IDE 的活动栏 + 工具面板 ── */
@@ -54,7 +53,6 @@ const ICONS: Record<string, ReactNode> = {
   ledger: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 10h18M9 10v10" /></>,
   style: <><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 114.03 4.03l-8.06 8.08" /><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 00-3-3.02z" /></>,
   graph: <><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></>,
-  detect: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
   models: <><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2" /></>,
   tools: <path d="M4 17l6-6-6-6M12 19h8" />,
 };
@@ -78,10 +76,9 @@ const NAV_GROUPS: { label: string; items: [Tab, string, keyof typeof ICONS][] }[
     ],
   },
   {
-    label: "质量与工具",
+    label: "工具",
     items: [
       ["outline", "细化大纲", "outline"],
-      ["detect", "质量检查", "detect"],
       ["models", "AI 设置", "models"],
     ],
   },
@@ -525,21 +522,11 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
             {FLAT_TABS.map(stripItem)}
           </nav>
 
-          <main
-            className={`min-h-0 flex-1 ${
-              tab === "settings" ? "overflow-hidden" : tab === "detect" ? "lg:overflow-hidden" : "overflow-y-auto"
-            }`}
-          >
+          <main className={`min-h-0 flex-1 ${tab === "settings" ? "overflow-hidden" : "overflow-y-auto"}`}>
             <div
               className={`mx-auto w-full px-4 py-6 sm:px-6 ${
                 tab === "write" || tab === "outline" ? "max-w-[1728px]" : "max-w-[1280px]"
-              } ${
-                tab === "settings"
-                  ? "flex h-full flex-col"
-                  : tab === "detect"
-                    ? "lg:flex lg:h-full lg:flex-col"
-                    : ""
-              }`}
+              } ${tab === "settings" ? "flex h-full flex-col" : ""}`}
             >
               {AI_TABS.has(tab) && <AiNotReadyBanner onConfigure={() => setTab("models")} />}
               <FirstRunGuide novelId={id} onGo={setTab} />
@@ -549,7 +536,6 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
               {tab === "ledger" && <LedgerPanel novelId={id} />}
               {tab === "blueprint" && <BlueprintPanel novelId={id} />}
               {tab === "style" && <StylePanel novelId={id} />}
-              {tab === "detect" && <DetectPanel novelId={id} />}
               {tab === "graph" && <GraphPanel novelId={id} />}
               {tab === "models" && <ModelsPanel />}
               {tab === "tools" && (

@@ -22,7 +22,6 @@ import type {
   CustomModelSaveInput,
   CustomModelSaved,
   DefaultModel,
-  DetectResult,
   GraphView,
   LedgerItem,
   MemoryReview,
@@ -451,21 +450,6 @@ export async function learnStyle(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw httpError(err.detail, "风格学习失败");
-  }
-  return res.json();
-}
-
-// ---------- AI 检测（体检，不阻断） ----------
-
-export async function detectText(novelId: string, text: string): Promise<DetectResult> {
-  const res = await fetch(`${BASE}/novels/${novelId}/detect`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw httpError(err.detail, "检测失败");
   }
   return res.json();
 }

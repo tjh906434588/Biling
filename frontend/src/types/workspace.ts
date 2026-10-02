@@ -13,7 +13,6 @@ export type Tab =
   | "ledger"
   | "blueprint"
   | "style"
-  | "detect"
   | "graph"
   | "models"
   | "tools";

@@ -305,30 +305,6 @@ export interface StyleProfile {
   updated_at: string;
 }
 
-export interface DetectResult {
-  regex_hits: Record<string, number>;
-  density: {
-    sentences: number;
-    avg_sentence_len: number;
-    std_sentence_len: number;
-    short_ratio: number;
-    long_ratio: number;
-    commas_per_sentence: number;
-    transition_density: number;
-    exclamation_ratio: number;
-    dialogue_ratio: number;
-    stopword_density: number;
-  } | null;
-  heuristic_score: number;
-  burstiness: number | null;
-  ppl: number | null;
-  /** 三分类占比（人工特征 / AI 特征 / 疑似AI，合计≈100），对应检测结论饼图 */
-  labels_ratio: { human: number; ai: number; suspected: number } | null;
-  verdict: "likely_human" | "mixed" | "likely_ai" | "unknown";
-  signals: string[];
-  note: string;
-}
-
 export interface GraphNode {
   id: string;
   label: string;
