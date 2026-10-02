@@ -28,7 +28,12 @@ export function AutoTextarea({
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+    // border-box（Tailwind preflight）下 style.height 含 border，而 scrollHeight 只测内容+padding：
+    // 直接把高度设为 scrollHeight，内容区会比 scrollHeight 少 2×border 高度、恒溢出 → 空内容也出现滚动条。
+    // 修正：补上 border 高度（offsetHeight - clientHeight），让内容区高度恰好等于 scrollHeight，
+    // 仅当内容真的超过 maxHeight 时才出现内部滚动条。
+    const border = el.offsetHeight - el.clientHeight;
+    el.style.height = `${Math.min(el.scrollHeight + border, maxHeight)}px`;
   }, [value, maxHeight]);
   return (
     <textarea
