@@ -117,7 +117,7 @@ export default function Bookshelf() {
       <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1200px] px-4 py-6 sm:px-6 sm:py-8">
           {loading ? (
-            <ul className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            <ul className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
               {[0, 1, 2, 3, 4].map((i) => (
                 <li key={i}>
                   <div className="aspect-[3/4] w-full animate-pulse rounded-[5px] bg-zinc-100" />
@@ -171,7 +171,7 @@ export default function Bookshelf() {
                 <span className="font-mono text-[11.5px] text-zinc-400">{novels.length}</span>
               </div>
 
-              <ul className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+              <ul className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
                 {novels.map((n, i) => (
                   <li key={n.id} className="rise" style={{ "--rise-delay": `${Math.min(i, 8) * 50}ms` } as CSSProperties}>
                     <Link href={`/workspace/${n.id}`} className="group block">
