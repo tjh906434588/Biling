@@ -1,6 +1,6 @@
 {
   "name": "biling-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "笔灵 Biling 桌面版壳层（Electron）：拉起本地前后端服务，提供原生窗口与托盘",
   "main": "main.js",
   "private": true,
