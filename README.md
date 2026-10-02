@@ -78,7 +78,7 @@ biling/
 ├─ desktop/             # Electron 桌面壳（拉起前后端、托盘、导出日志）
 ├─ .github/workflows/   # GitHub Actions：打 tag 自动打包桌面版
 ├─ build-desktop.ps1    # 本地一键打包脚本
-└─ docs/                # PRD / 技术设计 / 界面截图
+└─ docs/                # 界面截图（README 展示用）
 ```
 
 ---
