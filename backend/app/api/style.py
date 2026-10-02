@@ -1,4 +1,4 @@
-"""风格画像 API：版本列表 / 从编辑 diff 学习新版本（§9）。"""
+"""风格画像 API：版本列表 / 从编辑 diff 学习新版本。"""
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException

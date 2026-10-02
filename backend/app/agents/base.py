@@ -1,4 +1,4 @@
-"""Agent 统一接口：build_context / run / parse_output（技术设计 §5 通用约定）。
+"""Agent 统一接口：build_context / run / parse_output。
 
 每个角色实现此基类；编排层（services/pipeline）顺序/并发调用，产出经 Pydantic 校验。
 """
@@ -42,7 +42,7 @@ class ComponentBlock:
 
 @dataclass
 class ContextPack:
-    """角色信息切片：只装该角色允许看到的内容（信息隔离白名单，见 §5 四层隔离 #1）。"""
+    """角色信息切片：只装该角色允许看到的内容（信息隔离白名单）。"""
 
     novel_id: uuid.UUID
     agent: str

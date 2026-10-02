@@ -1,4 +1,4 @@
-"""Pipeline 核心：Agent 统一接口编排，SSE 事件流（技术设计 §10）。
+"""Pipeline 核心：Agent 统一接口编排，SSE 事件流。
 
 事件流（单版本）：context_ready → stream_delta* → stream_end → schema_validate → stored
 
@@ -36,7 +36,7 @@ from app.db.models import (
 
 logger = logging.getLogger(__name__)
 
-MAX_SCHEMA_RETRY = 1  # 自纠错重试次数（技术设计 §5 通用约定）
+MAX_SCHEMA_RETRY = 1  # 自纠错重试次数
 # 空输出自动重试次数：推理模型（如火山 deepseek-v4-flash）偶发"只思考不输出正文"（content 为空），
 # 触发 schema 校验失败。这种情况没有"错误"可纠正，直接干净重跑，最多额外重试 MAX_EMPTY_RETRY 次。
 MAX_EMPTY_RETRY = 3
@@ -291,7 +291,7 @@ def _alert_schema_error(
     version: Optional[str] = None,
     error: Optional[str] = None,
 ) -> None:
-    """校验失败告警：落 quality_reviews（§5 通用约定），前端可提示"可重试"。"""
+    """校验失败告警：落 quality_reviews，前端可提示"可重试"。"""
     detail = f"角色 {agent_name} 产出未通过 schema 校验，已自纠错 {MAX_SCHEMA_RETRY} 次仍失败"
     if version:
         detail += f"（版本 {version}）"
@@ -1898,7 +1898,7 @@ def sync_ledger_from_outline(
 
 
 def _persist_critic(db: Session, novel_id: uuid.UUID, params: dict, parsed: BaseModel) -> dict:
-    """评价师落库：quality_reviews（§5.6）。chapter_version_id 缺省取该章 active 版本。
+    """评价师落库：quality_reviews。chapter_version_id 缺省取该章 active 版本。
 
     落库后重算该正文版本的签约未过签标记（signing_blocked）：最新评价含 severity=high 的
     红线类 issue（内容红线/抄袭，见 PLATFORM_SIGNING_REVIEW）→ 标记 True，定稿默认拒绝；
@@ -1979,7 +1979,7 @@ def sync_active_blueprint_style(db: Session, novel_id: uuid.UUID, blueprint_id: 
 def _persist_blueprint(
     db: Session, novel_id: uuid.UUID, parsed: BaseModel, params: Optional[dict] = None
 ) -> dict:
-    """蓝图师落库：blueprints（版本链，§5.2）。
+    """蓝图师落库：blueprints（版本链）。
 
     - version = 已有最大版本 + 1；parent_id 指向上一版。
     - 状态机（两态：active 生效中 | inactive 未生效）：
@@ -2054,7 +2054,7 @@ def _persist_blueprint(
 
 
 def _persist_concept(db: Session, novel_id: uuid.UUID, parsed: BaseModel) -> dict:
-    """概念师落库：concept_cards（pending，§5.1）。确认后由 /confirm 接口转正为 settings。"""
+    """概念师落库：concept_cards（pending）。确认后由 /confirm 接口转正为 settings。"""
     from app.db.models import ConceptCard
     from app.schemas.agents import ConceptExtraction
 

@@ -192,7 +192,7 @@ class NovelistAgent(Agent[NovelChapter]):
         if manual_style:
             style_text += f"\n【手动文风指示（作者手动设定，不可被覆盖；与蓝图识别文风不冲突时必须严格遵守）】\n{manual_style}"
 
-        # L3 节奏/心态指令：由 chapter_function 与写作模式运行时派生（§5.7）
+        # L3 节奏/心态指令：由 chapter_function 与写作模式运行时派生
         chapter_function = params.get("chapter_function", "progression")
         writing_mode = params.get("writing_mode", "draft_free")
         if chapter_function in ("climax", "turning"):
@@ -236,7 +236,7 @@ class NovelistAgent(Agent[NovelChapter]):
             except Exception:  # 统计失败不影响写作主流程
                 pass
 
-        # L3 信息控制（§5.3 info_control）：读者/主角知道什么、必须隐瞒什么
+        # L3 信息控制（info_control）：读者/主角知道什么、必须隐瞒什么
         info = params.get("info_control") or {}
         if info:
             l3 += (

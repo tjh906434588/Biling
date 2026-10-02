@@ -1,7 +1,7 @@
-"""风格学习（§9）：从用户编辑 diff 提炼 L2 作品风格画像，产出 style_profiles 新版本。
+"""风格学习：从用户编辑 diff 提炼 L2 作品风格画像，产出 style_profiles 新版本。
 
 作用域边界：只学【作品层】偏好（句长/词汇/视角/对话比/禁忌写法）；
-diff 中体现的"通用防 AI 规则"不写入 style_profiles（属于系统级 L1，见 §5.7）。
+diff 中体现的"通用防 AI 规则"不写入 style_profiles（属于系统级 L1）。
 """
 import logging
 import uuid

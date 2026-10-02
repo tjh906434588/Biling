@@ -1,4 +1,4 @@
-"""六角色输入/输出 Schema（对应技术设计 §5 各角色输出协议）。"""
+"""六角色输入/输出 Schema。"""
 import uuid
 from typing import Optional, Union
 

@@ -1,4 +1,4 @@
-"""AI 生成检测 API（§13.5）：体检性质、不设硬阈值、不阻断写作。
+"""AI 生成检测 API：体检性质、不设硬阈值、不阻断写作。
 
 - POST /api/novels/{novel_id}/detect         通用文本检测
 - POST /api/novels/{novel_id}/chapters/{chapter_id}/detect  对已存章节的 active 版本检测

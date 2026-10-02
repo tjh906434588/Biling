@@ -1,4 +1,4 @@
-"""风格学习（§9）Schema：diff 输入 / 画像版本 / 学习结果。"""
+"""风格学习 Schema：diff 输入 / 画像版本 / 学习结果。"""
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -19,7 +19,7 @@ class StyleLearnIn(BaseModel):
 
 
 class StyleTraits(BaseModel):
-    """画像 traits：句式/词汇/视角/节奏偏好 + 示例片段（§9）。"""
+    """画像 traits：句式/词汇/视角/节奏偏好 + 示例片段。"""
     sentence_length: str = "（未标注）"  # 如"短句为主，平均 8-15 字"
     vocabulary: str = "（未标注）"  # 用词倾向（口语化/书面/网络词/意象词）
     perspective: str = "（未标注）"  # 视角与叙述距离

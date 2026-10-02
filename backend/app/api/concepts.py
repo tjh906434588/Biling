@@ -1,6 +1,6 @@
 """概念卡片 API：列表 / 确认转正（→settings）/ 拒绝。
 
-转正规则（§5.1 概念师→设定库）：
+转正规则（概念师→设定库）：
 - 允许 type ∈ {character, location, faction, world_rule, item, concept} → 建 Setting。
 - world_rule 转正为宪法（is_constitution=True）。
 - 同名同类型设定已存在（未删未合并）→ 跳过创建，避免"同一角色两条设定"。

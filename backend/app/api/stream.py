@@ -1,4 +1,4 @@
-"""SSE 流式路由：/api/stream/agents/{agent}/run（技术设计 §10/§11）。
+"""SSE 流式路由：/api/stream/agents/{agent}/run。
 
 生成任务已从请求生命周期解耦为后台任务（agent_tasks 表）：页面刷新 / 连接断开后
 任务继续生成并落库，前端可通过 GET /{agent}/tasks 查询进行中任务并恢复状态。
