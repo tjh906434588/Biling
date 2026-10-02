@@ -23,7 +23,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 | 层 | 路径 | 职责 |
 |---|---|---|
 | 前端页面 | `frontend/src/app/` | App Router 页面，全部 `"use client"`（layout.tsx 保持 server 组件，仅挂 Provider/宿主） |
-| 前端业务 | `frontend/src/features/` | 业务功能目录，每个 feature 统一为 **`index.tsx`（主入口）+ `components/`（私有组件，与入口平级）**：`bookshelf/`（书架）、`workspace/`（工作台壳 + 各面板：writing/ outline/ settings/ blueprint/ graph/ ledger/ style/ models/ 各自也是 index.tsx + components/）；`app/` 下页面文件仅做路由转发 |
+| 前端业务 | `frontend/src/features/` | 业务功能目录，每个 feature 统一为 **`index.tsx`（主入口）+ `components/`（私有组件，与入口平级）**：`bookshelf/`（书架）、`workspace/`（工作台壳 + 各面板：writing/ outline/ settings/ blueprint/ graph/ ledger/ style/ models/ 各自也是 index.tsx + components/）；跨面板共享放 `workspace/components/`；`app/` 下页面文件仅做路由转发 |
 | 前端全局组件 | `frontend/src/components/` | **仅**全局共享组件（modal/message/notification/loading/confirm-dialog/info-tip/brand/title-bar/novel-meta/author-confirm…），每个组件一个文件夹 `<名>/index.tsx`；index.tsx 平级不允许有其他文件——其余文件收进 `<名>/components/` 子文件夹（如 author-confirm：`index.tsx` + `components/{store,host,dialog,panel,notifier}.tsx`） |
 | 前端 API 客户端 | `frontend/src/lib/api/` | 按后端域拆分（novels/settings/chapters/reviews/outlines/ledger/blueprints/style/graph/models/agents/prompts），`index.ts` barrel 统一出口 |
 | 前端共享逻辑 | `frontend/src/lib/` | API 客户端、状态、工具逻辑 |
@@ -57,9 +57,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 ## 4. 前端代码风格
 
 - 新文件顶部写 `@file 路径 · 作用 · 关键机制` 中文头注释；关键逻辑行内注释说明"为什么"。
-- 常量优先收敛到 `constants/`，业务代码从 `@/constants` 导入；**类型从常量推导**（如 `SETTING_TYPES` → `SettingType`），不重复定义枚举。
 - 领域类型统一放 `types/api.ts`，经 `@/lib/api` re-export；页面禁止直接 `fetch`，一律走 `lib/api/` 的函数。
-- **组件放置（自动执行）**：每个 feature/页面统一结构 = `index.tsx`（主入口/页面组件）+ `components/`（该 feature 私有组件，与 index.tsx 平级）；跨面板共享放 `workspace/components/`；跨路由全局共享 → `components/`（业务代码不放 `components/`）。页面路由文件（`app/**/page.tsx`）只做转发，页面逻辑在对应 feature 的 index.tsx。
 - **API 新增（自动执行）**：新接口函数按后端域放入 `lib/api/<域>.ts`（域文件不存在则新建并在 `index.ts` barrel 追加 `export *`），业务代码统一 `import from "@/lib/api"`，不新增别的入口。
 - **任务类型集合**（setting/creation/review/extract/chronicle）：前端在 `frontend/src/constants/task-types.ts` 单一维护（`types/api.ts` 的 `TaskType` 与 `models-panel.tsx` 的 UI 都由它派生）；后端在 `backend/app/api/models.py` 单独一份（跨端契约例外）。新增/修改任务类型：前端只改 `constants/task-types.ts` 即可，同时同步后端 `api/models.py`。
 - 组件默认 `"use client"`；Tailwind 4，同时覆盖亮/暗色（`dark:`）；样式类名简洁、不引入多余库。
@@ -75,7 +73,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - 渲染 return 里的大型 JSX 区块 → 抽展示型子组件（props 显式声明 + 回调）；所有 state、数据加载、时序逻辑保留在主组件，子组件只做展示。
 - 编排逻辑（编辑器 / AI 流程 / 轮询恢复等）→ 抽自定义 hooks（如 `use-chapter-editor.ts` / `use-ai-flows.ts` / `use-resume-agent-task.ts`），共享状态经类型化 ctx 传入。
 - 明显重复的代码块 → 收敛成小 helper（先确认行为可证明等价再合）。
-- 子组件放对应 feature 的 `components/` 子目录：`features/workspace/{writing,outline,settings,blueprint,graph,ledger,style,models}/components/`、`features/bookshelf/components/` 等；跨面板共享放 `features/workspace/components/`；新文件顶部写 `@file 路径 · 作用 · 关键机制` 头注释，含 hooks 的加 `"use client"`。
+- 子组件按 §1 的 features/components 结构落位（跨面板共享放 `workspace/components/`）；含 hooks 的加 `"use client"`。
 - 红线：不改防抖 / 竞态守卫 / useEffect 依赖 / SSE 与持久化逻辑；不把「依赖父组件闭包且无法干净传 props」的 JSX 强行抽出；不为拆分引入大型 ctx「上帝对象」之外的不必要抽象。
 - 页面文件（`app/**/page.tsx`）：默认导出必须留在 page 且导出名不变（Next.js 要求）；内联弹窗/表单/区块可拆到对应领域子目录。
 - 拆完必须 `cd frontend && npm run build`（含 TS 检查）验证通过后再提交。
@@ -113,7 +111,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - **README 随改动同步**：改动若涉及 README 描述的内容（功能增删、页面/入口变化、目录结构、技术栈、发版流程、使用说明等），必须**在本次改动中同步更新 README 再一起提交**，不要等用户提醒；提交前自查 README 是否还有过时描述。
 - Conventional Commits + 中文描述：`feat:` / `fix:` / `refactor:` / `chore:` / `docs:`（如 `feat: 桌面版打包落地`）。
 - **禁止提交**：`data\`、`.env`、`*.db`、构建产物（`build/ dist-desktop/ backend/dist/`）、`.workbuddy/`、`tools/fanqie_crawler/corpus/`、`desktop/node_modules/`、图标中间产物 `desktop/build/icon-*.png`。
-- 提交前用 `git status --short` 确认无敏感/冗余文件混入；大改动分逻辑提交。
+- 提交前用 `git status --short` 确认无敏感/冗余文件混入。
 
 ## 8. 改完如何验证
 
@@ -123,7 +121,6 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 
 ## 9. 文档与 Skill
 
-- **README 随改动同步**：任何改动若涉及 README 描述的内容（功能增删、页面/入口变化、目录结构、技术栈、发版流程、使用说明等），必须**同批修改 README 并一起提交**，不要等用户提醒；改完自查一遍 README 是否还有过时描述（与"完成即自动提交"配合，README 和功能改动进同一批 commit）。
 - 番茄题材提取 → 走 `fanqie-extract` skill 的统一流程，不要另起做法。
 - 本规范需要调整 → 先说明改动点再改本文件。
 
