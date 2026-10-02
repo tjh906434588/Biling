@@ -1,8 +1,12 @@
 """小说项目 + 设定条目路由。"""
+import re
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,8 +20,12 @@ from app.schemas.novel import (
     SettingRead,
     SettingUpdate,
 )
+from app.services.novel_backup import build_zip, restore_novel_from_zip
 
 router = APIRouter(prefix="/api/novels", tags=["novels"])
+
+# 导入备份文件大小上限（整本书含全部版本正文，给足余量）
+MAX_IMPORT_BYTES = 200 * 1024 * 1024
 
 
 @router.post("", response_model=NovelRead)
@@ -211,3 +219,33 @@ def delete_setting(novel_id: uuid.UUID, setting_id: uuid.UUID, db: Session = Dep
 
     setting.deleted_at = datetime.now(timezone.utc)
     db.commit()
+
+
+@router.get("/{novel_id}/export")
+def export_novel(novel_id: uuid.UUID, db: Session = Depends(get_db)):
+    """导出整本书：打包全部业务表数据为 zip（换电脑 / 备份用）。"""
+    novel = db.get(Novel, novel_id)
+    if novel is None:
+        raise HTTPException(404, "项目不存在")
+    zip_bytes = build_zip(db, novel_id, novel.title)
+    safe = re.sub(r'[\\/:*?"<>|\s]+', "_", novel.title) or "book"
+    filename = f"biling-{safe}-{datetime.now(timezone.utc):%Y%m%d}.zip"
+    return Response(
+        zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.post("/import")
+def import_novel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """导入整本书：还原为一本内容完全相同的新书，返回新书信息（前端可跳转续写）。"""
+    payload = file.file.read()
+    if len(payload) > MAX_IMPORT_BYTES:
+        raise HTTPException(413, f"文件过大（上限 {MAX_IMPORT_BYTES // (1024 * 1024)}MB）")
+    try:
+        new_id = restore_novel_from_zip(db, payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    novel = db.get(Novel, new_id)
+    return NovelRead.model_validate(novel)

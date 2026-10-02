@@ -10,7 +10,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { listNovels, updateNovel, deleteNovel, type Novel } from "@/lib/api";
+import { listNovels, updateNovel, deleteNovel, exportNovel, importNovel, type Novel } from "@/lib/api";
 import NovelCover from "./components/novel-cover";
 import { message } from "@/components/message";
 import { CreateDialog, DeleteDialog, EditDialog } from "./components/dialogs";
@@ -29,8 +29,8 @@ export default function Bookshelf() {
   const [editTarget, setEditTarget] = useState<Novel | null>(null);
   /** 删除确认弹窗的目标小说；null=未打开。 */
   const [deleteTarget, setDeleteTarget] = useState<Novel | null>(null);
-  /** 进行中的删除/编辑操作：非 null 时盖全屏 Loading 遮罩，操作完成并重新拉取数据后才解锁。 */
-  const [operating, setOperating] = useState<null | { kind: "edit" | "delete"; title: string }>(null);
+  /** 进行中的操作：非 null 时盖全屏 Loading 遮罩，操作完成并重新拉取数据后才解锁。 */
+  const [operating, setOperating] = useState<null | { kind: "edit" | "delete" | "import" | "export"; title: string }>(null);
   // 空书架欢迎指引是否隐藏；state 值本身未使用，只通过 setter 切换渲染分支
   const [, setGuideHidden] = useState(true);
   /** 是否已做过「空书架自动展开欢迎面板」（仅首次且书架为空时执行一次） */
@@ -88,6 +88,44 @@ export default function Bookshelf() {
     }
   }
 
+  /** 导出整本书：后端打包为 zip，触发浏览器下载。 */
+  async function handleExport(n: Novel) {
+    if (operating) return;
+    setOperating({ kind: "export", title: n.title });
+    try {
+      const { blob, filename } = await exportNovel(n.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      message.success("已导出备份");
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setOperating(null);
+    }
+  }
+
+  /** 导入整本书：后端还原为一本内容完全相同的新书，成功后刷新列表并直接进入续写。 */
+  async function handleImport(file: File) {
+    if (operating) return;
+    setOperating({ kind: "import", title: file.name });
+    try {
+      const novel = await importNovel(file);
+      await refresh();
+      message.success(`已导入：${novel.title}，可无缝续写`);
+      router.push(`/workspace/${novel.id}`);
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setOperating(null);
+    }
+  }
+
   useEffect(() => {
     void refresh();
     try {
@@ -111,7 +149,7 @@ export default function Bookshelf() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <Topbar />
+      <Topbar onImport={handleImport} busy={!!operating} />
 
       {/* ── 主画布：内部滚动，整页不滚 ──────────────────────────── */}
       <main className="min-h-0 flex-1 overflow-y-auto">
@@ -177,8 +215,23 @@ export default function Bookshelf() {
                     <Link href={`/workspace/${n.id}`} className="group block">
                       <div className="relative rounded-[5px] ring-zinc-300/0 transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-book group-hover:ring-1 group-hover:ring-zinc-300">
                         <NovelCover title={n.title} seed={i} className="aspect-[3/4] w-full" />
-                        {/* 悬停操作：编辑 / 删除。卡片整体是 Link，按钮需拦掉冒泡避免触发进入工作台 */}
+                        {/* 悬停操作：导出 / 编辑 / 删除。卡片整体是 Link，按钮需拦掉冒泡避免触发进入工作台 */}
                         <div className="absolute inset-x-0 bottom-0 flex justify-end gap-1.5 bg-gradient-to-t from-black/55 to-transparent p-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                          <button
+                            type="button"
+                            title="导出整本书备份（换电脑 / 备份用）"
+                            aria-label="导出"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void handleExport(n);
+                            }}
+                            className="grid h-7 w-7 place-items-center rounded-md bg-white/90 text-zinc-700 shadow-sm transition-colors hover:bg-white hover:text-seal"
+                          >
+                            <svg aria-hidden className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                            </svg>
+                          </button>
                           <button
                             type="button"
                             title="编辑书名或简介"
