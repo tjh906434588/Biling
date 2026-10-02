@@ -6,7 +6,7 @@
  */
 "use client";
 
-import Modal from "../modal";
+import Modal from "../../modal";
 import { dismissAuthorConfirm, type AuthorConfirm } from "@/lib/api";
 import { AGENT_LABELS } from "@/constants";
 import { ConfirmPanel } from "./panel";

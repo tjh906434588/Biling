@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { notification, removeNotification } from "../notification";
+import { notification, removeNotification } from "../../notification";
 import {
   dismissAuthorConfirm,
   fetchPendingConfirms,

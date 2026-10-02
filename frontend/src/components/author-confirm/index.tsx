@@ -7,9 +7,9 @@
  */
 "use client";
 
-export { default } from "./host";
-export { ConfirmPanel } from "./panel";
-export { ConfirmNotifier } from "./notifier";
+export { default } from "./components/host";
+export { ConfirmPanel } from "./components/panel";
+export { ConfirmNotifier } from "./components/notifier";
 export {
   subscribeAuthorConfirms,
   getAuthorConfirms,
@@ -19,4 +19,4 @@ export {
   getInlineHostCount,
   setInlineHost,
   restoreAuthorConfirms,
-} from "./store";
+} from "./components/store";

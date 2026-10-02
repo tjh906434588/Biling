@@ -24,7 +24,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 |---|---|---|
 | 前端页面 | `frontend/src/app/` | App Router 页面，全部 `"use client"`（layout.tsx 保持 server 组件，仅挂 Provider/宿主） |
 | 前端业务 | `frontend/src/features/` | 业务功能目录，每个 feature 统一为 **`index.tsx`（主入口）+ `components/`（私有组件，与入口平级）**：`bookshelf/`（书架）、`workspace/`（工作台壳 + 各面板：writing/ outline/ settings/ blueprint/ graph/ ledger/ style/ models/ 各自也是 index.tsx + components/）；`app/` 下页面文件仅做路由转发 |
-| 前端全局组件 | `frontend/src/components/` | **仅**全局共享组件（modal/message/notification/loading/confirm-dialog/info-tip/brand/title-bar/novel-meta/author-confirm…），每个组件一个文件夹 `<名>/index.tsx`（内容都在 index.tsx），不放业务代码 |
+| 前端全局组件 | `frontend/src/components/` | **仅**全局共享组件（modal/message/notification/loading/confirm-dialog/info-tip/brand/title-bar/novel-meta/author-confirm…），每个组件一个文件夹 `<名>/index.tsx`；index.tsx 平级不允许有其他文件——其余文件收进 `<名>/components/` 子文件夹（如 author-confirm：`index.tsx` + `components/{store,host,dialog,panel,notifier}.tsx`）；单文件超 700 行同样按 §4.5 拆分 |
 | 前端 API 客户端 | `frontend/src/lib/api/` | 按后端域拆分（novels/settings/chapters/reviews/outlines/ledger/blueprints/style/graph/models/agents/prompts），`index.ts` barrel 统一出口 |
 | 前端共享逻辑 | `frontend/src/lib/` | API 客户端、状态、工具逻辑 |
 | 前端常量 | `frontend/src/constants/` | 共享常量（单一事实源，类型由常量推导） |
