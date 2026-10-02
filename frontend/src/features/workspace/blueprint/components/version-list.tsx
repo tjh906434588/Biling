@@ -26,7 +26,7 @@ export function BlueprintVersionList({
   onSelect: (id: string) => void;
 }) {
   return (
-    <aside className="panel flex min-w-0 max-h-full flex-col gap-3 self-start overflow-hidden">
+    <aside className="panel panel-fit gap-3">
       <div className="panel-head mb-0">
         <h3 className="panel-title">蓝图版本</h3>
         <button

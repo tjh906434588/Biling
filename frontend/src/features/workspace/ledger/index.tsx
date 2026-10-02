@@ -132,7 +132,7 @@ export default function LedgerPanel({ novelId }: Props) {
 
       {/* open / closed 泳道 */}
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2 [grid-template-rows:minmax(0,1fr)]">
-        <section className="panel flex min-h-0 flex-col">
+        <section className="panel panel-fit">
           <div className="panel-head shrink-0">
             <h4 className="panel-title">
               待回收
@@ -147,7 +147,7 @@ export default function LedgerPanel({ novelId }: Props) {
             <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">{openItems.map(renderItem)}</ul>
           )}
         </section>
-        <section className="panel flex min-h-0 flex-col">
+        <section className="panel panel-fit">
           <div className="panel-head shrink-0">
             <h4 className="panel-title">
               已回收

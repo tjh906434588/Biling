@@ -176,7 +176,7 @@ export function ChapterSidebar({
     <>
       {/* 左侧：章节目录（一件事一张卡，按卷分组、可展开搜索，与大纲页一致）。
           模块高度跟随内容，最多与页面底部对齐；内容多时在列表内滚动，避免整页滚动条。 */}
-      <aside className="max-h-[calc(100dvh-6rem)] flex min-w-0 flex-col gap-4 overflow-hidden">
+      <aside className="panel-fit gap-4">
         <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="panel-head shrink-0">
             <h3 className="panel-title">章节目录</h3>

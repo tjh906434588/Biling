@@ -606,6 +606,21 @@
   }
 }
 
+/* —— 面板模块「跟随内容、上限页高」——
+   列表/侧栏类面板的布局基座：内容少时高度跟随内容（不被 flex/grid 的 stretch 拉成满高），
+   内容多时封顶在页面内容区高度内、由内部列表滚动。
+   用法：<aside className="panel panel-fit">（配合 .panel 提供边框/背景/内边距，panel-fit 提供布局）；
+   列表区配合 <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto"> 实现封顶后内部滚动。 */
+@utility panel-fit {
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  max-height: calc(100dvh - 6rem); /* 标题栏 + 顶栏 = 页面内容区高度 */
+  overflow: hidden;
+}
+
 @layer utilities {
   /* 发丝分隔线：两端淡出，比实线更安静 */
   .rule-fade {

@@ -44,7 +44,7 @@ export default function OutlineList({
   onAdd,
 }: Props) {
   return (
-    <aside className="flex max-h-[calc(100dvh-6rem)] min-w-0 flex-col gap-4 overflow-hidden">
+    <aside className="panel-fit gap-4">
       <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="panel-head shrink-0">
           <h3 className="panel-title">章节大纲</h3>
