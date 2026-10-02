@@ -134,6 +134,16 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - **禁止提交**：`data\`、`.env`、`*.db`、构建产物（`build/ dist-desktop/ backend/dist/`）、`.workbuddy/`、`tools/fanqie_crawler/corpus/`、`desktop/node_modules/`、图标中间产物 `desktop/build/icon-*.png`。
 - 提交前用 `git status --short` 确认无敏感/冗余文件混入。
 
+### 7.5 发版版本号（SemVer，提交驱动 + 建议确认）
+
+- 版本号单一事实源 = `desktop/package.json` 的 `version`（桌面版标题栏经 preload 读取展示，前端不要手写）。
+- 采用语义化版本 `v主.次.修`：小修 `fix/refactor` → 修（v1.0.0 → v1.0.1）；新增功能 `feat` → 次（→ v1.1.0）；不兼容大改/改头换面 → 主（→ v2.0.0）。
+- **发版判断（自动执行）**：发版时对比 `上次 v* tag → 当前 HEAD` 的提交类型，取最高档给出版号建议：
+  1. 有 `breaking`（提交信息含 `BREAKING CHANGE` 或明显不兼容/改头换面）→ 建议 major，**必须用户确认**；
+  2. 否则有 `feat` → 建议 minor；
+  3. 否则（仅 `fix`/`refactor`/`docs`/`chore`）→ 建议 patch。
+- **发版动作**：把建议版号报给用户并说明依据，用户点头后：改 `desktop/package.json` 的 `version` → 提交（`chore: 发布 vX.Y.Z`）→ `git tag vX.Y.Z` → `git push --tags`。除 major 外无需再问。
+
 ## 8. 改完如何验证
 
 - **后端**：`cd backend && .venv\Scripts\python.exe -c "import app.main"` 无异常即通过；涉及数据目录/日志改动时实际启动一次，确认 `data\` 与 `data\logs\` 正常生成。
