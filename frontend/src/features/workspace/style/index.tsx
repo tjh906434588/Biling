@@ -94,10 +94,10 @@ export default function StylePanel({ novelId }: Props) {
   const latest = profiles[0] ?? null;
 
   return (
-    <Loading loading={loading}>
-      <div className="grid gap-6">
-        <section className="flex min-w-0 flex-col gap-5 sm:gap-7">
-        <div className="panel flex h-[calc(100dvh-6rem)] flex-col">
+    <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
+      <div className="grid min-h-0 flex-1 gap-6 [grid-template-rows:minmax(0,1fr)]">
+        <section className="flex min-h-0 min-w-0 flex-col gap-5 sm:gap-7">
+        <div className="panel flex min-h-0 flex-col">
           <div className="panel-head">
             <div className="flex items-center gap-1.5">
               <h3 className="panel-title">整本书的文风描述</h3>

@@ -664,8 +664,8 @@ export default function WritingPanel({ novelId }: Props) {
   });
 
   return (
-    <Loading loading={loading}>
-      <div className="grid items-start gap-6 lg:grid-cols-[340px_minmax(0,1fr)] xl:gap-8">
+    <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
+      <div className="grid min-h-0 flex-1 items-stretch gap-6 lg:grid-cols-[340px_minmax(0,1fr)] xl:gap-8 [grid-template-rows:minmax(0,1fr)]">
       <ChapterSidebar
         chapters={chapters}
         volumes={volumes}
@@ -703,7 +703,7 @@ export default function WritingPanel({ novelId }: Props) {
       {/* 右侧：正文（左，占据主区）+ 评价与优化（右，常驻侧栏）并排，各自独立滚动、互不挤压；
           中窄屏（<xl）回退为上下堆叠，评价栏限高可滚动；xl 起正文与评价左右并排、各自满高独立滚动。正文与评价始终同屏可见，不再用弹窗；评价栏可折叠为窄条让正文全宽阅读。 */}
       <section
-        className="flex h-[calc(100dvh-6rem)] min-w-0 flex-col gap-5 overflow-hidden xl:flex-row xl:gap-6"
+        className="flex min-h-0 min-w-0 flex-col gap-5 overflow-hidden xl:flex-row xl:gap-6"
       >
         {/* ① 当前章节正文（全部版本 + 已定稿正文），显示在界面、不撑破页面高度 */}
         <ChapterContent

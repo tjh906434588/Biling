@@ -104,8 +104,8 @@ export default function LedgerPanel({ novelId }: Props) {
   }
 
   return (
-    <Loading loading={loading}>
-      <div className="flex flex-col gap-5">
+    <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col gap-5">
       {/* 预警横幅：超期（红）+ 久未回收（琥珀），账本页是伏笔状态的唯一专页出口 */}
       {(overdue.length > 0 || staleOnly.length > 0) && (
         <div
@@ -131,8 +131,8 @@ export default function LedgerPanel({ novelId }: Props) {
       )}
 
       {/* open / closed 泳道 */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="panel flex h-[calc(100dvh-6rem)] flex-col">
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2 [grid-template-rows:minmax(0,1fr)]">
+        <section className="panel flex min-h-0 flex-col">
           <div className="panel-head shrink-0">
             <h4 className="panel-title">
               待回收
@@ -147,7 +147,7 @@ export default function LedgerPanel({ novelId }: Props) {
             <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">{openItems.map(renderItem)}</ul>
           )}
         </section>
-        <section className="panel flex h-[calc(100dvh-6rem)] flex-col">
+        <section className="panel flex min-h-0 flex-col">
           <div className="panel-head shrink-0">
             <h4 className="panel-title">
               已回收

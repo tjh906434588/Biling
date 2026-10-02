@@ -37,7 +37,7 @@ export function BlueprintDetail({
   }
   const c = selected.content;
   return (
-    <div className="panel flex min-h-0 h-[calc(100dvh-6rem)] flex-col">
+    <div className="panel flex min-h-0 flex-col">
       <div className="panel-head">
         <h3 className="panel-title">
           蓝图 v{selected.version} {c?.title ?? ""}

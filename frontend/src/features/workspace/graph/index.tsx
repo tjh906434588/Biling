@@ -63,8 +63,8 @@ export default function GraphPanel({ novelId }: { novelId: string }) {
   }, [load]);
 
   return (
-    <Loading loading={loading}>
-    <div className="flex h-[calc(100dvh-6rem)] w-full items-stretch gap-6">
+    <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 w-full flex-1 items-stretch gap-6">
       {/* 左：角色状态 */}
       {memory && <MemoryPanel memory={memory} />}
 

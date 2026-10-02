@@ -268,11 +268,11 @@ export default function Workspace({ novelId }: { novelId: string }) {
         <div className="flex min-h-0 flex-1 flex-col">
           <TabStrip tab={tab} onSelectTab={setTab} />
 
-          <main className={`min-h-0 flex-1 ${tab === "settings" ? "overflow-hidden" : "overflow-y-auto"}`}>
+          <main className="min-h-0 flex-1 overflow-hidden">
             <div
-              className={`mx-auto w-full px-4 py-6 sm:px-6 ${
+              className={`mx-auto flex h-full min-h-0 w-full flex-col overflow-y-auto px-4 py-6 sm:px-6 ${
                 tab === "write" || tab === "outline" ? "max-w-[1728px]" : "max-w-[1280px]"
-              } ${tab === "settings" ? "flex h-full flex-col" : ""}`}
+              }`}
             >
               {AI_TABS.has(tab) && <AiNotReadyBanner onConfigure={() => setTab("models")} />}
               <FirstRunGuide novelId={novelId} onGo={setTab} />
