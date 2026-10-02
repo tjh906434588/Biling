@@ -39,16 +39,16 @@ import {
   deriveStageRanges,
   timingStructured,
   type StagePlan,
-} from "./timing";
-import { EMPTY_ERA_FORM, eraFromForm, eraToForm, type EraFormState } from "./era";
-import { parseImportText, type ImportItem } from "./import";
-import { settingMeta, splitSetting } from "./helpers";
-import { EMPTY_FORM, type FormState } from "./settings-utils";
-import SettingsSidebar from "./meta-panel";
-import SettingList from "./setting-list";
-import SettingFormModal from "./setting-form";
-import ImportModal from "./import-modal";
-import EraEditModal from "./era-form";
+} from "./components/timing";
+import { EMPTY_ERA_FORM, eraFromForm, eraToForm, type EraFormState } from "./components/era";
+import { parseImportText, type ImportItem } from "./components/import";
+import { settingMeta, splitSetting } from "./components/helpers";
+import { EMPTY_FORM, type FormState } from "./components/settings-utils";
+import SettingsSidebar from "./components/meta-panel";
+import SettingList from "./components/setting-list";
+import SettingFormModal from "./components/setting-form";
+import ImportModal from "./components/import-modal";
+import EraEditModal from "./components/era-form";
 
 interface Props {
   novelId: string;

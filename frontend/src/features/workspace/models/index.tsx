@@ -19,7 +19,7 @@ import {
   type ModelRoute,
 } from "@/lib/api";
 import Modal from "@/components/modal";
-import ModelPickerModal from "./model-picker-modal";
+import ModelPickerModal from "./components/model-picker-modal";
 import Loading from "@/components/loading";
 import { useAiStatus } from "@/lib/ai-status";
 import { message } from "@/components/message";

@@ -35,9 +35,9 @@ import { message } from "@/components/message";
 import Loading from "@/components/loading";
 import { useAiStatus } from "@/lib/ai-status";
 import { type VolumeInfo } from "@/constants";
-import OutlineList from "./outline-list";
-import OutlineDetail from "./outline-detail";
-import GenOutlineModal from "./gen-outline-modal";
+import OutlineList from "./components/outline-list";
+import OutlineDetail from "./components/outline-detail";
+import GenOutlineModal from "./components/gen-outline-modal";
 import {
   deriveStage,
   groupByVolume,
@@ -47,7 +47,7 @@ import {
   type GenForm,
   type OutlineContent,
   type VolumeGroup,
-} from "./outline-utils";
+} from "./components/outline-utils";
 
 interface Props {
   novelId: string;

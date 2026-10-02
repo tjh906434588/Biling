@@ -50,7 +50,7 @@ import {
 } from "@/constants";
 import { copyText } from "@/utils/clipboard";
 import { getRunningTask, subscribeRunningTask } from "@/lib/task-status";
-import { ChapterSidebar } from "./chapter-tree";
+import { ChapterSidebar } from "./components/chapter-tree";
 import {
   clearGapNotifIfMismatch,
   getInitialAffectedChapters,
@@ -59,10 +59,10 @@ import {
   useRewriteFailNotif,
   type AffectedChapter,
   type RewriteFailData,
-} from "./notifications";
-import { AddChapterDrawer } from "./add-chapter-drawer";
-import { ChapterContent } from "./chapter-content";
-import { InfoModal } from "./info-modal";
+} from "./components/notifications";
+import { AddChapterDrawer } from "./components/add-chapter-drawer";
+import { ChapterContent } from "./components/chapter-content";
+import { InfoModal } from "./components/info-modal";
 import {
   summarizeOutline,
   type AiRunState,
@@ -71,11 +71,11 @@ import {
   type InfoDraft,
   type ShowToast,
   EMPTY_FORM,
-} from "./panel-utils";
-import { ReviewSidebar } from "./review-sidebar";
-import { RunModals } from "./run-modals";
-import { useChapterEditor } from "./use-chapter-editor";
-import { useResumeAgentTask } from "./use-resume-agent-task";
+} from "./components/panel-utils";
+import { ReviewSidebar } from "./components/review-sidebar";
+import { RunModals } from "./components/run-modals";
+import { useChapterEditor } from "./components/use-chapter-editor";
+import { useResumeAgentTask } from "./components/use-resume-agent-task";
 import {
   handleGenerate,
   handleFinalizeSelected,
@@ -86,8 +86,8 @@ import {
   handleRerunAffected,
   handleRevise,
   type FlowCtx,
-} from "./use-ai-flows";
-export { hideWorkspaceNotifs, showWorkspaceNotifs } from "./notifications";
+} from "./components/use-ai-flows";
+export { hideWorkspaceNotifs, showWorkspaceNotifs } from "./components/notifications";
 
 interface Props {
   novelId: string;

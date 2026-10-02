@@ -41,10 +41,10 @@ import {
   keywordOutlineCheck,
   OUTLINE_TEMPLATE_TEXT,
   type OutlineCheckState,
-} from "./blueprint-utils";
-import { BlueprintVersionList } from "./version-list";
-import { BlueprintDetail } from "./detail";
-import { BlueprintAddModal } from "./add-modal";
+} from "./components/blueprint-utils";
+import { BlueprintVersionList } from "./components/version-list";
+import { BlueprintDetail } from "./components/detail";
+import { BlueprintAddModal } from "./components/add-modal";
 
 interface Props {
   novelId: string;

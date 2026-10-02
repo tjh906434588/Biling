@@ -23,7 +23,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 | 层 | 路径 | 职责 |
 |---|---|---|
 | 前端页面 | `frontend/src/app/` | App Router 页面，全部 `"use client"`（layout.tsx 保持 server 组件，仅挂 Provider/宿主） |
-| 前端业务 | `frontend/src/features/` | 业务功能目录：`bookshelf/`（书架）、`workspace/`（工作台 + 各面板：writing/ outline/ settings/ blueprint/ graph/ ledger/ style/ models/…）；页面/面板私有组件就近放所属 feature，跨面板共享放 `workspace/components/` |
+| 前端业务 | `frontend/src/features/` | 业务功能目录，每个 feature 统一为 **`index.tsx`（主入口）+ `components/`（私有组件，与入口平级）**：`bookshelf/`（书架）、`workspace/`（工作台壳 + 各面板：writing/ outline/ settings/ blueprint/ graph/ ledger/ style/ models/ 各自也是 index.tsx + components/）；`app/` 下页面文件仅做路由转发 |
 | 前端全局组件 | `frontend/src/components/` | **仅**全局共享组件（modal/message/notification/loading/confirm-dialog/info-tip/brand/title-bar/novel-meta/author-confirm…），不放业务代码 |
 | 前端 API 客户端 | `frontend/src/lib/api/` | 按后端域拆分（novels/settings/chapters/reviews/outlines/ledger/blueprints/style/graph/models/agents/prompts），`index.ts` barrel 统一出口 |
 | 前端共享逻辑 | `frontend/src/lib/` | API 客户端、状态、工具逻辑 |
@@ -59,7 +59,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - 新文件顶部写 `@file 路径 · 作用 · 关键机制` 中文头注释；关键逻辑行内注释说明"为什么"。
 - 常量优先收敛到 `constants/`，业务代码从 `@/constants` 导入；**类型从常量推导**（如 `SETTING_TYPES` → `SettingType`），不重复定义枚举。
 - 领域类型统一放 `types/api.ts`，经 `@/lib/api` re-export；页面禁止直接 `fetch`，一律走 `lib/api/` 的函数。
-- **组件放置（自动执行）**：按使用范围三级存放——页面/面板私有组件 → `features/<feature>/` 对应目录；同工作台内多面板共享 → `features/workspace/components/`；跨路由全局共享 → `components/`（业务代码不放 `components/`）。
+- **组件放置（自动执行）**：每个 feature/页面统一结构 = `index.tsx`（主入口/页面组件）+ `components/`（该 feature 私有组件，与 index.tsx 平级）；跨面板共享放 `workspace/components/`；跨路由全局共享 → `components/`（业务代码不放 `components/`）。页面路由文件（`app/**/page.tsx`）只做转发，页面逻辑在对应 feature 的 index.tsx。
 - **API 新增（自动执行）**：新接口函数按后端域放入 `lib/api/<域>.ts`（域文件不存在则新建并在 `index.ts` barrel 追加 `export *`），业务代码统一 `import from "@/lib/api"`，不新增别的入口。
 - **任务类型集合**（setting/creation/review/extract/chronicle）：前端在 `frontend/src/constants/task-types.ts` 单一维护（`types/api.ts` 的 `TaskType` 与 `models-panel.tsx` 的 UI 都由它派生）；后端在 `backend/app/api/models.py` 单独一份（跨端契约例外）。新增/修改任务类型：前端只改 `constants/task-types.ts` 即可，同时同步后端 `api/models.py`。
 - 组件默认 `"use client"`；Tailwind 4，同时覆盖亮/暗色（`dark:`）；样式类名简洁、不引入多余库。
@@ -75,7 +75,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - 渲染 return 里的大型 JSX 区块 → 抽展示型子组件（props 显式声明 + 回调）；所有 state、数据加载、时序逻辑保留在主组件，子组件只做展示。
 - 编排逻辑（编辑器 / AI 流程 / 轮询恢复等）→ 抽自定义 hooks（如 `use-chapter-editor.ts` / `use-ai-flows.ts` / `use-resume-agent-task.ts`），共享状态经类型化 ctx 传入。
 - 明显重复的代码块 → 收敛成小 helper（先确认行为可证明等价再合）。
-- 子组件放对应领域子目录：`features/workspace/{writing,outline,settings,blueprint,graph,ledger,style,models}/`、`features/bookshelf/` 等；跨面板共享放 `features/workspace/components/`；新文件顶部写 `@file 路径 · 作用 · 关键机制` 头注释，含 hooks 的加 `"use client"`。
+- 子组件放对应 feature 的 `components/` 子目录：`features/workspace/{writing,outline,settings,blueprint,graph,ledger,style,models}/components/`、`features/bookshelf/components/` 等；跨面板共享放 `features/workspace/components/`；新文件顶部写 `@file 路径 · 作用 · 关键机制` 头注释，含 hooks 的加 `"use client"`。
 - 红线：不改防抖 / 竞态守卫 / useEffect 依赖 / SSE 与持久化逻辑；不把「依赖父组件闭包且无法干净传 props」的 JSX 强行抽出；不为拆分引入大型 ctx「上帝对象」之外的不必要抽象。
 - 页面文件（`app/**/page.tsx`）：默认导出必须留在 page 且导出名不变（Next.js 要求）；内联弹窗/表单/区块可拆到对应领域子目录。
 - 拆完必须 `cd frontend && npm run build`（含 TS 检查）验证通过后再提交。
