@@ -62,9 +62,12 @@ export function AutoTextarea({
         const contentH = contentEl ? contentEl.scrollHeight : container.scrollHeight;
         // 输入框之外的固定内容高 = 内容总高 − 输入框占的布局高度（offsetHeight，非内容 scrollHeight）
         const fixed = contentH - el.offsetHeight;
+        // 上下 padding 都计入 clientHeight，必须一并扣除，否则上限偏大、固定内容 + 输入框
+        // 会超出容器可视区 → 弹窗整块出现滚动（期望是只有输入框内部滚动）
+        const padTop = parseFloat(getComputedStyle(container).paddingTop) || 0;
         const padBottom = parseFloat(getComputedStyle(container).paddingBottom) || 0;
-        // 上限 = 容器可视高 − 底部 padding − 固定内容 − 余量：内容多时输入框恰好长满剩余空间
-        maxH = Math.max(80, container.clientHeight - padBottom - fixed - 8);
+        // 上限 = 容器可视高 − 上下 padding − 固定内容 − 余量：内容多时输入框恰好长满剩余空间
+        maxH = Math.max(80, container.clientHeight - padTop - padBottom - fixed - 8);
       }
       // border-box 修正：style.height 含 border 而 scrollHeight 只测内容+padding，
       // 补上 border 高度让内容区恰好等于 scrollHeight，空内容时不出现滚动条
