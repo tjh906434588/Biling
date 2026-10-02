@@ -231,7 +231,7 @@ class Chapter(Base):
 
 
 class ChapterVersion(Base):
-    """章节版本（双版本通过此表表达）。"""
+    """章节版本（版本历史通过此表表达）。"""
     __tablename__ = "chapter_versions"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)

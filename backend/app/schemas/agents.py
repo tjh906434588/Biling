@@ -566,7 +566,7 @@ class AgentRunRequest(BaseModel):
 class AgentCommitRequest(BaseModel):
     """调试产物显式加入正式库：/api/stream/agents/{agent}/commit 的请求体。
 
-    对应 dry_run 运行返回的 stored.data（单版本）或 versions[i].data（多版本）。
+    对应 dry_run 运行返回的 stored.data。
     """
 
     novel_id: uuid.UUID

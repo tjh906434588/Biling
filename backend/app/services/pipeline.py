@@ -1,11 +1,10 @@
 """Pipeline 核心：Agent 统一接口编排，SSE 事件流。
 
-事件流（单版本）：context_ready → stream_delta* → stream_end → schema_validate → stored
+事件流：context_ready → stream_delta* → stream_end → schema_validate → stored
 
 - 产出 schema 校验失败 → 携带错误自纠错重试 1 次 → 仍失败 → 落 quality_reviews 告警 + 事件标记。
 - 结构化入库由各角色 _persist 钩子完成（extractor 入库 story_state；novelist 入库 chapters + chapter_versions）。
-- 说明：生成路径固定为单版本（前端只请求单版本生成）；章节的「版本历史」来自每次生成/编辑新增的
-  chapter_version 行，与多版本并行生成无关。
+- 章节「版本历史」来自每次生成/编辑新增的 chapter_version 行。
 """
 import asyncio
 import contextvars
@@ -74,7 +73,7 @@ async def run_agent_stream(
     dry_run: bool = False,
     task_id: Optional[uuid.UUID] = None,
 ) -> AsyncIterator[str]:
-    """通用流式生成入口：返回 SSE 格式文本流。自动识别单/多版本。
+    """通用流式生成入口：返回 SSE 格式文本流。
 
     dry_run=True：只生成不落库（调试沙箱），stored 事件携带产出，由用户决定是否
     通过 commit 接口显式加入正式库。
@@ -132,7 +131,7 @@ async def _run_agent_stream_raw(
         "dry_run": dry_run,
     })
 
-    # 生成路径固定为单版本：直接走单版本流式（_stream_single）。
+    # 单版本流式生成。
     async for sse in _stream_single(db, agent, base_ctx, agent_name, novel_id, params, dry_run):
         yield sse
 
@@ -1825,8 +1824,8 @@ def sync_ledger_from_outline(
         if outline is not None and outline.novel_id != novel_id:
             outline = None
     if outline is None:
-        # 同一章可能有多个版本（轻量历史版本）：账本只认「批准版」；
-        # 该章还没有批准版时，退回最新一版（避免多版本时 scalar_one_or_none 报错）。
+        # 同一章可能有多个历史版本：账本只认「批准版」；
+        # 该章还没有批准版时，退回最新一版。
         outline = db.execute(
             select(Outline)
             .where(
@@ -2443,7 +2442,7 @@ async def commit_agent_output(
 ) -> dict:
     """把调试 dry_run 的产物显式加入正式库（复用各角色 _persist，不重新调用 AI）。
 
-    output 为 dry_run 运行时 stored 事件返回的 data（单版本）或 versions[i].data（多版本）。
+    output 为 dry_run 运行时 stored 事件返回的 data。
     """
     agent: Agent = get_agent(db, agent_name)
     parsed = agent.parse_output(json.dumps(output, ensure_ascii=False))
