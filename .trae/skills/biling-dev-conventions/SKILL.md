@@ -91,6 +91,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 
 ## 7. 提交规范
 
+- **完成即自动提交**：每次功能/优化/修复改动验证通过后，直接提交并推送到 `main` 分支，按逻辑拆分多个 commit，**无需再询问用户**；提交信息遵循下方格式约定。
 - Conventional Commits + 中文描述：`feat:` / `fix:` / `refactor:` / `chore:` / `docs:`（如 `feat: 桌面版打包落地`）。
 - **禁止提交**：`data\`、`.env`、`*.db`、构建产物（`build/ dist-desktop/ backend/dist/`）、`.workbuddy/`、`tools/fanqie_crawler/corpus/`、`desktop/node_modules/`、图标中间产物 `desktop/build/icon-*.png`。
 - 提交前用 `git status --short` 确认无敏感/冗余文件混入；大改动分逻辑提交。
