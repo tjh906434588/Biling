@@ -3,7 +3,6 @@
 说明：
 - UUID 主键用 SQLAlchemy 2.0 原生 Uuid 类型（SQLite/PG 通用）。
 - JSONB 用 sa.JSON 表达：SQLite 原生支持，PG 部署可换 JSONB。
-- embedding 在 SQLite 开发期为 NULL（无 pgvector），PG 上为 VECTOR(1024)。
 """
 import uuid
 from datetime import datetime
@@ -111,10 +110,9 @@ class Setting(Base):
     outline_ids: Mapped[Optional[list]] = mapped_column(JSON)  # list[str] outline.id，隐形字段不展示
     description: Mapped[Optional[str]] = mapped_column(Text)
     structured: Mapped[Optional[dict]] = mapped_column(JSON)  # 按 type 的字段（appearance/personality/goals/relations...）
-    is_constitution: Mapped[bool] = mapped_column(Boolean, default=False)  # 小说宪法：不可变硬约束
+    is_constitution: Mapped[bool] = mapped_column(Boolean, default=False)  # 小说宪法标记：不可变硬约束，评价师硬依据
     # 关键信息固化（C）：AI 判定为关键时置 True；注入时不受设定库数量上限影响，永远进窗口（防止早期关键设定被新设定挤出）
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    embedding: Mapped[Optional[list]] = mapped_column(JSON)  # SQLite 开发期 NULL；PG 用 VECTOR(1024)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
