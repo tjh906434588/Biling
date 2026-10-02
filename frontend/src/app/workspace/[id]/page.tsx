@@ -330,10 +330,6 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
         pushLog("delta", ev.event, d.delta);
         liveBuf += d.delta;
         setLiveText(liveBuf);
-      } else if (ev.event === "version_start") {
-        // 新版本开始：在流式文本里插入版本分隔线，区分多个产出版本
-        liveBuf += `\n—— 版本 ${(ev.data as { version: string }).version} ——\n`;
-        pushLog("info", ev.event, s);
       } else if (ev.event === "schema_validate") {
         const ok = (ev.data as { status: string }).status === "ok";
         pushLog(ok ? "ok" : "err", ev.event, s);

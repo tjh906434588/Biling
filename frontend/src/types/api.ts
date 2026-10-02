@@ -3,9 +3,11 @@
  * 领域/API 共享类型：后端接口返回的结构化数据、SSE 事件与作者确认的类型定义集中于此。
  * 原散落在 src/lib/api.ts 中，重构时按「类型集中管理」惯例抽到 types/ 目录；
  * lib/api.ts 通过 `export * from "@/types/api"` 向后兼容，业务代码仍可从 "@/lib/api" 导入这些类型。
- * 注意：SettingType 引用常量 SETTING_TYPES（来自 "@/constants/api"），保证「常量即类型」单一事实来源。
+ * 注意：SettingType 引用常量 SETTING_TYPES（来自 "@/constants/api"），task_type 引用 TASK_TYPES
+ * （来自 "@/constants/task-types"），保证「常量即类型」单一事实来源。
  */
 import { SETTING_TYPES } from "@/constants/api";
+import type { TaskType } from "@/constants/task-types";
 
 export interface Novel {
   id: string;
@@ -362,7 +364,7 @@ export interface MemoryReview {
 
 export interface ModelRoute {
   id: string;
-  task_type: "setting" | "creation" | "review" | "extract" | "chronicle";
+  task_type: TaskType;
   provider: string;
   model: string;
   temperature: number | null;
@@ -431,7 +433,6 @@ export interface DefaultModel {
 // SSE 事件类型（对应后端 pipeline 事件流）
 export type StreamEvent =
   | "context_ready"
-  | "version_start"
   | "thinking_delta"
   | "stream_delta"
   | "stream_end"

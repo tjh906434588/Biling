@@ -23,19 +23,10 @@ import ModelPickerModal from "./model-picker-modal";
 import Loading from "@/components/loading";
 import { useAiStatus } from "@/lib/ai-status";
 import { message } from "@/components/message";
-
-/** 可在高级设置里按任务类型指定模型的五类任务 */
-type TaskKey = "setting" | "creation" | "review" | "extract" | "chronicle";
-const TASK_TYPES: Array<{ key: TaskKey; label: string; hint: string }> = [
-  { key: "setting", label: "设定", hint: "规划世界观、人物与大章节大纲，定下故事骨架" },
-  { key: "creation", label: "创作", hint: "写每一章的正文内容" },
-  { key: "extract", label: "提取", hint: "把已写的章节自动整理成剧情要点和人物信息，供后续写作参考" },
-  { key: "chronicle", label: "编年", hint: "定期把前文浓缩成故事脉络，防止写久了忘掉早期伏笔" },
-  { key: "review", label: "评价", hint: "审读章节质量，发现问题并给出修改建议" },
-];
+import { TASK_TYPES, type TaskType } from "@/constants/task-types";
 
 /** 五类任务各自的配置表单（provider/model/temperature；留空 = 用默认模型） */
-type TaskForm = Record<TaskKey, { provider: string; model: string; temperature: string }>;
+type TaskForm = Record<TaskType, { provider: string; model: string; temperature: string }>;
 const EMPTY_TASK_FORMS: TaskForm = {
   setting: { provider: "", model: "", temperature: "" },
   creation: { provider: "", model: "", temperature: "" },
@@ -148,7 +139,7 @@ export default function ModelsPanel() {
 
   /** 更新某一任务类型的配置表单。 */
   const setTask = (
-    key: TaskKey,
+    key: TaskType,
     patch: Partial<{ provider: string; model: string; temperature: string }>,
   ) => setFormByTask((f) => ({ ...f, [key]: { ...f[key], ...patch } }));
 
