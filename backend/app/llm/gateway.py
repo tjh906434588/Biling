@@ -1,4 +1,4 @@
-"""LiteLLM 网关封装：流式 completion + 无 Key 时 Mock 兜底（M0 可无 Key 验证 SSE 链路）。
+"""LiteLLM 网关封装：流式 completion + 无 Key 时 Mock 兜底（默认关闭，BILING_ALLOW_MOCK_WITHOUT_KEY=true 开启，仅开发调试）。
 
 API Key 优先级：页面配置（provider_keys 表）→ 环境变量。页面保存后实时生效，无需重启。
 """

@@ -129,7 +129,7 @@ def list_settings(
     q: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """设定条目列表；GET 支持 ?type=&q=（M1 起 q 走语义检索，M0 为名称/描述 LIKE）。
+    """设定条目列表；GET 支持 ?type=&q=（q 为名称/描述 LIKE 检索）。
 
     版本过滤（与 agent 上下文 get_settings_snapshot 一致）：
     - source="blueprint"：只显示当前生效蓝图的导入设定，其余版本隐藏（可切回恢复）；

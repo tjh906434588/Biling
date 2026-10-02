@@ -110,7 +110,7 @@ class NovelistAgent(Agent[NovelChapter]):
             + (("\n\n" + rhythm_block) if rhythm_block else "")
         )
 
-        # 设定：M0 骨架全量截断给（M1 起由 RAG + POV 裁剪精确装配）
+        # 设定：宪法/固化项优先 + 最近更新优先取快照（上限 settings_snapshot_limit），随组件注入
         # 按写作进度过滤：隐藏的不给、未到生效章范围的不给、阶段不命中的不给，避免后期设定提前出现
         chapter_no = 0
         try:
