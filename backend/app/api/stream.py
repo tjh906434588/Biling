@@ -42,11 +42,11 @@ router = APIRouter(prefix="/api/stream/agents", tags=["stream"])
 # 避免刷新后生成过程弹窗只剩占位文字（刷新前已流出的内容也能看到，并随轮询继续滚动）。
 PROGRESS: dict[str, dict[str, str]] = {}
 
-# 后台任务绝对超时（秒）：LLM 请求已单独限时（LLM_REQUEST_TIMEOUT_SECONDS=600），
+# 后台任务绝对超时（秒）：LLM 请求已单独限时（LLM_REQUEST_TIMEOUT_SECONDS=900），
 # 这里留足重试/校验/落库缓冲。防止任务永久 running（曾因 LLM 挂起卡死 20+ 分钟）。
 # 注意：等作者确认的时间不计入该预算（见 _ConfirmAwareTimeout），否则确认等待会占用
 # 生成预算导致「等满 15 分钟自动跳过后剩余预算不足，任务被超时终止、蓝图无数据」。
-TASK_ABSOLUTE_TIMEOUT_SECONDS = 1200
+TASK_ABSOLUTE_TIMEOUT_SECONDS = 1800
 
 # 僵尸任务判死阈值（秒）：running 任务每 HEARTBEAT_INTERVAL_SECONDS(30s) 心跳刷新 updated_at；
 # 超过该阈值仍无心跳的 running 视为失联（进程中断/协程挂死/状态写失败），懒清理自动标 error 解锁并发位。

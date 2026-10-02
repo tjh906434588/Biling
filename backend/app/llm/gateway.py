@@ -32,8 +32,8 @@ DEFAULT_GENERATION_MAX_TOKENS = 8192
 # 单次 LLM 请求总超时（秒）：流式生成可能较长（长思考期 + 长正文），
 # 但必须有个上限——否则网络/服务端挂起时请求永不返回，后台任务永久 running，
 # 表现为"提取/生成没落库、按钮一直高亮"（曾因无超时卡死 20+ 分钟）。
-# 10 分钟覆盖正常生成（实测 novelist/reviser/critic 均在 1-6 分钟内完成）。
-LLM_REQUEST_TIMEOUT_SECONDS = 600
+# 15 分钟覆盖慢模型（推理模型思考期长 + 服务端波动）下的正常生成。
+LLM_REQUEST_TIMEOUT_SECONDS = 900
 
 # 各 provider 对应的 API Key 环境变量
 _PROVIDER_KEY_ENV: dict[str, str] = {
