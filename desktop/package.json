@@ -22,7 +22,7 @@
       "output": "../dist-desktop",
       "buildResources": "build"
     },
-    "files": ["main.js"],
+    "files": ["main.js", "preload.js"],
     "asar": true,
     "win": {
       "icon": "build/icon.png",

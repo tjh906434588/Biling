@@ -396,7 +396,7 @@ export default function Home() {
   const isEmpty = !loading && novels.length === 0;
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* ── 应用顶栏：紧凑工具栏，不是营销导航 ──────────────────── */}
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-zinc-200 bg-paper/90 px-3 backdrop-blur-md sm:px-4">
         <Brand size="sm" showLatin={false} />

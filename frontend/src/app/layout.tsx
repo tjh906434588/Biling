@@ -13,6 +13,7 @@ import { MessageHost } from "@/components/message";
 import { NotificationHost } from "@/components/notification";
 import { ConfirmNotifier } from "@/components/author-confirm";
 import GlobalLogging from "@/components/global-logging";
+import TitleBar from "@/components/title-bar";
 
 // Geist 只提供拉丁字形，中文由 globals.css 中的 --sans-stack 回退链接管
 // （Noto Sans SC / 苹方 / 微软雅黑），避免引入体积巨大的中文字体包。
@@ -55,7 +56,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="zh-CN"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="flex h-dvh flex-col overflow-hidden">
+        {/* 桌面版自绘窗口标题栏（Electron 隐藏系统标题栏后的拖拽区；浏览器里仅一条装饰条） */}
+        <TitleBar />
         <AiStatusProvider>{children}</AiStatusProvider>
         {/* 全局前端日志：捕获未处理错误并上报后端落盘（导出日志排查问题用） */}
         <GlobalLogging />

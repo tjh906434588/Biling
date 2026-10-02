@@ -9,7 +9,7 @@
  * 3. 退出时清理子进程；托盘提供「导出日志 / 打开数据目录 / 退出」。
  * 4. 开发模式（npm start，未打包）：假定前后端 dev server 已由开发者启动，只开窗口。
  */
-const { app, BrowserWindow, Tray, Menu, dialog, shell, session, net, nativeImage } = require("electron");
+const { app, BrowserWindow, Tray, Menu, dialog, shell, session, net, nativeImage, nativeTheme } = require("electron");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -101,6 +101,24 @@ function waitFor(url, timeoutMs) {
   });
 }
 
+// ---------- 自绘标题栏：系统原生窗口控制按钮浮层 ----------
+// 配色必须与前端自绘标题栏的 --paper 语义色一致（浅色宣纸米白 / 深色暖深灰），
+// 这样右上角系统原生按钮区与左侧自绘区域才能无缝衔接。
+function windowChromeColors() {
+  return nativeTheme.shouldUseDarkColors
+    ? { color: "#1a1815", symbolColor: "#ece4d4" }
+    : { color: "#f6f1e6", symbolColor: "#241e17" };
+}
+
+// 系统深浅色切换时同步：右上角浮层按钮配色 + 窗口底色（避免加载瞬间闪白）
+function applyWindowChrome() {
+  if (!mainWindow) return;
+  if (process.platform === "win32" && typeof mainWindow.setTitleBarOverlay === "function") {
+    mainWindow.setTitleBarOverlay(windowChromeColors());
+  }
+  mainWindow.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#1a1815" : "#f6f1e6");
+}
+
 // ---------- 窗口 ----------
 async function createMainWindow() {
   mainWindow = new BrowserWindow({
@@ -109,10 +127,22 @@ async function createMainWindow() {
     minWidth: 1000,
     minHeight: 660,
     title: `笔灵 Biling v${app.getVersion()}`,
-    autoHideMenuBar: true,
+    // 自绘标题栏：隐藏系统原生标题栏与菜单栏，内容延伸到窗口顶部；
+    // 右上角保留系统原生最小化/最大化/关闭浮层按钮（titleBarOverlay），
+    // 按钮由系统绘制并随系统深浅色切换，与前端自绘标题栏配色保持一致
+    titleBarStyle: "hidden",
+    titleBarOverlay: windowChromeColors(),
     backgroundColor: "#f6f1e6",
     icon: makeIcon(),
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      // 预加载脚本把版本号（desktop/package.json 的 version，单一事实源）暴露给页面，
+      // 自绘标题栏用它展示 "vX.Y.Z"；值经 additionalArguments 透传，不重复手写
+      preload: path.join(__dirname, "preload.js"),
+      additionalArguments: [`--biling-version=${app.getVersion()}`],
+    },
   });
   // 页面加载后标题会被 document.title 覆盖，这里在标题末尾恒定附加版本号
   // （SPA 切页改标题时也不丢，且不会重复叠加），让用户一眼看到当前版本
@@ -278,6 +308,10 @@ function makeIcon() {
 // ---------- 启动 ----------
 async function boot() {
   await app.whenReady();
+  // 移除菜单栏（文件/编辑/查看/帮助等）：自绘标题栏后不再需要，Alt 也无法唤出
+  Menu.setApplicationMenu(null);
+  // 系统深浅色切换时同步标题栏浮层按钮配色与窗口底色
+  nativeTheme.on("updated", applyWindowChrome);
   registerDownloads();
   createTray();
   startServices();
@@ -289,6 +323,7 @@ async function boot() {
   console.log(`后端就绪=${beOk} 前端就绪=${feOk}`);
 
   await createMainWindow();
+  applyWindowChrome(); // 窗口就绪后按当前系统主题刷新一次（覆盖构造时的初值）
   if (!beOk) {
     dialog.showErrorBox("后端启动失败", "本地后端服务未能启动，请查看 data/logs 目录下的日志或重新安装。");
   }
