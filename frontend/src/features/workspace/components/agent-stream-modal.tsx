@@ -85,10 +85,13 @@ function useTypewriter(text: string, open: boolean, running: boolean): string {
       if (len <= 0) return;
       const backlog = len - typedRef.current;
       if (backlog <= 0) return;
-      // 常规逐字约 2 字/帧（16ms ≈ 125 字/秒）；积压大时加速追赶，避免越拉越远
-      let step = 2;
-      if (backlog > 300) step = 12;
-      else if (backlog > 100) step = 6;
+      // 到达率自适应调速（替代固定慢速档）：backlog 越大打得越快；
+      // 模型吐得慢（思考期/分块停顿，如推理模型或服务端波动）时 backlog 小，也保持较快的显示速度，
+      // 让「已到达的块」几帧内显示完，而不是慢慢打 + 干等下一条——消除「一卡一卡」的观感。
+      // 不同模型 / 同一模型不同时段的实际吐字速度都自动跟上，无需按模型名硬编码档位。
+      let step = 6;
+      if (backlog > 200) step = 24; // 大积压：几乎实时补全
+      else if (backlog > 60) step = 12; // 中等积压：快速追赶
       typedRef.current = Math.min(len, typedRef.current + step);
       setTyped(typedRef.current);
     }, 16);
