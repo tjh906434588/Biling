@@ -239,7 +239,7 @@ class ChapterVersion(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     chapter_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("chapters.id"), index=True)
     version_no: Mapped[int] = mapped_column(Integer)
-    source: Mapped[str] = mapped_column(String(24))  # novelist_A|novelist_B|user_edit|merged
+    source: Mapped[str] = mapped_column(String(24))  # novelist|regenerate|reviser|user_edit|merged
     title: Mapped[Optional[str]] = mapped_column(String(255))  # 该版本自己的标题（草稿可各自不同，定稿时同步回章）
     content: Mapped[str] = mapped_column(Text)
     note: Mapped[Optional[str]] = mapped_column(Text)  # 生成自评（用到设定/待回收伏笔）

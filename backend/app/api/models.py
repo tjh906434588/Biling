@@ -484,7 +484,7 @@ def model_catalog(db: Session = Depends(get_db)):
 
 @router.get("/default")
 def get_default_model(db: Session = Depends(get_db)):
-    """当前默认模型（页面「模型接入」选择的，全任务使用）；未配置时返回 null，前端显示演示模式。"""
+    """当前默认模型（页面「模型接入」选择的，全任务使用）；未配置时返回 null，前端按未就绪提示去配置模型。"""
     return get_user_default_model(db)
 
 

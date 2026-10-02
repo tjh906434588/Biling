@@ -35,13 +35,13 @@ class ChapterListItem(BaseModel):
     status: str
     word_count: Optional[int]
     updated_at: datetime
-    active_source: Optional[str] = None  # 当前激活版本来源（novelist_A/merged/...）
+    active_source: Optional[str] = None  # 当前激活版本来源（novelist/merged/...）
     active_content: Optional[str] = None  # 激活版本正文（阅读/续写用）
     extracted_version_id: Optional[uuid.UUID] = None  # 该章提取入记忆层时对应的正文版本（未提取过为 None）
 
 
 class ChapterDetail(BaseModel):
-    """章节详情：章级信息 + 全部版本列表（版本树/双版本展示用）。"""
+    """章节详情：章级信息 + 全部版本列表（版本历史/对比回滚用）。"""
     chapter_no: int
     title: Optional[str]
     status: str

@@ -160,16 +160,13 @@ async def _mock_stream(
             await asyncio.sleep(delta)
         return
     header = (
-        f"[Mock·未配置 {route.provider} API Key，链路验证模式] 任务={route.task_type} "
-        f"模型={route.full_model}\n\n"
+        f"[Mock·演示模式：未配置 {route.provider} API Key（BILING_ALLOW_MOCK_WITHOUT_KEY=true）] "
+        f"任务={route.task_type} 模型={route.full_model}\n\n"
     )
     body = (
-        "这是笔灵 M0 骨架的占位输出。配置对应 provider 的 API Key 后，"
+        "这是笔灵的 Mock 演示输出（仅开发调试用）。配置对应 provider 的 API Key 后，"
         "LiteLLM 网关会自动切换为真实模型流式生成。\n\n"
-        "设定库与记忆层持久化已就绪：settings / chapters / story_state / plot_ledger / "
-        "style_profiles / quality_reviews 等全部核心表已建好（见技术设计 §4.1）。\n\n"
-        "Agent 统一接口（build_context / run / parse_output）与 SSE 事件流 "
-        "（context_ready → stream_delta → stream_end → schema_validate → stored）已打通。"
+        "演示内容不落库、不代表真实质量，正式使用请到「模型」页填入 API Key。"
     )
     for chunk in _chunk(header + body, size=40):
         yield chunk

@@ -195,7 +195,7 @@ def select_version(
 ):
     """选定合并：激活指定版本 → 该版本 is_active=true，其余 false；chapters 正文/字数/状态同步。
 
-    选择来源为 novelist_A/B 时保留 source 标记；用户后续手动编辑合并走 M2 的 merged 来源。
+    选择版本时保留 source 标记；用户后续手动编辑/合并走 user_edit / merged 来源。
     """
     _get_novel(db, novel_id)
     chapter = db.execute(
