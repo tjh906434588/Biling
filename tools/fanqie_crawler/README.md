@@ -22,20 +22,19 @@ tools/fanqie_crawler/
 
 ## 完整流程（每次抓新书照此走）
 
+> 本 README 只讲**抓取与解码的工具操作**；「提炼规则 → 归族融合 → 同步 platform_rules.py」的完整业务流程与模板，以 `rules/fanqie_rules.md` 的「新增一批小说的处理流程」「逐本观察记录模板」为单一事实源（skill 亦指向该文件）。
+
 1. **浏览器登录番茄**，进入目标书任意章节页。
 2. **验证字体**：先按 extract_template.js 的 `fetchChapters` 抓 1 章。
    - 解码通顺 → 直接用现有 `font/mapping_ocr.json`。
-   - 大量乱码 → 页面内跑 `getFontUrl` 取 woff2 地址 → 下载到 `font/` →
-     `python build_mapping.py <woff2> font/mapping_ocr.json` 重建映射。
+   - 大量乱码 → 页面内跑 `getFontUrl` 取 woff2 地址 → 下载到 `font/` → 从仓库根执行 `python tools/fanqie_crawler/build_mapping.py`（默认重建 `font/mapping_ocr.json`；指定路径用仓库根绝对路径）。
 3. **取前十章章节 id**：
    - 方案A：详情页 `https://fanqienovel.com/page/{bookId}` 目录数组。
    - 方案B：任意章节页用 `chapterData.preItemId` 逐章向前回退（章节 id 是字符串）。
 4. **逐章抓取解码**：在 Exec 中跑 `fetchChapters`（模板见 extract_template.js），
    每章 navigate → evaluate → 取 `content[0].text` → JSON.parse → 解码。
-5. **落盘语料**：写入 `corpus/<书名>/dec_ch{n}.txt`。
-6. **提炼规则**：阅读前十章，按 `rules/fanqie_rules.md` 内的模板追加该书的规则总结
-   （开篇黄金三章 / 金手指兑现节奏 / 事件组织 / 悬念管理 / 可写规则清单），
-   并做同族多本比对融合（【必写】/【可选】分级），同步到 `backend/app/agents/platform_rules.py`。
+5. **落盘语料**：写入 `corpus/<书名>/dec_ch{n}.txt`（本地临时，提炼完即删，不入库）。
+6. **提炼规则与同步**：按 `rules/fanqie_rules.md` 的流程执行（观察记录模板、归族分级、同步 platform_rules.py 均以该文件为准）。
 
 ## 语料清理（重要）
 
