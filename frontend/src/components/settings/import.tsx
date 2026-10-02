@@ -3,7 +3,8 @@
  * 设定批量导入（由 settings-panel.tsx 按逻辑边界拆分）：
  * ImportItem 解析结果条目类型 + parseImportText 纯函数（把外部 AI 输出解析为批量设定条目，
  * 容错 markdown 围栏与前后多余文字；成功条目进预览列表，未解析条目标为错误提示）。
- * 注意：批量导入弹窗的 UI 与「导入文本 / 解析结果」状态强耦合，留在 settings-panel.tsx 主文件编排。
+ * 注意：批量导入弹窗 UI 已拆到同目录 import-modal.tsx（纯展示 + 回调），
+ * 本文件只负责解析纯函数与结果条目类型。
  */
 import { ROLE_RANKS, SETTING_TYPES, STAGE_OPTIONS } from "@/constants";
 import type { SettingType } from "@/lib/api";

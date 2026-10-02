@@ -1,8 +1,7 @@
 /**
  * @file writing-panel.tsx
  * 写作页主面板：状态编排 + 组合各子块。承担全局状态与 AI 流程编排（章节/版本/正文编辑、
- * AI 生成/评价/优化/提取/联动重写），渲染子块按职责拆到 writing/ 目录：
- * 渲染子块按职责拆到 writing/ 目录：
+ * AI 生成/评价/优化/提取/联动重写），渲染与流程按职责拆到 writing/ 目录：
  * - notifications.ts：模块级全局通知机制（受影响章节 / 联动重写中断 / 设定自检），跨页存活；
  * - chapter-tree.tsx：左侧章节目录栏（卷分组/搜索/折叠 + 本章操作）；
  * - version-tree.tsx：版本树浮层（多级递归）；
@@ -13,7 +12,10 @@
  * - review-sidebar.tsx：评价与优化常驻侧栏（折叠/宽度预设/评价卡片/空态）；
  * - add-chapter-drawer.tsx：新增章节/重新生成抽屉；
  * - info-modal.tsx：信息控制（谁知道了什么）弹窗；
- * - run-modals.tsx：三个 AI 过程弹窗 + 定稿/提取二次确认弹窗。
+ * - run-modals.tsx：三个 AI 过程弹窗 + 定稿/提取二次确认弹窗；
+ * - use-chapter-editor.ts：正文就地编辑机制（镜像 ref + 防抖落盘 + 切版本/卸载兜底）；
+ * - use-resume-agent-task.ts：刷新/切页后恢复进行中 AI 任务（三段重复轮询收敛）；
+ * - use-ai-flows.ts：AI 流程（生成/评价/优化/提取/定稿/联动重写），经 FlowCtx 传入共享状态。
  * 核心机制（保持不变）：
  * - AI 流程（生成/评价/优化/提取）走 runAgent SSE，任务跨页/刷新由全局 AgentTaskToasts 轮询恢复；
  * - 正文编辑「镜像 ref + 防抖 2s 自动落盘 + 切版本/卸载兜底落盘」，切章用请求序号防竞态覆盖；
@@ -22,29 +24,17 @@
  */
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   getActiveBlueprint,
-  getAgentRunningTask,
   getChapter,
   listChapters,
   listOutlines,
   listReviews,
-  runAgent,
-  selectVersion,
-  updateChapterVersion,
-  type AgentRunningTaskResult,
   type ChapterDetail,
   type ChapterListItem,
   type Outline,
   type QualityReview,
-  type SettingGap,
   type StreamTaskInfo,
 } from "@/lib/api";
 import { useElapsed } from "@/lib/use-elapsed";
@@ -60,10 +50,9 @@ import {
 } from "@/constants";
 import { copyText } from "@/utils/clipboard";
 import { getRunningTask, subscribeRunningTask } from "@/lib/task-status";
-import { ChapterSidebar, sourceLabel } from "./writing/chapter-tree";
+import { ChapterSidebar } from "./writing/chapter-tree";
 import {
   clearGapNotifIfMismatch,
-  fireGapNotif,
   getInitialAffectedChapters,
   getInitialRewriteFail,
   syncAffectedNotif,
@@ -76,7 +65,6 @@ import { ChapterContent } from "./writing/chapter-content";
 import { InfoModal } from "./writing/info-modal";
 import {
   summarizeOutline,
-  validateExtractFor,
   type AiRunState,
   type ConfirmDialogState,
   type GenForm,
@@ -86,6 +74,19 @@ import {
 } from "./writing/panel-utils";
 import { ReviewSidebar } from "./writing/review-sidebar";
 import { RunModals } from "./writing/run-modals";
+import { useChapterEditor } from "./writing/use-chapter-editor";
+import { useResumeAgentTask } from "./writing/use-resume-agent-task";
+import {
+  handleGenerate,
+  handleFinalizeSelected,
+  doFinalize,
+  handleExtract,
+  doExtract,
+  handleReview,
+  handleRerunAffected,
+  handleRevise,
+  type FlowCtx,
+} from "./writing/use-ai-flows";
 export { hideWorkspaceNotifs, showWorkspaceNotifs } from "./writing/notifications";
 
 interface Props {
@@ -197,55 +198,42 @@ export default function WritingPanel({ novelId }: Props) {
    *  生成新草稿后不自动切换选中，只弹提示；切章/刷新详情时重置。 */
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
 
-  /** 正文就地编辑（M：作者可直接改当前选中版本正文）。
-   *  - editText：编辑区当前内容（来源=选中版本 content，改动后为本地草稿）；
-   *  - lastSavedTextRef：最近一次已落库的文本（判断「是否有未保存改动」）；
-   *  - saveState：saved=无改动 / dirty=有改动未保存 / saving=正在保存；
-   *  - editTargetRef：当前编辑目标（章节号 + 版本 id），切版本/卸载时据此把旧编辑落盘。 */
-  const [editText, setEditText] = useState("");
-  const editTextRef = useRef("");
-  const lastSavedTextRef = useRef("");
-  const [saveState, setSaveState] = useState<"saved" | "dirty" | "saving">("saved");
-  /** 正文在最近一次评价后是否被修改过：已有评价对应当前内容过期 → 评价栏出现「重新评价」提示。
-   *  编辑即置 true；完成重新评价（评价期间无新增改动）或切换版本后置 false。 */
-  const [reviewStale, setReviewStale] = useState(false);
-  /** 已评价基线内容：评价所基于的版本正文。编辑保存后若内容与它一致（改完又恢复原样），
-   *  说明现有评价仍然有效 → 撤销「重新评价」提示；重新评价完成或切换版本时更新为最新基准。 */
-  const reviewBaselineRef = useRef<string | null>(null);
-  const saveTimerRef = useRef<number | null>(null);
-  const editTargetRef = useRef<{ chapterNo: number; versionId: string } | null>(null);
+  // ── 派生值（编辑器 hook 与 AI 流程共享） ──
+  /**
+   * 目录里「最新一章」的下一章号：新增永远只追加最新的一章，不允许跳号或回填旧章。
+   * 大纲+章节合并后不再要求该章有已批大纲：写正文前由「本章规划」弹窗确认，确认后直接写作。
+   */
+  const maxChapterNo = chapters.reduce((m, c) => Math.max(m, c.chapter_no), 0);
+  const nextNo = maxChapterNo + 1;
+  /** 当前预览选中的正文版本：决定正文区显示、复制/提取/评价的对象、顶部「定稿」按钮目标。
+   *  默认规则——有已定稿版本选已定稿版；全部未定稿选最新版；点版本 tab 可本地切换预览。 */
+  const selectedVersion =
+    (selectedVersionId != null
+      ? (detail?.versions.find((v) => v.id === selectedVersionId) ?? null)
+      : null) ??
+    (detail?.versions.find((v) => v.is_active) ?? detail?.versions[detail.versions.length - 1] ?? null);
+  /** 选中版本是否为已定稿（激活）版本：决定「定稿」/「提取」按钮是否可用。 */
+  const selectedIsFinal = selectedVersion?.is_active ?? false;
+  const activeChapter = chapters.find((c) => c.chapter_no === activeNo) ?? null;
 
-  /** 立即落盘当前未保存编辑（防抖触发 / AI 操作前 / 切版本 / 卸载时复用）。返回落库后的文本。 */
-  const flushSave = useCallback(async (): Promise<string | null> => {
-    const target = editTargetRef.current;
-    if (!target) return null;
-    const text = editTextRef.current;
-    if (text === lastSavedTextRef.current) return text; // 无改动
-    setSaveState("saving");
-    try {
-      const updated = await updateChapterVersion(novelId, target.chapterNo, target.versionId, { content: text });
-      // 竞态守卫：保存期间用户又改了 → 本次结果不标记 saved（保持 dirty，防抖会再保存），
-      // 且不回填旧文本到详情，避免旧内容覆盖新内容
-      if (editTextRef.current === text) {
-        lastSavedTextRef.current = updated.content;
-        setSaveState("saved");
-        // 落盘内容与已评价基线一致（改动后又恢复原样）→ 现有评价仍有效，撤销「重新评价」提示
-        if (reviewBaselineRef.current != null && updated.content === reviewBaselineRef.current) {
-          setReviewStale(false);
-        }
-        setDetail((d) =>
-          d
-            ? { ...d, versions: d.versions.map((v) => (v.id === target.versionId ? { ...v, content: updated.content } : v)) }
-            : d,
-        );
-      }
-      return updated.content;
-    } catch (e) {
-      setSaveState("dirty");
-      showToast((e as Error).message, "error");
-      return null;
-    }
-  }, [novelId]);
+  // ── 正文就地编辑机制（镜像 ref + 防抖落盘 + 切版本/卸载兜底），详见 use-chapter-editor ──
+  const {
+    editText,
+    setEditText,
+    saveState,
+    flushSave,
+    reviewStale,
+    setReviewStale,
+    editTextRef,
+    editTargetRef,
+    reviewBaselineRef,
+  } = useChapterEditor({
+    novelId,
+    selectedVersion,
+    detailChapterNo: detail?.chapter_no,
+    setDetail,
+    showToast,
+  });
 
   // 弹窗开关：新增章节 / 信息控制 仍用弹窗；评价与优化、版本树已改为右侧常驻内联面板（见下方）
   const [showAddModal, setShowAddModal] = useState(false);
@@ -300,167 +288,14 @@ export default function WritingPanel({ novelId }: Props) {
   /** AI 服务状态检查：各 AI 操作发起前确认模型已配置可用，未配置则抛错拦截（避免发起注定失败的空请求）。 */
   const { ensureReady } = useAiStatus();
 
-  /**
-   * 目录里「最新一章」的下一章号：新增永远只追加最新的一章，不允许跳号或回填旧章。
-   * 大纲+章节合并后不再要求该章有已批大纲：写正文前由「本章规划」弹窗确认，确认后直接写作。
-   */
-  const maxChapterNo = chapters.reduce((m, c) => Math.max(m, c.chapter_no), 0);
-  const nextNo = maxChapterNo + 1;
   /** 目标章已批大纲：弹窗「沿用该章已批大纲」开关与回填的依据（仅该章有已批大纲时显示开关）。 */
   const targetOutline = approvedOutlines.find((o) => o.chapter_no === form.chapter_no) ?? null;
-  // 大纲+章节合并后：写正文前由「本章规划」弹窗确认（后端 novelist 前置钩子），
-  // 不再要求该章必须有已批大纲——有则自动回填预览，无则规划确认后直接写作。
   /** 信息控制已填项数：弹窗入口按钮据此显示「已填 N 项 · 编辑」。 */
   const infoFilledCount = [form.reader_knows, form.protagonist_knows, form.must_hide, form.hint_only].filter(
     (v) => v.trim(),
   ).length;
 
-  /** 当前预览选中的正文版本：决定正文区显示、复制/提取/评价的对象、顶部「定稿」按钮目标。
-   *  默认规则——有已定稿版本选已定稿版；全部未定稿选最新版；点版本 tab 可本地切换预览。 */
-  const selectedVersion =
-    (selectedVersionId != null
-      ? (detail?.versions.find((v) => v.id === selectedVersionId) ?? null)
-      : null) ??
-    (detail?.versions.find((v) => v.is_active) ?? detail?.versions[detail.versions.length - 1] ?? null);
-  /** 选中版本是否为已定稿（激活）版本：决定「定稿」/「提取」按钮是否可用。 */
-  const selectedIsFinal = selectedVersion?.is_active ?? false;
-
-  // ── 正文就地编辑：镜像 ref + 切版本落盘 + 防抖自动保存 + 卸载兜底 ──
-  /** 编辑区内容镜像到 ref：防抖保存 / AI 操作前落盘读到的永远是最新输入。 */
-  useEffect(() => {
-    editTextRef.current = editText;
-  }, [editText]);
-
-  /** 选中版本变化：先把上一版本未保存的编辑静默落盘，再切换编辑目标到新版本内容。 */
-  useEffect(() => {
-    const old = editTargetRef.current;
-    if (old && editTextRef.current !== lastSavedTextRef.current) {
-      const text = editTextRef.current;
-      void updateChapterVersion(novelId, old.chapterNo, old.versionId, { content: text })
-        .then((v) => {
-          // 期间已切走（editTarget 已换）则不更新 lastSaved，避免把旧文本当新目标已保存
-          if (editTargetRef.current?.versionId === old.versionId) lastSavedTextRef.current = v.content;
-          setDetail((d) =>
-            d
-              ? { ...d, versions: d.versions.map((x) => (x.id === old.versionId ? { ...x, content: v.content } : x)) }
-              : d,
-          );
-        })
-        .catch(() => undefined);
-    }
-    if (saveTimerRef.current != null) {
-      window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-    if (!selectedVersion) {
-      editTargetRef.current = null;
-      lastSavedTextRef.current = "";
-      setEditText("");
-      setSaveState("saved");
-      return;
-    }
-    editTargetRef.current = { chapterNo: detail?.chapter_no ?? 0, versionId: selectedVersion.id };
-    lastSavedTextRef.current = selectedVersion.content;
-    setEditText(selectedVersion.content);
-    setSaveState("saved");
-    // 切换版本后评价基线随之更换：清除「待重新评价」标记，让当前版本按新评价基线重新计算
-    setReviewStale(false);
-    reviewBaselineRef.current = selectedVersion.content;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedVersion?.id]);
-
-  /** 防抖自动保存：停止输入 2s 后自动落盘；无改动不触发。 */
-  useEffect(() => {
-    if (!editTargetRef.current) return;
-    if (editText === lastSavedTextRef.current) {
-      // 输入又回到已落盘内容：无未保存改动，撤销「已修改」标记；
-      // 若等于已评价基线（改完即恢复原样），现有评价仍有效，同时撤销「重新评价」提示
-      setSaveState("saved");
-      if (reviewBaselineRef.current != null && editText === reviewBaselineRef.current) setReviewStale(false);
-      return;
-    }
-    setSaveState("dirty");
-    // 正文发生改动：已有评价过期，评价栏出现「重新评价」提示（落盘后仍保持，直到重新评价）
-    setReviewStale(true);
-    if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = window.setTimeout(() => {
-      saveTimerRef.current = null;
-      void flushSave();
-    }, 2000);
-    return () => {
-      if (saveTimerRef.current != null) {
-        window.clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editText]);
-
-  /** 卸载兜底：防抖还没到就切页/关面板，把未保存编辑静默落盘。 */
-  useEffect(() => {
-    return () => {
-      if (saveTimerRef.current != null) {
-        window.clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-      const target = editTargetRef.current;
-      if (target && editTextRef.current !== lastSavedTextRef.current) {
-        void updateChapterVersion(novelId, target.chapterNo, target.versionId, {
-          content: editTextRef.current,
-        }).catch(() => undefined);
-      }
-    };
-  }, [novelId]);
-  /** 打开「新增章节」弹窗：按当前目录算好目标章号、回填该章已批大纲（若有）。 */
-  const openAddModal = useCallback(() => {
-    const o = approvedOutlines.find((x) => x.chapter_no === nextNo) ?? null;
-    setUseOutline(o != null);
-    setForm((f) => ({
-      ...f,
-      chapter_no: nextNo,
-      title: o ? o.title ?? "" : "",
-      outline: o ? summarizeOutline(o) : "",
-      chapter_function: "",
-    }));
-    setRegenerateNo(null);
-    setShowAddModal(true);
-  }, [approvedOutlines, nextNo]);
-
-  /** 打开「重新生成正文」弹窗：复用新增章节弹窗，章节号锁定为当前章，其余字段可改。
-   *  后端 _persist_novelist 会基于该 chapter_no 追加一个新草稿版本（需手动定稿）。
-   *  版本树：重新生成与新增章节平级，产物为根节点（handleGenerate 不传 parent_version_id）。
-   *  重新生成=新增：默认完全空白——不自动沿用已批大纲（避免带入旧章大纲/标题/内容），
-   *  不继承旧版本标题；标题留空由 AI 根据新正文重新起。作者可手动打开「沿用已批大纲」开关。 */
-  const openRegenerateModal = useCallback(() => {
-    if (activeNo == null) return;
-    setUseOutline(false);
-    setForm((f) => ({
-      ...f,
-      chapter_no: activeNo,
-      title: "",
-      outline: "",
-      chapter_function: "",
-    }));
-    setRegenerateNo(activeNo);
-    setShowAddModal(true);
-  }, [activeNo]);
-
-  // 切章 / 换小说：移除「设定自检」常驻通知（其操作目标是通知当时所在章，切走后不再适用）
-  useEffect(() => {
-    clearGapNotifIfMismatch(activeNo, novelId);
-  }, [activeNo, novelId]);
-
-  /** 弹窗内切换「沿用大纲」开关：开启回填该章已批大纲，关闭清空（= 自由草稿，标题交给 AI）。 */
-  function toggleUseOutline(on: boolean) {
-    const o = on ? approvedOutlines.find((x) => x.chapter_no === form.chapter_no) ?? null : null;
-    setForm((f) => ({
-      ...f,
-      title: o ? o.title ?? "" : "",
-      outline: o ? summarizeOutline(o) : "",
-    }));
-    setUseOutline(on);
-  }
-
+  // ── 数据加载：目录 / 大纲约束 / 详情 / 评价，切章用请求序号防竞态覆盖 ──
   // 切章请求序号：每次发起 loadDetail/loadApprovedOutlines 递增，await 后比对，
   // 若已被更新的切章请求取代则丢弃本次结果，杜绝"快速切章竞态"（慢的旧响应覆盖新选中章）。
   const loadDetailReqRef = useRef(0);
@@ -581,150 +416,58 @@ export default function WritingPanel({ novelId }: Props) {
     return () => window.removeEventListener("biling:agent-task-done", onDone);
   }, [loadChapters, loadDetail]);
 
-  /** 生成中状态持久化：刷新/切页后重新进入页面时，若后端仍有该小说的 novelist 任务进行中
-   *  （agent_tasks），恢复「生成中」状态（弹窗按钮禁用 + 计时 + 「查看生成过程」可用）并轮询到
-   *  任务结束，避免刷新后状态丢失、误以为可以再次生成。与大纲页 outliner 恢复同机制；
-   *  完成通知与数据刷新由全局 AgentTaskToasts（biling:agent-task-done）负责。 */
-  useEffect(() => {
-    let stopped = false;
-    void (async () => {
-      let r: AgentRunningTaskResult;
-      try {
-        r = await getAgentRunningTask("novelist", novelId);
-      } catch {
-        return; // 查询失败：不强行恢复
-      }
-      if (stopped || !r.running || !r.task) return;
-      const task = r.task;
-      // 恢复生成中状态：用后端累积的流式文字与任务真实开始时间（刷新前已流出的内容不丢）
-      setGenStartAt(task.started_at ? new Date(task.started_at).getTime() : Date.now());
+  // ── 刷新/切页后恢复进行中 AI 任务（novelist/reviser/critic，通用轮询见 use-resume-agent-task） ──
+  useResumeAgentTask({
+    agent: "novelist",
+    novelId,
+    onStart: (i) => {
+      setGenStartAt(i.startedAt);
       setGenerating(true);
-      setGenRun({
-        thinking: task.progress?.thinking ?? "",
-        output: task.progress?.draft ?? "",
-        running: true,
-      });
-      // 轮询到任务结束（成功/失败均退出）
-      while (!stopped) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        let r2: AgentRunningTaskResult;
-        try {
-          r2 = await getAgentRunningTask("novelist", novelId);
-        } catch {
-          break; // 查询失败：停止轮询，不再强行维持「生成中」
-        }
-        if (r2.running && r2.task) {
-          const p = r2.task.progress;
-          if (p) setGenRun({ thinking: p.thinking, output: p.draft, running: true });
-          continue;
-        }
-        break;
-      }
-      if (!stopped) {
-        setGenerating(false);
-        setGenRun((g) => (g ? { ...g, running: false } : g));
-        setShowGenRun(false);
-        // 与 handleGenerate finally 保持一致：任务完成（成功/失败）后关闭新增章节/重新生成弹窗
-        setShowAddModal(false);
-        setRegenerateNo(null);
-        setGenIsRegenerate(false);
-      }
-    })();
-    return () => {
-      stopped = true;
-    };
-  }, [novelId]);
-
-  /** 优化中状态持久化：刷新/切页后重新进入页面时，若后端仍有该小说的修订师（reviser）任务进行中
-   *  （agent_tasks），恢复「优化中」锁定（按评价优化按钮禁用 + 「查看生成过程」可用）并轮询到
-   *  任务结束，避免切页后误以为优化已结束、重复发起优化。与 novelist 恢复同机制；
-   *  完成通知与数据刷新由全局 AgentTaskToasts（biling:agent-task-done）负责。 */
-  useEffect(() => {
-    let stopped = false;
-    void (async () => {
-      let r: AgentRunningTaskResult;
-      try {
-        r = await getAgentRunningTask("reviser", novelId);
-      } catch {
-        return; // 查询失败：不强行恢复
-      }
-      if (stopped || !r.running || !r.task) return;
-      const task = r.task;
-      // 恢复优化中状态：用后端累积的流式文字与任务真实开始时间（刷新前已流出的内容不丢）
-      setReviseStartAt(task.started_at ? new Date(task.started_at).getTime() : Date.now());
+      setGenRun({ thinking: i.thinking, output: i.output, running: true });
+    },
+    onProgress: (i) => setGenRun({ thinking: i.thinking, output: i.output, running: true }),
+    onEnd: () => {
+      setGenerating(false);
+      setGenRun((g) => (g ? { ...g, running: false } : g));
+      setShowGenRun(false);
+      // 与 handleGenerate finally 保持一致：任务完成（成功/失败）后关闭新增章节/重新生成弹窗
+      setShowAddModal(false);
+      setRegenerateNo(null);
+      setGenIsRegenerate(false);
+    },
+  });
+  useResumeAgentTask({
+    agent: "reviser",
+    novelId,
+    onStart: (i) => {
+      setReviseStartAt(i.startedAt);
       setRevising(true);
-      setReviseRun({ thinking: task.progress?.thinking ?? "", output: task.progress?.draft ?? "", running: true });
-      // 轮询到任务结束（成功/失败均退出）
-      while (!stopped) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        let r2: AgentRunningTaskResult;
-        try {
-          r2 = await getAgentRunningTask("reviser", novelId);
-        } catch {
-          break; // 查询失败：停止轮询，不再强行维持「优化中」
-        }
-        if (r2.running && r2.task) {
-          const p = r2.task.progress;
-          if (p) setReviseRun({ thinking: p.thinking, output: p.draft, running: true });
-          continue;
-        }
-        break;
-      }
-      if (!stopped) {
-        setRevising(false);
-        setReviseRun((g) => (g ? { ...g, running: false } : g));
-        setShowReviseRun(false);
-      }
-    })();
-    return () => {
-      stopped = true;
-    };
-  }, [novelId]);
-
-  /** 评价中状态持久化：与优化中同理，恢复评价师（critic）进行中的「评价中」锁定并轮询到结束，
-   *  避免切页后误以为评价已结束、重复发起评价。 */
-  useEffect(() => {
-    let stopped = false;
-    void (async () => {
-      let r: AgentRunningTaskResult;
-      try {
-        r = await getAgentRunningTask("critic", novelId);
-      } catch {
-        return; // 查询失败：不强行恢复
-      }
-      if (stopped || !r.running || !r.task) return;
-      const task = r.task;
-      setReviewStartAt(task.started_at ? new Date(task.started_at).getTime() : Date.now());
+      setReviseRun({ thinking: i.thinking, output: i.output, running: true });
+    },
+    onProgress: (i) => setReviseRun({ thinking: i.thinking, output: i.output, running: true }),
+    onEnd: () => {
+      setRevising(false);
+      setReviseRun((g) => (g ? { ...g, running: false } : g));
+      setShowReviseRun(false);
+    },
+  });
+  useResumeAgentTask({
+    agent: "critic",
+    novelId,
+    onStart: (i) => {
+      setReviewStartAt(i.startedAt);
       setReviewing(true);
-      setReviewRun({ thinking: task.progress?.thinking ?? "", output: task.progress?.draft ?? "", running: true });
-      // 轮询到任务结束（成功/失败均退出）
-      while (!stopped) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        let r2: AgentRunningTaskResult;
-        try {
-          r2 = await getAgentRunningTask("critic", novelId);
-        } catch {
-          break; // 查询失败：停止轮询，不再强行维持「评价中」
-        }
-        if (r2.running && r2.task) {
-          const p = r2.task.progress;
-          if (p) setReviewRun({ thinking: p.thinking, output: p.draft, running: true });
-          continue;
-        }
-        break;
-      }
-      if (!stopped) {
-        setReviewing(false);
-        setReviewRun((g) => (g ? { ...g, running: false } : g));
-        setShowReviewRun(false);
-      }
-    })();
-    return () => {
-      stopped = true;
-    };
-  }, [novelId]);
+      setReviewRun({ thinking: i.thinking, output: i.output, running: true });
+    },
+    onProgress: (i) => setReviewRun({ thinking: i.thinking, output: i.output, running: true }),
+    onEnd: () => {
+      setReviewing(false);
+      setReviewRun((g) => (g ? { ...g, running: false } : g));
+      setShowReviewRun(false);
+    },
+  });
 
-  const activeChapter = chapters.find((c) => c.chapter_no === activeNo) ?? null;
+  // ── 派生状态：AI 占用锁定 / 评价对照 / 版本高亮 ──
   /** AI 占用中：评价 / 提取进行时锁定面板——目录与版本切换禁点、其他 AI 操作入口全部禁用，本次完成才解除。 */
   const aiBusy = reviewing || extracting;
   /** 只保留属于当前选中版本的评价（原 is_current 过滤 → 绑定选中版本的 chapter_version_id）；
@@ -740,8 +483,6 @@ export default function WritingPanel({ novelId }: Props) {
   /** 该后台评价任务是否对应当前章节（决定评价栏显示"评价处理中"加载态；对不上章的不打扰当前章）。 */
   const reviewBusyForChapter =
     reviewTaskRunning && (runningTask?.chapter_no == null || runningTask.chapter_no === detail?.chapter_no);
-  /** 重新评价提示在评价栏顶部展示：正文改动过（reviewStale）且当前版本已有评价时才出现，
-   *  按钮点击直接对当前版本重新评价。 */
   /** 当前选中正文是否「刚生成」（3 分钟内）：提示作者该版本还没有评价、点下方「评价本章」手动评价。
    *  Date.now() 在渲染期读取会触发 react-hooks/purity 告警，改为选中版本变化时用 effect 计算。 */
   const [isRecentlyGenerated, setIsRecentlyGenerated] = useState(false);
@@ -772,6 +513,7 @@ export default function WritingPanel({ novelId }: Props) {
   const extractPending =
     !!selectedVersion && selectedIsFinal && !extractedMatch;
 
+  // ── 全局通知联动（受影响章节 / 联动重写中断 / 设定自检） ──
   /** 「挨个重写」始终指向最新一次渲染的联动重写逻辑，避免通知里回调闭包过期。 */
   const rerunAffectedRef = useRef<() => void>(() => {});
 
@@ -791,102 +533,54 @@ export default function WritingPanel({ novelId }: Props) {
    *  逻辑已封装进 writing/notifications 的 useRewriteFailNotif hook。 */
   useRewriteFailNotif(novelId, rewriteFail, setRewriteFail);
 
-  /** 发起正文生成（新增章节或重新生成正文，靠 regenerateNo 区分）：置生成中 → 合成本次配置 → runAgent SSE。
-   *  成功判定：SSE 收到 stored 事件（action=alert 为格式校验未通过仅记录；dry_run 不提示；其余弹成功 toast）；
-   *  失败判定：stream_error 事件或 try 抛错（friendlyRunError），均弹错误提示。
-   *  收尾统一在 finally：关闭弹窗、刷新目录与详情、弹写后设定自检告警；跨小说守卫下不刷新不提示。 */
-  async function handleGenerate(override?: Partial<typeof form>) {
-    setGenerating(true);
-    // 写后设定自检：本次生成收集到的疑似漏项（SSE setting_warning），完成后弹右上角告警通知
-    let collectedGaps: SettingGap[] = [];
-    setGenStartAt(Date.now());
-    // 记录本次生成模式：新增章节 or 重新生成正文（弹窗关闭后 regenerateNo 会重置，按钮禁用方向靠它判断）
-    setGenIsRegenerate(regenerateNo != null);
-    // 弹窗保持打开、不自动关闭；生成过程通过「查看 AI 过程」按钮实时查看
-    setGenRun({ thinking: "", output: "", running: true });
+  // 切章 / 换小说：移除「设定自检」常驻通知（其操作目标是通知当时所在章，切走后不再适用）
+  useEffect(() => {
+    clearGapNotifIfMismatch(activeNo, novelId);
+  }, [activeNo, novelId]);
 
-    // 用传入覆盖（如评价弹窗的「生成正文」）合成本次生成配置；form 保持新增弹窗的表单状态不动
-    const f = override ? { ...form, ...override } : form;
+  /** 打开「新增章节」弹窗：按当前目录算好目标章号、回填该章已批大纲（若有）。 */
+  const openAddModal = useCallback(() => {
+    const o = approvedOutlines.find((x) => x.chapter_no === nextNo) ?? null;
+    setUseOutline(o != null);
+    setForm((f) => ({
+      ...f,
+      chapter_no: nextNo,
+      title: o ? o.title ?? "" : "",
+      outline: o ? summarizeOutline(o) : "",
+      chapter_function: "",
+    }));
+    setRegenerateNo(null);
+    setShowAddModal(true);
+  }, [approvedOutlines, nextNo]);
 
-    const infoControl: Record<string, string> = {};
-    for (const [k, v] of [
-      ["reader_knows", f.reader_knows],
-      ["protagonist_knows", f.protagonist_knows],
-      ["must_hide", f.must_hide],
-      ["hint_only", f.hint_only],
-    ] as const) {
-      if (v.trim()) infoControl[k] = v.trim();
-    }
+  /** 打开「重新生成正文」弹窗：复用新增章节弹窗，章节号锁定为当前章，其余字段可改。
+   *  后端 _persist_novelist 会基于该 chapter_no 追加一个新草稿版本（需手动定稿）。
+   *  版本树：重新生成与新增章节平级，产物为根节点（handleGenerate 不传 parent_version_id）。
+   *  重新生成=新增：默认完全空白——不自动沿用已批大纲（避免带入旧章大纲/标题/内容），
+   *  不继承旧版本标题；标题留空由 AI 根据新正文重新起。作者可手动打开「沿用已批大纲」开关。 */
+  const openRegenerateModal = useCallback(() => {
+    if (activeNo == null) return;
+    setUseOutline(false);
+    setForm((f) => ({
+      ...f,
+      chapter_no: activeNo,
+      title: "",
+      outline: "",
+      chapter_function: "",
+    }));
+    setRegenerateNo(activeNo);
+    setShowAddModal(true);
+  }, [activeNo]);
 
-    const tgt = useOutline ? approvedOutlines.find((o) => o.chapter_no === f.chapter_no) ?? null : null;
-    const params: Record<string, unknown> = {
-      chapter_no: f.chapter_no,
-      title: f.title.trim() || undefined,
-      outline: f.outline.trim() || undefined,
-      outline_id: tgt?.id ?? undefined, // 正文-大纲版本关联：记录用的是哪个已批大纲版本
-      chapter_function: f.chapter_function || undefined, // 空 = 交给小说家自动判定
-      writing_mode: useOutline ? "outline_guided" : "draft_free",
-      goal: f.goal.trim() || undefined,
-      // 版本树：新增章节与重新生成正文平级，都是根节点（不传 parent_version_id）；
-      // 评价优化（reviser）单独传 parent_version_id=被优化版本，挂为子节点
-      // 来源标记：重新生成正文落 source="regenerate"（版本名「再稿」），与新增「初稿」区分
-      regenerate: regenerateNo != null ? true : undefined,
-      // 重新生成=新增，与新增同权：不传 rewrite，后端 novelist 前置钩子照常弹「本章规划」
-      // 方向咨询（作者重新定夺）；仅批量自动重写（handleRerunAffected）传 rewrite+auto_rewrite 跳过
-    };
-    if (Object.keys(infoControl).length > 0) params.info_control = infoControl;
-
-    try {
-      ensureReady();
-      await runAgent("novelist", novelId, params, (ev) => {
-        // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
-        if (liveNovelRef.current !== novelId || !mountedRef.current) return;
-        const d = ev.data as {
-          delta?: string;
-          status?: string;
-          message?: string;
-          action?: string;
-        };
-        if (ev.event === "thinking_delta" && d.delta) {
-          setGenRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
-        } else if (ev.event === "stream_delta" && d.delta) {
-          setGenRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
-        } else if (ev.event === "stored") {
-          const action = d.action as string | undefined;
-          if (action === "alert") {
-            showToast(
-              `第 ${form.chapter_no} 章生成内容没通过检查（已记录告警）。可点「生成正文」重试。`,
-              "error",
-            );
-          } else if (action !== "dry_run") {
-            showToast(
-              `第 ${f.chapter_no} 章已生成草稿（新版本），可在版本列表切换预览，满意后手动定稿。`,
-              "success",
-            );
-          }
-        } else if (ev.event === "setting_warning") {
-          const items = (ev.data as { items?: SettingGap[] }).items ?? [];
-          collectedGaps = items.length ? items : [];
-        } else if (ev.event === "stream_error") {
-          showToast(d.message ?? "AI 生成出错，请稍后重试。", "error");
-        }
-      });
-    } catch (e) {
-      if (liveNovelRef.current === novelId && mountedRef.current) showToast((e as Error).message, "error");
-    } finally {
-      setGenerating(false);
-      setGenRun((r) => (r ? { ...r, running: false } : r));
-      // 生成完成（成功或失败均视为完成）：关闭新增/重写弹窗与 AI 过程弹窗（对齐大纲页，弹窗不常驻）
-      setShowAddModal(false);
-      setRegenerateNo(null);
-      setShowGenRun(false);
-      if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
-      setActiveNo(f.chapter_no);
-      await loadChapters();
-      await loadDetail(f.chapter_no);
-      // 写后设定自检命中：弹右上角常驻告警（重新生成 / 忽略）
-      if (collectedGaps.length > 0) fireGapNotif(novelId, f.chapter_no, collectedGaps, openRegenerateModal);
-    }
+  /** 弹窗内切换「沿用大纲」开关：开启回填该章已批大纲，关闭清空（= 自由草稿，标题交给 AI）。 */
+  function toggleUseOutline(on: boolean) {
+    const o = on ? approvedOutlines.find((x) => x.chapter_no === form.chapter_no) ?? null : null;
+    setForm((f) => ({
+      ...f,
+      title: o ? o.title ?? "" : "",
+      outline: o ? summarizeOutline(o) : "",
+    }));
+    setUseOutline(on);
   }
 
   /** 点版本 tab = 仅本地预览选中（不请求、不激活）。
@@ -895,43 +589,6 @@ export default function WritingPanel({ novelId }: Props) {
     if (!detail) return;
     if (!detail.versions.some((v) => v.id === versionId)) return;
     setSelectedVersionId(versionId);
-  }
-
-  /** 顶部「定稿」按钮：先落盘草稿区未保存编辑并校验，再弹二次确认（自定义弹窗），确认后执行定稿。
-   *  原已定稿版本随之变回草稿（同一时间只能定稿一个版本）。 */
-  async function handleFinalizeSelected() {
-    // 定稿前先落盘正文草稿区未保存的编辑：定稿会同步章级正文，须基于最新内容；落盘失败则中止
-    const savedText = await flushSave();
-    if (savedText == null && editTargetRef.current != null) return;
-    if (!detail || !selectedVersion || selectedIsFinal) return;
-    // 定稿一律需二次确认；签约未过签版本走强制定稿（红字危险弹窗，强制定稿逃生口）
-    setConfirmDialog({ kind: selectedVersion.signing_blocked ? "finalize-force" : "finalize", savedText });
-  }
-
-  /** 二次确认通过后真正执行定稿。 */
-  async function doFinalize() {
-    const cfg = confirmDialog;
-    if (!cfg) return;
-    setConfirmDialog(null);
-    if (!detail || !selectedVersion || selectedIsFinal) return;
-    const force = cfg.kind === "finalize-force";
-    try {
-      const updated = await selectVersion(novelId, detail.chapter_no, selectedVersion.id, force);
-      setDetail(updated);
-      setSelectedVersionId(selectedVersion.id);
-      showToast(
-        `第 ${updated.chapter_no} 章已定稿（第${selectedVersion.version_no}版 · ${sourceLabel(selectedVersion.source)}），可继续记进 AI 记忆或生成下一章。`,
-        "success",
-      );
-      await loadChapters();
-      try {
-        setReviews(await listReviews(novelId, updated.chapter_no));
-      } catch {
-        setReviews(null);
-      }
-    } catch (e) {
-      showToast((e as Error).message, "error");
-    }
   }
 
   /** 复制当前选中版本正文到剪贴板：优先异步 Clipboard API，失败回退 execCommand；无正文/失败均提示。 */
@@ -945,428 +602,66 @@ export default function WritingPanel({ novelId }: Props) {
     }
   }
 
-  /** 提取当前选中已定稿版本入记忆层：先落盘未保存编辑 → 校验（有章/有版本/非旧大纲/已定稿）→ 二次确认。
-   *  成功判定：SSE 的 stored 回执（其 downstream_affected 非空时弹受影响章节通知）；
-   *  但 SSE 断流回执可能丢失、后端照常落库，收尾以服务端 extracted_version_id 校准按钮高亮，
-   *  避免「已提取仍高亮」误报；确实未落库才提示失败。 */
-  async function handleExtract() {
-    // 提取前先落盘正文草稿区未保存的编辑：记忆层须基于最新正文内容；落盘失败则中止
-    const savedText = await flushSave();
-    if (savedText == null && editTargetRef.current != null) return;
-    // 提取前置校验（有章/有版本/非旧大纲/已定稿）：共用文案见 panel-utils.validateExtractFor
-    const err = validateExtractFor(activeChapter, selectedVersion, isStaleForActiveOutline, selectedIsFinal);
-    if (err) {
-      showToast(err, "warning");
-      return;
-    }
-    // 提取记忆层二次确认：确认后才会真正发起提取（自定义弹窗，规避原生 confirm 在内嵌浏览器的异常）
-    setConfirmDialog({ kind: "extract", savedText });
-  }
+  // ── AI 流程：共享状态经 FlowCtx 传给 use-ai-flows（行为与拆分前逐字一致） ──
+  const flowCtx: FlowCtx = {
+    novelId,
+    liveNovelRef,
+    mountedRef,
+    ensureReady,
+    showToast,
+    flushSave,
+    editTextRef,
+    editTargetRef,
+    reviewBaselineRef,
+    form,
+    useOutline,
+    chapters,
+    approvedOutlines,
+    approvedOutline,
+    regenerateNo,
+    detail,
+    activeChapter,
+    selectedVersion,
+    isStaleForActiveOutline,
+    selectedIsFinal,
+    affectedChapters,
+    confirmDialog,
+    loadChapters,
+    loadDetail,
+    openRegenerateModal,
+    setGenerating,
+    setGenStartAt,
+    setGenIsRegenerate,
+    setGenRun,
+    setShowAddModal,
+    setRegenerateNo,
+    setShowGenRun,
+    setActiveNo,
+    setConfirmDialog,
+    setDetail,
+    setSelectedVersionId,
+    setReviews,
+    setReviewing,
+    setReviewStartAt,
+    setReviewRun,
+    setShowReviewRun,
+    setRevising,
+    setReviseStartAt,
+    setReviseRun,
+    setShowReviseRun,
+    setExtracting,
+    setExtractedChapterNo,
+    setExtractedVersionId,
+    setAffectedChapters,
+    setRewriteFail,
+    setChapters,
+    setReviewStale,
+  };
 
-  /** 二次确认通过后真正执行提取。 */
-  async function doExtract() {
-    const cfg = confirmDialog;
-    if (!cfg) return;
-    setConfirmDialog(null);
-    // 提取前先落盘正文草稿区未保存的编辑：记忆层须基于最新正文内容；落盘失败则中止
-    const savedText = await flushSave();
-    if (savedText == null && editTargetRef.current != null) return;
-    // 提取前置校验（有章/有版本/非旧大纲/已定稿）：确认弹窗期间状态可能变化，执行前再校验一次
-    const err = validateExtractFor(activeChapter, selectedVersion, isStaleForActiveOutline, selectedIsFinal);
-    if (err) {
-      showToast(err, "warning");
-      return;
-    }
-    // 校验通过后 activeChapter/selectedVersion 必非空（validateExtractFor 已保证，此处仅作 TS 收窄）
-    const chapter = activeChapter!;
-    const version = selectedVersion!;
-    // 提取时锁定「当前章节 + 当前选中版本」，用于后续判断正文是否被切换过
-    const chapterNo = chapter.chapter_no;
-    const versionId = version.id;
-    setExtracting(true);
-    let storedSeen = false; // 是否收到 stored 回执：决定完成后从服务端校准还是直接采信回执
-    try {
-      ensureReady();
-      await runAgent(
-        "extractor",
-        novelId,
-        { chapter_no: chapter.chapter_no, chapter_text: savedText ?? version.content },
-        (ev) => {
-          // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
-          if (liveNovelRef.current !== novelId || !mountedRef.current) return;
-          if (ev.event === "stored") {
-            storedSeen = true;
-            setExtractedChapterNo(chapterNo);
-            setExtractedVersionId(versionId);
-            // 本次重提取是否清掉了「被取代过的链条中间环」：若是，列出受影响的下游章节，
-            // 提示作者重新提取对齐（根部删/改后，下游递进前提已断裂）。
-            const d = ev.data as { downstream_affected?: AffectedChapter[] };
-            const affected = Array.isArray(d?.downstream_affected)
-              ? d.downstream_affected.filter((a) => a.chapter_no > 0)
-              : [];
-            setAffectedChapters(affected.length > 0 ? affected : null);
-            showToast(`已把第 ${chapterNo} 章记进 AI 的长期记忆`, "success");
-          } else if (ev.event === "stream_error") {
-            showToast((ev.data as { message?: string }).message ?? "AI 提取出错，请稍后重试。", "error");
-          }
-        },
-      );
-    } catch (e) {
-      if (liveNovelRef.current === novelId && mountedRef.current) showToast((e as Error).message, "error");
-    } finally {
-      setExtracting(false);
-      // 提取是后台任务：SSE 连接若提前断开，stored 回执可能丢失，但后端照常落库。
-      // 无论回执是否收到，都以服务端最新提取记录（extracted_version_id）校准按钮高亮，
-      // 避免「已提取但按钮仍高亮」的误报；回执已收到时这里只是顺带刷新目录。
-      try {
-        const fresh = await listChapters(novelId);
-        setChapters(fresh);
-        if (liveNovelRef.current === novelId && mountedRef.current && !storedSeen) {
-          const refreshed = fresh.find((c) => c.chapter_no === chapterNo);
-          if (refreshed?.extracted_version_id != null && refreshed.extracted_version_id === versionId) {
-            // 实际已落库（只是回执丢失）：补齐状态，熄灭按钮高亮
-            setExtractedChapterNo(chapterNo);
-            setExtractedVersionId(versionId);
-            showToast(`已把第 ${chapterNo} 章记进 AI 的长期记忆`, "success");
-          } else {
-            showToast("提取未完成，请稍后重试。", "warning");
-          }
-        }
-      } catch {
-        if (liveNovelRef.current === novelId && mountedRef.current && !storedSeen) {
-          showToast("提取未完成，请稍后重试。", "warning");
-        }
-      }
-    }
-  }
-
-  /** 对当前选中版本发起评价（critic）：先落盘未保存编辑 → 校验（有章/有版本/非旧大纲）→ runAgent SSE 流式展示。
-   *  成功判定：流正常结束且未失败（failed 由 stream_error / schema_validate 置位）即提示完成——
-   *  不依赖 stored（回执可能因断流丢失但后端照常落库），结束后无条件从服务端校准评价列表；
-   *  若评价期间正文未被改动则清除「待重新评价」标记（该评价对应当前内容）。
-   *  连接超时兜底 15 分钟：超时中断显示，但后端任务照常跑完落库，刷新可见。 */
-  async function handleReview() {
-    // 先把正文草稿区未落盘的编辑保存：评价必须基于后端最新正文（不是本地未保存的旧内容）；
-    // 落盘失败（确有改动）时中止，避免对旧正文评价。
-    const savedText = await flushSave();
-    if (savedText == null && editTargetRef.current != null) return;
-    if (!detail) {
-      showToast("请先在章节目录选择一章", "warning");
-      return;
-    }
-    if (!activeChapter) {
-      showToast("请先在章节目录选择一章", "warning");
-      return;
-    }
-    if (!selectedVersion) {
-      showToast("该章尚未选定版本，无法评价。请先完成生成与选定。", "warning");
-      return;
-    }
-    // 旧大纲版本生成的正文只读：不能评价（防止拿旧正文的评价结果反向影响当前大纲语境的写作决策）
-    if (isStaleForActiveOutline) {
-      showToast(
-        "当前正文基于旧版大纲生成，只能查看，不能评价。请先基于当前正在用的大纲重新生成一份正文，再对新的正文评价。",
-        "warning",
-      );
-      return;
-    }
-    setReviewing(true);
-    setReviews(null);
-    setReviewStartAt(Date.now());
-    setReviewRun({ thinking: "", output: "", running: true });
-    let failed = false; // 流内失败标记（stream_error / schema 最终校验失败）：失败时不再弹完成提示
-    try {
-      ensureReady();
-      await runAgent(
-        "critic",
-        novelId,
-        {
-          chapter_no: detail.chapter_no, // 以详情章节为准（与 selectedVersion/parent_version_id 同源）
-          chapter_text: savedText ?? selectedVersion.content,
-          chapter_version_id: selectedVersion.id, // 评价绑定当前选中的版本（后端据此落 quality_reviews.chapter_version_id）
-          writing_mode: "draft_free",
-          outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
-        },
-        (ev) => {
-          // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
-          if (liveNovelRef.current !== novelId || !mountedRef.current) {
-            return;
-          }
-          const d = ev.data as { delta?: string; status?: string; message?: string };
-          if (ev.event === "thinking_delta" && d.delta) {
-            setReviewRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
-          } else if (ev.event === "stream_delta" && d.delta) {
-            setReviewRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
-          } else if (ev.event === "schema_validate" && d.status !== "ok") {
-            failed = true;
-            showToast("评价结果格式没通过检查，可重试。", "error");
-          } else if (ev.event === "stored") {
-            // 收到落库回执即先行刷新一次评价列表（早于流结束展示）；流结束后还会无条件校准一次。
-            void listReviews(novelId, activeChapter.chapter_no)
-              .then(setReviews)
-              .catch(() => undefined);
-          } else if (ev.event === "stream_error") {
-            failed = true;
-            showToast((ev.data as { message?: string }).message ?? "AI 评价出错，请稍后重试。", "error");
-          }
-        },
-        undefined,
-        false,
-        15 * 60 * 1000, // 连接超时兜底：超过 15 分钟中断显示（后端任务照常跑完落库，刷新可见），避免永久"思考中"
-      );
-      // 评价完成：统一在流结束后弹完成提示（与正文生成成功一致的居中 success）。
-      // 回执可能因 SSE 断流丢失但后端照常落库，故按「流正常结束且未失败」提示，不依赖 stored；
-      // 无论是否收到 stored，流结束后都无条件从服务端校准一次评价列表：
-      //   - 断流丢 stored → 校准兜底；
-      //   - 收到了 stored 但事件内的 listReviews 早于落库执行（竞态）→ 此处覆盖，保证与真实数据一致。
-      if (liveNovelRef.current === novelId && mountedRef.current && !failed) {
-        try {
-          setReviews(await listReviews(novelId, activeChapter.chapter_no));
-        } catch {
-          /* 刷新失败不阻塞完成提示 */
-        }
-        // 重新评价后：若评价期间作者没有继续改正文，本次评价对应当前内容 →
-        // 清除「待重新评价」提示；并刷新详情同步版本的签约标记（signing_blocked「未过签」徽标）。
-        if (editTextRef.current === (savedText ?? selectedVersion.content)) {
-          setReviewStale(false);
-          // 本次评价基于当前正文：把「已评价基线」更新为本次评价的内容，后续改动是否过期以此为准
-          reviewBaselineRef.current = editTextRef.current;
-        }
-        void getChapter(novelId, activeChapter.chapter_no).then(setDetail).catch(() => undefined);
-        showToast(`第 ${activeChapter.chapter_no} 章评价完成，报告已展示在「评价与优化」中。`, "success");
-      }
-    } catch (e) {
-      if (liveNovelRef.current === novelId && mountedRef.current) showToast((e as Error).message, "error");
-    } finally {
-      setReviewing(false);
-      setReviewRun((r) => (r ? { ...r, running: false } : r));
-      setShowReviewRun(false);
-    }
-  }
-
-  /** 「评价与优化」已改为右侧常驻内联面板：切换章节时 loadDetail 会按当前章重新拉取评价列表，
-   *  因此无需再靠打开弹窗触发刷新，进入面板即是最新（含手动评价完成后的结果）。 */
-
-  /** 根部关系被删/改后，按序串行处理受影响的下游章节：
-   *   第 A 章重写正文（按该章已批大纲，无大纲则自由草稿）→ 第 B 章重写 → …
-   *  重写用的是 novelist（按大纲写新正文、追加为草稿版本），不自动「提取→记忆层」：作者查看满意后手动定稿再提取。
-   *  任一章失败即停止整个流程，弹右上角 error 通知列出未重写的章节，交作者手动补齐（15s 自动关闭）。
-   *  进度查看与手动生成完全一致：Message 提示 + 「查看 AI 过程」弹窗 + 目录/详情刷新。 */
-  async function handleRerunAffected() {
-    if (!affectedChapters || affectedChapters.length === 0) return;
-    const target = affectedChapters.map((a) => a.chapter_no); // 按受影响章节逐个处理
-    setAffectedChapters(null); // 按钮点击后通知立即关闭
-    setRewriteFail(null);
-    try {
-      ensureReady();
-      let failedChapter: number | null = null;
-      const doneRewrite: number[] = [];
-      for (const no of target) {
-        // 处理过程中切到其他小说、或本面板已卸载（切页签）：立即停止，不弹任何本小说的提示
-        if (liveNovelRef.current !== novelId || !mountedRef.current) return;
-        const o = approvedOutlines.find((x) => x.chapter_no === no) ?? null;
-        const ch = chapters.find((c) => c.chapter_no === no) ?? null;
-        // ── 1. 重写正文（按当前大纲，不按评价）──
-        // 与真人点「生成正文」一致：只更新后台状态，弹窗由作者手动点「查看 AI 过程」查看
-        setGenRun({ thinking: "", output: "", running: true });
-        try {
-          await runAgent(
-            "novelist",
-            novelId,
-            {
-              chapter_no: no,
-              title: o?.title ?? ch?.title ?? undefined,
-              outline: o ? summarizeOutline(o) : undefined,
-              outline_id: o?.id ?? undefined, // 正文-大纲版本关联
-              writing_mode: o ? "outline_guided" : "draft_free",
-              // 自动重写流程方向已定（批量自动化无人工确认环节）：跳过写前「本章规划」咨询，
-              // 避免打断批量自动化（手动重新生成不传此标记，照常咨询方向）
-              rewrite: true,
-              auto_rewrite: true,
-            },
-            (ev) => {
-              // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
-              if (liveNovelRef.current !== novelId || !mountedRef.current) return;
-              const d = ev.data as { delta?: string; status?: string; message?: string };
-              if (ev.event === "thinking_delta" && d.delta) {
-                setGenRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
-              } else if (ev.event === "stream_delta" && d.delta) {
-                setGenRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
-              } else if (ev.event === "stream_error") {
-                failedChapter = no;
-                showToast((ev.data as { message?: string }).message ?? `第 ${no} 章重写出错`, "error");
-              }
-            },
-          );
-        } catch (e) {
-          if (liveNovelRef.current !== novelId || !mountedRef.current) return;
-          failedChapter = no;
-          showToast((e as Error).message, "error");
-        } finally {
-          setGenRun((r) => (r ? { ...r, running: false } : r));
-        }
-        if (failedChapter != null) break;
-        doneRewrite.push(no);
-        // 联动重写只生成草稿：不自动「提取→记忆层」，作者查看正文满意后手动定稿再提取
-        // 已切页签（面板卸载）：本页不再弹居中提示，跨页完成由全局右上角通知兜底
-        if (liveNovelRef.current === novelId && mountedRef.current) {
-          showToast(`第 ${no} 章已重写完成（草稿），可查看并手动定稿`, "success");
-        }
-      }
-
-      await loadChapters();
-      if (liveNovelRef.current !== novelId || !mountedRef.current) return; // 已切小说/已切页签：不再弹本小说的汇总提示
-      if (failedChapter != null) {
-        // 失败即停止：列出「正文未重写」的章节，交作者手动补齐（含失败后还没轮到处理的章节）
-        const remainingRewrite = target.filter((n) => !doneRewrite.includes(n));
-        setRewriteFail({ failedChapter, remainingRewrite, remainingExtract: [] });
-        const tip = [];
-        if (remainingRewrite.length > 0) tip.push(`正文未重写：第 ${remainingRewrite.join("、")} 章`);
-        showToast(
-          `第 ${failedChapter} 章处理失败，自动连续处理已停止。${tip.length > 0 ? `剩余 ${tip.join("；")}，请手动补齐。` : ""}`,
-          "error",
-        );
-      } else {
-        showToast(`已为第 ${target.join("、")} 章生成草稿，可逐个查看并手动定稿`, "success");
-      }
-    } catch (e) {
-      if (liveNovelRef.current === novelId && mountedRef.current) showToast((e as Error).message, "error");
-    }
-  }
-
-  /** 「挨个重写」始终指向最新一次渲染的联动重写逻辑，避免通知里回调闭包过期。
-   *  放在 handleRerunAffected 声明之后，避免 react-hooks/immutability「声明前访问」告警。 */
+  /** 「挨个重写」始终指向最新一次渲染的联动重写逻辑，避免通知里回调闭包过期。 */
   useEffect(() => {
-    rerunAffectedRef.current = () => handleRerunAffected();
+    rerunAffectedRef.current = () => void handleRerunAffected(flowCtx);
   });
-
-  /** 按评价报告逐条优化本章正文（修订师），修订版直接定稿为新版本。 */
-  async function handleRevise(
-    review: QualityReview,
-    authorInput?: { note?: string; disagreements?: Record<number, string> },
-  ) {
-    // 先把正文草稿区未落盘的编辑保存：优化基于最新正文；落盘失败（确有改动）时中止
-    const savedText = await flushSave();
-    if (savedText == null && editTargetRef.current != null) return;
-    // 章节归属以当前详情（detail）为准：selectedVersion 与 detail 同源，避免目录高亮与详情错位时
-    // 把优化产物挂到目录高亮章（旧 bug：详情已是第4章、目录仍高亮第3章 → 修订版写进第3章版本树）。
-    if (!detail) {
-      showToast("请先在章节目录选择一章", "warning");
-      return;
-    }
-    if (!selectedVersion) {
-      showToast("该章尚未选定版本，无法优化。请先完成生成与选定。", "warning");
-      return;
-    }
-    // 旧大纲版本生成的正文只读：不能修订（与评价同口径，防止把旧正文基于旧大纲再改出一版）
-    if (isStaleForActiveOutline) {
-      showToast(
-        "当前正文基于旧版大纲生成，只能查看，不能优化。请先基于当前正在用的大纲重新生成一份正文，再评价优化。",
-        "warning",
-      );
-      return;
-    }
-    if (review.chapter_version_id !== selectedVersion.id) {
-      showToast(
-        `这条评价是对第${review.version_no ?? "?"}版写的，不是当前选中的正文。请先选中对应版本，或对当前正文重新评价。`,
-        "warning",
-      );
-      return;
-    }
-    setRevising(true);
-    // 写后设定自检：本次优化收集到的疑似漏项（SSE setting_warning），完成后弹右上角告警通知
-    let collectedGaps: SettingGap[] = [];
-    setReviseStartAt(Date.now());
-    setReviseRun({ thinking: "", output: "", running: true });
-    let failed = false; // 流内失败标记（stream_error / schema 最终校验失败）：失败时不再弹完成提示、不关闭弹窗
-    try {
-      ensureReady();
-      await runAgent(
-        "reviser",
-        novelId,
-        {
-          chapter_no: detail.chapter_no, // 以详情章节为准（与 selectedVersion/parent_version_id 同源），
-          // 避免目录高亮与详情错位时把优化产物写进错误章节的版本树
-          chapter_text: savedText ?? selectedVersion.content,
-          writing_mode: useOutline ? "outline_guided" : "draft_free",
-          outline: approvedOutline ? summarizeOutline(approvedOutline) : undefined,
-          outline_id: approvedOutline?.id ?? undefined, // 正文-大纲版本关联
-          chapter_function: form.chapter_function,
-          parent_version_id: selectedVersion.id, // 版本树：优化产物挂为被优化版本的子节点（可继续评价→优化递归）
-          review: {
-            overall_score: review.overall_score,
-            rubric: review.rubric,
-            issues: review.issues,
-            strengths: review.strengths,
-            revision_hints: review.revision_hints,
-            // 作者批注/异议（作者意图，优先级高于评价师）：随本次优化一次性传入，不落库
-            ...(authorInput?.note?.trim() ? { author_note: authorInput.note.trim() } : {}),
-            ...(authorInput?.disagreements && Object.keys(authorInput.disagreements).length > 0
-              ? { disagreements: authorInput.disagreements }
-              : {}),
-          },
-        },
-        (ev) => {
-          // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
-          if (liveNovelRef.current !== novelId || !mountedRef.current) {
-            return;
-          }
-          const d = ev.data as { delta?: string; status?: string; message?: string };
-          if (ev.event === "thinking_delta" && d.delta) {
-            setReviseRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
-          } else if (ev.event === "stream_delta" && d.delta) {
-            setReviseRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
-          } else if (ev.event === "setting_warning") {
-            const items = (ev.data as { items?: SettingGap[] }).items ?? [];
-            collectedGaps = items.length ? items : [];
-          } else if (ev.event === "schema_validate" && d.status !== "ok") {
-            failed = true;
-            showToast("优化结果格式没通过检查，可重试。", "error");
-          } else if (ev.event === "stream_error") {
-            failed = true;
-            showToast((ev.data as { message?: string }).message ?? "AI 优化出错，请稍后重试。", "error");
-          }
-        },
-        undefined,
-        false,
-        15 * 60 * 1000, // 连接超时兜底：超过 15 分钟中断显示（后端任务照常跑完落库，刷新可见），避免永久"思考中"
-      );
-      // 优化完成：统一在流结束后弹完成提示（与正文生成成功一致的居中 success）。
-      // 回执可能因 SSE 断流丢失但后端照常落库，故按「流正常结束且未失败」提示，不依赖 stored。
-      if (liveNovelRef.current === novelId && mountedRef.current && !failed) {
-        showToast(
-          `已按评价问题优化第 ${detail.chapter_no} 章，新版本为草稿，请手动定稿。`,
-          "success",
-        );
-      }
-    } catch (e) {
-      if (liveNovelRef.current === novelId && mountedRef.current) showToast((e as Error).message, "error");
-    } finally {
-      setRevising(false);
-      setReviseRun((r) => (r ? { ...r, running: false } : r));
-      setShowReviseRun(false);
-      if (liveNovelRef.current !== novelId) return; // 已切小说：不再用本小说的结果刷新/选中
-      setActiveNo(detail.chapter_no);
-      await loadChapters();
-      // 优化成功：加载详情后自动把正文预览切到刚生成的优化版本（新草稿），让作者直接查看优化结果，
-      // 而不是停留在被优化版本、或落在"还没有评价"的新版本上被要求评价。
-      let selectNewVersionId: string | null = null;
-      if (!failed && review) {
-        try {
-          const fresh = await getChapter(novelId, detail.chapter_no);
-          const newVer = [...fresh.versions]
-            .filter((v) => v.parent_version_id === review.chapter_version_id && v.id !== review.chapter_version_id)
-            .sort((a, b) => (b.version_no ?? 0) - (a.version_no ?? 0))[0];
-          selectNewVersionId = newVer?.id ?? null;
-        } catch {
-          /* 拿不到新版本详情则回退默认选中 */
-        }
-      }
-      await loadDetail(detail.chapter_no, selectNewVersionId);
-      // 写后设定自检命中：弹右上角常驻告警（重新生成 / 忽略）
-      if (!failed && collectedGaps.length > 0) fireGapNotif(novelId, detail.chapter_no, collectedGaps, openRegenerateModal);
-    }
-  }
 
   return (
     <Loading loading={loading}>
@@ -1400,8 +695,8 @@ export default function WritingPanel({ novelId }: Props) {
         extractPending={extractPending}
         isStaleForActiveOutline={isStaleForActiveOutline}
         extracting={extracting}
-        onFinalize={() => void handleFinalizeSelected()}
-        onExtract={handleExtract}
+        onFinalize={() => void handleFinalizeSelected(flowCtx)}
+        onExtract={() => void handleExtract(flowCtx)}
         onCopy={handleCopyContent}
       />
 
@@ -1437,13 +732,13 @@ export default function WritingPanel({ novelId }: Props) {
           detail={detail}
           reviewStale={reviewStale}
           currentReview={currentReview}
-          onReview={() => void handleReview()}
+          onReview={() => void handleReview(flowCtx)}
           reviewing={reviewing}
           reviewTaskRunning={reviewTaskRunning}
           selectedVersion={selectedVersion}
           isRecentlyGenerated={isRecentlyGenerated}
           reviewBusyForChapter={reviewBusyForChapter}
-          onRevise={handleRevise}
+          onRevise={(r, a) => void handleRevise(flowCtx, r, a)}
           revising={revising}
           onShowReviewRun={() => setShowReviewRun(true)}
           onShowReviseRun={() => setShowReviseRun(true)}
@@ -1465,7 +760,7 @@ export default function WritingPanel({ novelId }: Props) {
           generating={generating}
           onOpenInfo={openInfoModal}
           infoFilledCount={infoFilledCount}
-          onGenerate={() => void handleGenerate()}
+          onGenerate={() => void handleGenerate(flowCtx)}
           onViewRun={() => setShowGenRun(true)}
           onClose={() => {
             setShowAddModal(false);
@@ -1509,8 +804,8 @@ export default function WritingPanel({ novelId }: Props) {
         confirmDialog={confirmDialog}
         selectedVersion={selectedVersion}
         onConfirm={() => {
-          if (confirmDialog?.kind === "extract") void doExtract();
-          else void doFinalize();
+          if (confirmDialog?.kind === "extract") void doExtract(flowCtx);
+          else void doFinalize(flowCtx);
         }}
         onCancel={() => setConfirmDialog(null)}
       />
