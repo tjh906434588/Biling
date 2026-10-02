@@ -59,6 +59,9 @@ _ADD_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("superseded_by_chapter", "INTEGER"),
         ("superseded_by_relation", "TEXT"),
     ],
+    "novels": [
+        ("info_control", "JSON"),  # 本书级信息控制（谁知道了什么）：{reader_knows, protagonist_knows, must_hide, hint_only}
+    ],
 }
 
 

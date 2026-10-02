@@ -48,6 +48,21 @@ class NovelRead(BaseModel):
     updated_at: datetime
 
 
+class InfoControl(BaseModel):
+    """本书级信息控制（谁知道了什么）：全部留空 = 不注入。
+    设置一次后所有章节生成时持续生效，防止「主角/读者知识断层」穿帮。
+    """
+
+    # 读者已经知道的信息：新章节写作时不得重新解释/装不知道
+    reader_knows: str = Field(default="", max_length=500)
+    # 主角已经知道的信息：新章节不得让主角表现得对此无知
+    protagonist_knows: str = Field(default="", max_length=500)
+    # 必须向读者隐瞒的内容：正文不得提前泄露，只能埋伏笔
+    must_hide: str = Field(default="", max_length=500)
+    # 只能点到为止的内容：可暗示不可说破
+    hint_only: str = Field(default="", max_length=500)
+
+
 class SettingCreate(BaseModel):
     """新增设定条目入参：类型 / 名称 / 来源 / 描述 / 结构化字段等。"""
     type: str = Field(..., pattern="^(character|location|faction|world_rule|item|concept)$")

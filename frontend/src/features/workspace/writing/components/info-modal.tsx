@@ -25,7 +25,7 @@ export function InfoModal({ open, onClose, draft, onDraftChange, onSubmit }: Inf
     <Modal
       open={open}
       title="谁知道了什么（可选）"
-      subtitle="控制本章「谁知道了什么」，防止 AI 提前剧透或逻辑穿帮。"
+      subtitle="本书级设置，一次填写、之后所有章节生成时都持续生效，防止主角/读者「知识断层」穿帮。"
       onClose={onClose}
       footer={
         <div className="flex w-full items-center justify-between gap-2">

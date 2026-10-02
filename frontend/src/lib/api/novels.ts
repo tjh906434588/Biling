@@ -3,7 +3,7 @@
  * 书架 / 小说 CRUD 接口（/novels）。
  */
 import { BASE } from "@/constants/api";
-import type { Novel } from "@/types/api";
+import type { InfoControl, Novel } from "@/types/api";
 import { httpError } from "./errors";
 
 export async function listNovels(q?: string): Promise<Novel[]> {
@@ -89,6 +89,27 @@ export async function importNovel(file: File): Promise<Novel> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw httpError(err.detail, "导入失败");
+  }
+  return res.json();
+}
+
+/** 读取本书级信息控制（谁知道了什么）：设置一次，所有章节生成时持续注入。 */
+export async function getInfoControl(novelId: string): Promise<InfoControl> {
+  const res = await fetch(`${BASE}/novels/${novelId}/info-control`);
+  if (!res.ok) throw new Error("加载信息控制失败");
+  return res.json();
+}
+
+/** 保存本书级信息控制：全部留空 = 清空（不注入）。 */
+export async function saveInfoControl(novelId: string, data: InfoControl): Promise<InfoControl> {
+  const res = await fetch(`${BASE}/novels/${novelId}/info-control`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw httpError(err.detail, "保存信息控制失败");
   }
   return res.json();
 }

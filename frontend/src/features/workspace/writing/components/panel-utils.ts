@@ -14,17 +14,14 @@
 
 import type { ChapterListItem, ChapterVersion, Outline } from "@/lib/api";
 
-/** 新增/重新生成章节弹窗表单：章号/标题/大纲目标/章节功能/信息控制（打开弹窗时重置）。 */
+/** 新增/重新生成章节弹窗表单：章号/标题/大纲目标/章节功能（打开弹窗时重置）。
+ *  「谁知道了什么」信息控制已改为本书级全局配置（novels/info-control），不再逐章存于表单。 */
 export interface GenForm {
   chapter_no: number;
   title: string;
   outline: string;
   chapter_function: string;
   goal: string;
-  reader_knows: string;
-  protagonist_knows: string;
-  must_hide: string;
-  hint_only: string;
 }
 
 export const EMPTY_FORM: GenForm = {
@@ -33,10 +30,6 @@ export const EMPTY_FORM: GenForm = {
   outline: "",
   chapter_function: "", // 留空 = 由小说家按剧情节奏自动判定（与大纲页一致）
   goal: "",
-  reader_knows: "",
-  protagonist_knows: "",
-  must_hide: "",
-  hint_only: "",
 };
 
 /** AI 运行过程状态：供「查看 AI 过程」弹窗流式展示（thinking=思考过程 / output=正式输出）。 */

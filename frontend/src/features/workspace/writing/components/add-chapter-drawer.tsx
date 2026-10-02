@@ -174,13 +174,13 @@ export function AddChapterDrawer({
           />
         </label>
 
-        {/* 信息控制：高级可选项，点开独立弹窗填写/清空 */}
+        {/* 信息控制：本书级全局配置（谁知道了什么），设置一次对所有章节生效；点开独立弹窗填写/清空 */}
         <div className="flex items-center justify-between border-t border-zinc-200 pt-3 dark:border-zinc-800">
           <span className="text-xs text-zinc-500">
             谁知道了什么（可选）
             <InfoTip portal>
               <p className="font-medium text-zinc-700 dark:text-zinc-200">控制「谁知道了什么」</p>
-              防止 AI 提前剧透或逻辑穿帮；全部留空则让 AI 自己把握。
+              设置一次，之后所有章节生成都会持续生效，防止主角/读者「知识断层」穿帮；全部留空则让 AI 自己把握。
               <span className="mt-1.5 block text-zinc-400">
                 读者已知 / 主角已知 / 必须向读者隐瞒 / 只能点到为止（伏笔暗示）
               </span>

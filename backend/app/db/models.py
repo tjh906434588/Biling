@@ -36,6 +36,10 @@ class Novel(Base):
     # 产出机构形态/老板画像/业务清单/位置规律/行业演进/时代错位雷点，供设定生成与评价复用；
     # 换一本小说自动重新研究，不依赖开发加知识包。作者可在项目设置页查看/修改。
     era_research: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # 本书级信息控制（谁知道了什么）：设置一次、之后所有章节生成时持续注入，防止「主角/读者
+    # 知识断层」穿帮；存 {reader_knows, protagonist_knows, must_hide, hint_only}，可留空。
+    # 每章生成时若传 info_control，可覆盖对应字段（前端当前只维护全局这一份）。
+    info_control: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

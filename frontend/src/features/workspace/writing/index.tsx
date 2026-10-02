@@ -28,11 +28,14 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import {
   getActiveBlueprint,
   getChapter,
+  getInfoControl,
   listChapters,
   listOutlines,
   listReviews,
+  saveInfoControl,
   type ChapterDetail,
   type ChapterListItem,
+  type InfoControl,
   type Outline,
   type QualityReview,
   type StreamTaskInfo,
@@ -272,18 +275,35 @@ export default function WritingPanel({ novelId }: Props) {
    *  react-hooks/refs 告警且不触发重渲染）。 */
   const [genIsRegenerate, setGenIsRegenerate] = useState(false);
 
-  /** 信息控制弹窗：本地 draft，点「完成」才提交到 form，点「取消」丢弃。
-   *  这样「清空」只清本地草稿，不点确定则原内容仍然保留（再打开还在）。 */
+  /** 信息控制弹窗：本地 draft，点「完成」才提交，点「取消」丢弃。
+   *  「谁知道了什么」是本书级全局配置（novels/info-control）：设置一次、所有章节生成时持续注入，
+   *  不再随单章表单保存（第一章填的，之后各章自动一直生效）。 */
   const [infoDraft, setInfoDraft] = useState<InfoDraft>({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
-  const openInfoModal = useCallback(() => {
-    setInfoDraft({
-      reader_knows: form.reader_knows,
-      protagonist_knows: form.protagonist_knows,
-      must_hide: form.must_hide,
-      hint_only: form.hint_only,
-    });
+  /** 已保存的本书级信息控制（弹窗入口按钮据此显示「已填 N 项」；挂载时加载一次） */
+  const [infoControl, setInfoControl] = useState<InfoControl>({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
+  useEffect(() => {
+    let alive = true;
+    void getInfoControl(novelId)
+      .then((s) => {
+        if (alive) setInfoControl(s);
+      })
+      .catch(() => {
+        /* 加载失败保持空，打开弹窗时可再试 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [novelId]);
+  /** 打开信息控制弹窗：先拉取本书级配置填入草稿（取消丢弃不落库） */
+  const openInfoModal = useCallback(async () => {
+    try {
+      const saved = await getInfoControl(novelId);
+      setInfoDraft({ ...saved });
+    } catch {
+      setInfoDraft({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
+    }
     setShowInfoModal(true);
-  }, [form]);
+  }, [novelId]);
 
   /** AI 服务状态检查：各 AI 操作发起前确认模型已配置可用，未配置则抛错拦截（避免发起注定失败的空请求）。 */
   const { ensureReady } = useAiStatus();
@@ -291,7 +311,7 @@ export default function WritingPanel({ novelId }: Props) {
   /** 目标章已批大纲：弹窗「沿用该章已批大纲」开关与回填的依据（仅该章有已批大纲时显示开关）。 */
   const targetOutline = approvedOutlines.find((o) => o.chapter_no === form.chapter_no) ?? null;
   /** 信息控制已填项数：弹窗入口按钮据此显示「已填 N 项 · 编辑」。 */
-  const infoFilledCount = [form.reader_knows, form.protagonist_knows, form.must_hide, form.hint_only].filter(
+  const infoFilledCount = [infoControl.reader_knows, infoControl.protagonist_knows, infoControl.must_hide, infoControl.hint_only].filter(
     (v) => v.trim(),
   ).length;
 
@@ -769,15 +789,23 @@ export default function WritingPanel({ novelId }: Props) {
         />
       )}
 
-      {/* ── 信息控制弹窗（本地 draft：取消丢弃 / 清空只清本地 / 完成才提交） ── */}
+      {/* ── 信息控制弹窗（本地 draft：取消丢弃 / 清空只清本地 / 完成才保存到本书级配置） ── */}
       <InfoModal
         open={showInfoModal}
         onClose={() => setShowInfoModal(false)}
         draft={infoDraft}
         onDraftChange={setInfoDraft}
         onSubmit={() => {
-          setForm((f) => ({ ...f, ...infoDraft }));
-          setShowInfoModal(false);
+          void (async () => {
+            try {
+              const saved = await saveInfoControl(novelId, infoDraft);
+              setInfoControl(saved);
+              setShowInfoModal(false);
+              message.success("已保存，之后所有章节生成都会生效。");
+            } catch (e) {
+              message.error((e as Error).message);
+            }
+          })();
         }}
       />
 

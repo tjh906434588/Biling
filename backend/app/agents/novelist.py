@@ -236,8 +236,11 @@ class NovelistAgent(Agent[NovelChapter]):
             except Exception:  # 统计失败不影响写作主流程
                 pass
 
-        # L3 信息控制（info_control）：读者/主角知道什么、必须隐瞒什么
-        info = params.get("info_control") or {}
+        # L3 信息控制（info_control）：本书级全局配置（谁知道了什么）+ 当章可选覆盖。
+        # 全局设置一次后所有章节生成都持续注入，防止「主角/读者知识断层」穿帮；
+        # 当章若传了 info_control（如章节级临时调整）则覆盖全局对应字段。
+        global_info = getattr(novel, "info_control", None) or {}
+        info = {**global_info, **(params.get("info_control") or {})}
         if info:
             l3 += (
                 f"\n【L3·信息控制】读者已知：{info.get('reader_knows', '无')}；"

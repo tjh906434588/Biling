@@ -340,6 +340,18 @@ export interface MemoryReview {
   healthy: boolean;
 }
 
+/** 本书级信息控制（谁知道了什么）：设置一次，所有章节生成时持续注入，防止「主角/读者知识断层」穿帮。 */
+export interface InfoControl {
+  /** 读者已经知道的信息：新章节不得重新解释 / 装不知道 */
+  reader_knows: string;
+  /** 主角已经知道的信息：新章节不得让主角表现得对此无知 */
+  protagonist_knows: string;
+  /** 必须向读者隐瞒的内容：正文不得提前泄露，只能埋伏笔 */
+  must_hide: string;
+  /** 只能点到为止的内容：可暗示不可说破 */
+  hint_only: string;
+}
+
 export interface ModelRoute {
   id: string;
   task_type: TaskType;

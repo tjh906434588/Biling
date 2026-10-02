@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.db.models import Novel, Setting
 from app.db.session import get_db
 from app.schemas.novel import (
+    InfoControl,
     NovelCreate,
     NovelRead,
     NovelUpdate,
@@ -128,6 +129,32 @@ def delete_novel(novel_id: uuid.UUID, db: Session = Depends(get_db)):
 
     db.delete(novel)
     db.commit()
+
+
+@router.get("/{novel_id}/info-control", response_model=InfoControl)
+def get_info_control(novel_id: uuid.UUID, db: Session = Depends(get_db)):
+    """本书级信息控制（谁知道了什么）：设置一次、所有章节生成时持续注入。"""
+    novel = db.get(Novel, novel_id)
+    if novel is None:
+        raise HTTPException(404, "项目不存在")
+    return novel.info_control or {}
+
+
+@router.put("/{novel_id}/info-control", response_model=InfoControl)
+def update_info_control(
+    payload: InfoControl,
+    novel_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    """保存本书级信息控制：仅保留非空字段；全部清空则存空（不注入）。"""
+    novel = db.get(Novel, novel_id)
+    if novel is None:
+        raise HTTPException(404, "项目不存在")
+    cleaned = {k: v.strip() for k, v in payload.model_dump().items() if v and v.strip()}
+    novel.info_control = cleaned or None
+    db.commit()
+    db.refresh(novel)
+    return novel.info_control or {}
 
 
 @router.get("/{novel_id}/settings", response_model=list[SettingRead])

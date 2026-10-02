@@ -109,15 +109,6 @@ export async function handleGenerate(
 
   // 用传入覆盖（如评价弹窗的「生成正文」）合成本次生成配置；form 保持新增弹窗的表单状态不动
   const f = override ? { ...form, ...override } : form;
-  const infoControl: Record<string, string> = {};
-  for (const [k, v] of [
-    ["reader_knows", f.reader_knows],
-    ["protagonist_knows", f.protagonist_knows],
-    ["must_hide", f.must_hide],
-    ["hint_only", f.hint_only],
-  ] as const) {
-    if (v.trim()) infoControl[k] = v.trim();
-  }
 
   const tgt = useOutline ? approvedOutlines.find((o) => o.chapter_no === f.chapter_no) ?? null : null;
   const params: Record<string, unknown> = {
@@ -135,7 +126,6 @@ export async function handleGenerate(
     // 重新生成=新增，与新增同权：不传 rewrite，后端 novelist 前置钩子照常弹「本章规划」
     // 方向咨询（作者重新定夺）；仅批量自动重写（handleRerunAffected）传 rewrite+auto_rewrite 跳过
   };
-  if (Object.keys(infoControl).length > 0) params.info_control = infoControl;
 
   try {
     ctx.ensureReady();
