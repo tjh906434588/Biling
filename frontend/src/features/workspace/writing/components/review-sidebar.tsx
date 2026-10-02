@@ -73,7 +73,7 @@ export function ReviewSidebar({
         </div>
       ) : (
         <div
-          className="panel flex max-h-[45vh] min-h-0 flex-col xl:max-h-none xl:w-[var(--review-w)] xl:shrink-0"
+          className="panel flex max-h-[45vh] min-h-0 flex-col xl:max-h-none xl:w-[var(--review-w)] xl:shrink-0 xl:max-w-[min(1000px,calc(100%_-_380px))]"
           style={{ "--review-w": `${Math.round(reviewWidth)}px` } as CSSProperties}
         >
         <div className="panel-head shrink-0">

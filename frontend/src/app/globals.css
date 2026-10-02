@@ -107,14 +107,14 @@
   --g-protagonist: #b55440; /* 朱砂红（主角） */
 
   /* —— 字体 —— */
-  /* 中文回退链直接命中系统已装字体：NoTo Sans SC / 苹方 / 微软雅黑；拉丁字形用 Geist */
-  --sans-stack: var(--font-geist-sans), "Noto Sans SC", "PingFang SC", "HarmonyOS Sans SC",
+  /* 纯本地系统字体栈：拉丁走系统默认 UI 字体，中文命中 NoTo Sans SC / 苹方 / 微软雅黑（不依赖外网字体下载） */
+  --sans-stack: "Noto Sans SC", "PingFang SC", "HarmonyOS Sans SC",
     "Microsoft YaHei UI", "Microsoft YaHei", "微软雅黑", system-ui, sans-serif;
   /* 书卷气：思源宋体 → 宋体 → 衬线后备 */
   --serif-stack: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", SimSun, "宋体",
     "Times New Roman", Georgia, serif;
   --kai-stack: "Kaiti SC", KaiTi, "楷体", STKaiti, var(--serif-stack);
-  --mono-stack: var(--font-geist-mono), "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  --mono-stack: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
 
   /* —— 节奏 —— */
   --rule-color: var(--zinc-300);

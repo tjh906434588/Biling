@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
   output: "standalone",
   // 关掉开发模式左下角的 Next.js Dev Tools 气泡（生产构建不出现，纯开发期干扰）
   devIndicators: false,
+  // 桌面壳开发模式（Electron）用 http://127.0.0.1:3000 加载 dev server；
+  // Next 16 默认拦截非 localhost 跨源访问 dev 资源，这里放行 127.0.0.1
+  allowedDevOrigins: ["127.0.0.1"],
   // 关键：关闭 Next 的 gzip 响应压缩。浏览器 fetch 默认发送 Accept-Encoding: gzip，
   // 压缩中间件会把 SSE 流式响应整体缓冲（推理文字逐字符到达，永远填不满 zlib 缓冲区），
   // 导致蓝图生成期间前端收不到任何流式文字、生成结束才一次性全部吐出。

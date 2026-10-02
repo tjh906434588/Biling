@@ -29,12 +29,14 @@ export default function TitleBar() {
   }, []);
 
   return (
-    <div className="titlebar flex h-8 shrink-0 select-none items-center gap-2 border-b border-zinc-200 bg-paper pl-3 text-[12px] dark:border-zinc-800">
+    <div className="titlebar flex h-8 shrink-0 select-none items-center gap-2.5 border-b border-zinc-200 bg-paper pl-3 text-[12px] dark:border-zinc-800">
       <span className="font-serif font-medium tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
         笔灵 Biling
       </span>
       {ver ? (
-        <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">v{ver}</span>
+        <span className="rounded-full bg-zinc-200/70 px-2 py-[2px] font-mono text-[10px] leading-none text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          v{ver}
+        </span>
       ) : null}
       {/* 右上角预留系统原生窗口控制按钮浮层区域（勿放交互元素，保持 no-drag） */}
       <span className="no-drag ml-auto h-full w-[140px]" aria-hidden />
