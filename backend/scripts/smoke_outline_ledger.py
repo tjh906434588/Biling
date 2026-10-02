@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""M2 冒烟测试：大纲师 → 伏笔账本 → 评价师 闭环。
+"""大纲/账本/评价闭环冒烟测试：大纲师 → 伏笔账本 → 评价师。
 
 用法（后端已启动在 8000）：
-    .venv\\Scripts\\python.exe scripts\\smoke_m2.py
+    .venv\\Scripts\\python.exe scripts\\smoke_outline_ledger.py
 """
 import io
 import json
@@ -143,7 +143,7 @@ def main():
     closed_target = [r for r in after if r["description"] == "待回收伏笔X"]
     check("账本目标条目 closed", len(closed_target) == 1 and closed_target[0]["chapter_resolved"] == 4)
 
-    print(f"\n===== M2 结果：{len(PASS)} 通过 / {len(FAIL)} 失败 =====")
+    print(f"\n===== 冒烟结果：{len(PASS)} 通过 / {len(FAIL)} 失败 =====")
     if FAIL:
         print("失败项：", FAIL)
         sys.exit(1)

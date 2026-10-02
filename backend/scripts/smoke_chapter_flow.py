@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""M1 闭环冒烟测试：写章 → 版本历史 → 选定 → 提取 → 续写。
+"""写章闭环冒烟测试：写章 → 版本历史 → 选定 → 提取 → 续写。
 
 用法（后端已启动在 8000 端口）：
-    .venv\\Scripts\\python.exe scripts\\smoke_m1.py
+    .venv\\Scripts\\python.exe scripts\\smoke_chapter_flow.py
 
 覆盖：
 1. 创建小说

@@ -1,6 +1,6 @@
-"""M3/M4 冒烟：blueprints / concepts / style / detect / graph / memory / models routes。
+"""蓝图/概念/风格/检测/图谱/记忆/模型路由冒烟：blueprints / concepts / style / detect / graph / memory / models routes。
 
-用法：python scripts/smoke_m34.py [novel_id]
+用法：python scripts/smoke_blueprint_review.py [novel_id]
 缺省取库中第一本小说。
 """
 import json
@@ -98,7 +98,7 @@ def main():
     if r.get("id"):
         ok("DELETE models/routes", client.delete(f"{BASE}/models/routes/{r['id']}"))
 
-    print("\nM3/M4 冒烟全部通过")
+    print("\n冒烟全部通过")
 
 
 if __name__ == "__main__":
