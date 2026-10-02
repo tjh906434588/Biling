@@ -2,11 +2,18 @@
  * @file writing-panel.tsx
  * 写作页主面板：状态编排 + 组合各子块。承担全局状态与 AI 流程编排（章节/版本/正文编辑、
  * AI 生成/评价/优化/提取/联动重写），渲染子块按职责拆到 writing/ 目录：
+ * 渲染子块按职责拆到 writing/ 目录：
  * - notifications.ts：模块级全局通知机制（受影响章节 / 联动重写中断 / 设定自检），跨页存活；
  * - chapter-tree.tsx：左侧章节目录栏（卷分组/搜索/折叠 + 本章操作）；
  * - version-tree.tsx：版本树浮层（多级递归）；
  * - review-card.tsx：评价师结果卡片；
- * - auto-textarea.tsx：自动增高文本框。
+ * - auto-textarea.tsx：自动增高文本框；
+ * - panel-utils.ts：模块级纯函数/类型/常量（表单、AI 运行态、大纲摘要、提取校验）；
+ * - chapter-content.tsx：右侧当前章正文面板（标题/版本树浮层/就地编辑/空态）；
+ * - review-sidebar.tsx：评价与优化常驻侧栏（折叠/宽度预设/评价卡片/空态）；
+ * - add-chapter-drawer.tsx：新增章节/重新生成抽屉；
+ * - info-modal.tsx：信息控制（谁知道了什么）弹窗；
+ * - run-modals.tsx：三个 AI 过程弹窗 + 定稿/提取二次确认弹窗。
  * 核心机制（保持不变）：
  * - AI 流程（生成/评价/优化/提取）走 runAgent SSE，任务跨页/刷新由全局 AgentTaskToasts 轮询恢复；
  * - 正文编辑「镜像 ref + 防抖 2s 自动落盘 + 切版本/卸载兜底落盘」，切章用请求序号防竞态覆盖；
@@ -21,7 +28,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type CSSProperties,
 } from "react";
 import {
   getActiveBlueprint,
@@ -41,29 +47,20 @@ import {
   type SettingGap,
   type StreamTaskInfo,
 } from "@/lib/api";
-import InfoTip from "./info-tip";
-import Modal from "./modal";
-import ConfirmDialog from "./confirm-dialog";
-import AgentStreamModal from "./agent-stream-modal";
 import { useElapsed } from "@/lib/use-elapsed";
 import Loading from "@/components/loading";
 import { message } from "@/components/message";
-import { CostHint, useAiStatus } from "@/lib/ai-status";
+import { useAiStatus } from "@/lib/ai-status";
 import {
-  FUNCTIONS,
   REVIEW_W_DEFAULT,
   REVIEW_W_KEY,
   REVIEW_W_MAX,
   REVIEW_W_MIN,
-  REVIEW_W_PRESETS,
   type VolumeInfo,
 } from "@/constants";
 import { copyText } from "@/utils/clipboard";
 import { getRunningTask, subscribeRunningTask } from "@/lib/task-status";
-import { AutoTextarea } from "./writing/auto-textarea";
 import { ChapterSidebar, sourceLabel } from "./writing/chapter-tree";
-import { ReviewCard } from "./writing/review-card";
-import { VersionTree } from "./writing/version-tree";
 import {
   clearGapNotifIfMismatch,
   fireGapNotif,
@@ -74,42 +71,26 @@ import {
   type AffectedChapter,
   type RewriteFailData,
 } from "./writing/notifications";
+import { AddChapterDrawer } from "./writing/add-chapter-drawer";
+import { ChapterContent } from "./writing/chapter-content";
+import { InfoModal } from "./writing/info-modal";
+import {
+  summarizeOutline,
+  validateExtractFor,
+  type AiRunState,
+  type ConfirmDialogState,
+  type GenForm,
+  type InfoDraft,
+  type ShowToast,
+  EMPTY_FORM,
+} from "./writing/panel-utils";
+import { ReviewSidebar } from "./writing/review-sidebar";
+import { RunModals } from "./writing/run-modals";
 export { hideWorkspaceNotifs, showWorkspaceNotifs } from "./writing/notifications";
 
 interface Props {
   novelId: string;
 }
-
-interface GenForm {
-  chapter_no: number;
-  title: string;
-  outline: string;
-  chapter_function: string;
-  goal: string;
-  reader_knows: string;
-  protagonist_knows: string;
-  must_hide: string;
-  hint_only: string;
-}
-
-/** AI 运行过程状态：供「查看 AI 过程」弹窗流式展示（thinking=思考过程 / output=正式输出）。 */
-interface AiRunState {
-  thinking: string;
-  output: string;
-  running: boolean;
-}
-
-const EMPTY_FORM: GenForm = {
-  chapter_no: 1,
-  title: "",
-  outline: "",
-  chapter_function: "", // 留空 = 由小说家按剧情节奏自动判定（与大纲页一致）
-  goal: "",
-  reader_knows: "",
-  protagonist_knows: "",
-  must_hide: "",
-  hint_only: "",
-};
 
 export default function WritingPanel({ novelId }: Props) {
   // 组件实例被 App Router 跨小说复用：记录「当前正在显示的小说」，AI 流回调/收尾据此判断是否已切小说
@@ -151,7 +132,7 @@ export default function WritingPanel({ novelId }: Props) {
   /** 正文生成进行中标志：驱动按钮禁用、AI 过程弹窗开关与刷新恢复轮询（见 mount 恢复 effect）。 */
   const [generating, setGenerating] = useState(false);
   /** 正上方悬浮条已迁移到全局 Message：showToast 为本地别名，统一走 message API。 */
-  const showToast = (msg: string, level: "success" | "warning" | "error" = "success") => {
+  const showToast: ShowToast = (msg, level = "success") => {
     if (level === "error") message.error(msg);
     else if (level === "warning") message.warning(msg);
     else message.success(msg);
@@ -271,11 +252,7 @@ export default function WritingPanel({ novelId }: Props) {
   const [showInfoModal, setShowInfoModal] = useState(false);
   /** 二次确认弹窗（定稿 / 提取记忆层）：用页面内自定义弹窗替代 window.confirm，
    *  规避 IDE 内嵌浏览器对原生 confirm 对话框的处理异常（原生弹窗挂起会导致页面卡死/跳转报错）。 */
-  const [confirmDialog, setConfirmDialog] = useState<{
-    kind: "finalize" | "finalize-force" | "extract";
-    /** 定稿前已落盘保存的正文（flushSave 结果）；null=无编辑或保存失败 */
-    savedText: string | null;
-  } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   /** 评价与优化侧栏折叠：折叠后正文恢复全宽阅读，再点窄条展开 */
   const [reviewCollapsed, setReviewCollapsed] = useState(false);
   /** 评价栏宽度（px）：窄/中/宽三档预设切换，xl 起生效。偏好存 localStorage，跨刷新保持。 */
@@ -309,12 +286,7 @@ export default function WritingPanel({ novelId }: Props) {
 
   /** 信息控制弹窗：本地 draft，点「完成」才提交到 form，点「取消」丢弃。
    *  这样「清空」只清本地草稿，不点确定则原内容仍然保留（再打开还在）。 */
-  const [infoDraft, setInfoDraft] = useState<{
-    reader_knows: string;
-    protagonist_knows: string;
-    must_hide: string;
-    hint_only: string;
-  }>({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
+  const [infoDraft, setInfoDraft] = useState<InfoDraft>({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
   const openInfoModal = useCallback(() => {
     setInfoDraft({
       reader_knows: form.reader_knows,
@@ -328,24 +300,6 @@ export default function WritingPanel({ novelId }: Props) {
   /** AI 服务状态检查：各 AI 操作发起前确认模型已配置可用，未配置则抛错拦截（避免发起注定失败的空请求）。 */
   const { ensureReady } = useAiStatus();
 
-  /** 将已批大纲压缩成一段可作 outline 参数 / 评价对照的摘要（不含标题，标题单独成字段）。 */
-  function summarizeOutline(o: Outline): string {
-    const c = (o.content ?? {}) as {
-      goal?: string;
-      beats?: Array<{ content?: string }>;
-      plant_foreshadowing?: Array<{ desc?: string; latest_payoff_chapter?: number }>;
-      resolve_foreshadowing?: Array<{ how?: string }>;
-    };
-    const parts: string[] = [];
-    if (c.goal) parts.push(`目标：${c.goal}`);
-    if (c.beats?.length) parts.push(`节拍：${c.beats.map((b) => b.content).filter(Boolean).join("；").slice(0, 400)}`);
-    if (c.plant_foreshadowing?.length)
-      parts.push(`埋设：${c.plant_foreshadowing.map((p) => p.desc).join("、")}`);
-    if (c.resolve_foreshadowing?.length)
-      parts.push(`回收：${c.resolve_foreshadowing.map((r) => r.how).join("、")}`);
-    return parts.join("\n");
-  }
-
   /**
    * 目录里「最新一章」的下一章号：新增永远只追加最新的一章，不允许跳号或回填旧章。
    * 大纲+章节合并后不再要求该章有已批大纲：写正文前由「本章规划」弹窗确认，确认后直接写作。
@@ -356,7 +310,6 @@ export default function WritingPanel({ novelId }: Props) {
   const targetOutline = approvedOutlines.find((o) => o.chapter_no === form.chapter_no) ?? null;
   // 大纲+章节合并后：写正文前由「本章规划」弹窗确认（后端 novelist 前置钩子），
   // 不再要求该章必须有已批大纲——有则自动回填预览，无则规划确认后直接写作。
-  const canAdd = true;
   /** 信息控制已填项数：弹窗入口按钮据此显示「已填 N 项 · 编辑」。 */
   const infoFilledCount = [form.reader_knows, form.protagonist_knows, form.must_hide, form.hint_only].filter(
     (v) => v.trim(),
@@ -1000,25 +953,10 @@ export default function WritingPanel({ novelId }: Props) {
     // 提取前先落盘正文草稿区未保存的编辑：记忆层须基于最新正文内容；落盘失败则中止
     const savedText = await flushSave();
     if (savedText == null && editTargetRef.current != null) return;
-    if (!activeChapter) {
-      showToast("请先在章节目录选择一章", "warning");
-      return;
-    }
-    if (!selectedVersion) {
-      showToast("该章尚未选定版本，无法提取。请先完成生成与选定。", "warning");
-      return;
-    }
-    // 旧大纲版本生成的正文只读：不能提取入记忆层（防止把旧版本的人物状态写进记忆、污染当前大纲语境）
-    if (isStaleForActiveOutline) {
-      showToast(
-        "当前正文基于旧版大纲生成，只能查看，不能记进 AI 记忆。请先基于当前正在用的大纲重新生成一份正文，再定稿并记进 AI 记忆。",
-        "warning",
-      );
-      return;
-    }
-    // 提取记忆层只对已定稿版本开放：草稿正文还没定稿，先定稿再提取
-    if (!selectedIsFinal) {
-      showToast("只有已定稿的正文才能记进 AI 记忆。请先在「本章操作」点「定稿」，再点「记进 AI 记忆」。", "warning");
+    // 提取前置校验（有章/有版本/非旧大纲/已定稿）：共用文案见 panel-utils.validateExtractFor
+    const err = validateExtractFor(activeChapter, selectedVersion, isStaleForActiveOutline, selectedIsFinal);
+    if (err) {
+      showToast(err, "warning");
       return;
     }
     // 提取记忆层二次确认：确认后才会真正发起提取（自定义弹窗，规避原生 confirm 在内嵌浏览器的异常）
@@ -1033,29 +971,18 @@ export default function WritingPanel({ novelId }: Props) {
     // 提取前先落盘正文草稿区未保存的编辑：记忆层须基于最新正文内容；落盘失败则中止
     const savedText = await flushSave();
     if (savedText == null && editTargetRef.current != null) return;
-    if (!activeChapter) {
-      showToast("请先在章节目录选择一章", "warning");
+    // 提取前置校验（有章/有版本/非旧大纲/已定稿）：确认弹窗期间状态可能变化，执行前再校验一次
+    const err = validateExtractFor(activeChapter, selectedVersion, isStaleForActiveOutline, selectedIsFinal);
+    if (err) {
+      showToast(err, "warning");
       return;
     }
-    if (!selectedVersion) {
-      showToast("该章尚未选定版本，无法提取。请先完成生成与选定。", "warning");
-      return;
-    }
-    // 旧大纲版本生成的正文只读：不能提取入记忆层（防止把旧版本的人物状态写进记忆、污染当前大纲语境）
-    if (isStaleForActiveOutline) {
-      showToast(
-        "当前正文基于旧版大纲生成，只能查看，不能记进 AI 记忆。请先基于当前正在用的大纲重新生成一份正文，再定稿并记进 AI 记忆。",
-        "warning",
-      );
-      return;
-    }
-    if (!selectedIsFinal) {
-      showToast("只有已定稿的正文才能记进 AI 记忆。请先在「本章操作」点「定稿」，再点「记进 AI 记忆」。", "warning");
-      return;
-    }
+    // 校验通过后 activeChapter/selectedVersion 必非空（validateExtractFor 已保证，此处仅作 TS 收窄）
+    const chapter = activeChapter!;
+    const version = selectedVersion!;
     // 提取时锁定「当前章节 + 当前选中版本」，用于后续判断正文是否被切换过
-    const chapterNo = activeChapter.chapter_no;
-    const versionId = selectedVersion.id;
+    const chapterNo = chapter.chapter_no;
+    const versionId = version.id;
     setExtracting(true);
     let storedSeen = false; // 是否收到 stored 回执：决定完成后从服务端校准还是直接采信回执
     try {
@@ -1063,7 +990,7 @@ export default function WritingPanel({ novelId }: Props) {
       await runAgent(
         "extractor",
         novelId,
-        { chapter_no: activeChapter.chapter_no, chapter_text: savedText ?? selectedVersion.content },
+        { chapter_no: chapter.chapter_no, chapter_text: savedText ?? version.content },
         (ev) => {
           // 切到其他小说、或本面板已卸载（切页签）：后续回调不再弹全局提示、不再写入状态
           if (liveNovelRef.current !== novelId || !mountedRef.current) return;
@@ -1484,629 +1411,103 @@ export default function WritingPanel({ novelId }: Props) {
         className="flex h-[calc(100dvh-6rem)] min-w-0 flex-col gap-5 overflow-hidden xl:flex-row xl:gap-6"
       >
         {/* ① 当前章节正文（全部版本 + 已定稿正文），显示在界面、不撑破页面高度 */}
-        {detail ? (
-          <div className="panel flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="panel-head">
-              <h3 className="panel-title">
-                {/* 点击标题即复制「第 X 章 标题」（含章节号），无需单独按钮 */}
-                <span
-                  title="点击复制章节标题"
-                  className="cursor-pointer select-text"
-                  onClick={() => {
-                    const t = (selectedVersion?.title ?? detail.title)?.trim();
-                    if (!t) {
-                      showToast("该章暂无标题，无法复制。", "warning");
-                      return;
-                    }
-                    void copyText(t)
-                      .then(() => showToast("已复制章节标题", "success"))
-                      .catch(() => showToast("复制失败，请手动选中标题复制。", "error"));
-                  }}
-                >
-                  第 {detail.chapter_no} 章
-                  {(selectedVersion?.title ?? detail.title) ? ` ${selectedVersion?.title ?? detail.title}` : ""}
-                </span>
-                {/* 标题旁版本标识：v{n}，点击展开内联版本树（新增/重新生成=根，评价优化=子级） */}
-                <span className="relative inline-flex">
-                  <button
-                    type="button"
-                    onClick={() => setVersionOpen((o) => !o)}
-                    className="ml-1 inline-flex cursor-pointer items-baseline rounded-md px-1.5 py-0.5 align-middle transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                    title="点击查看这一章的所有版本，可点击切换预览"
-                  >
-                    {selectedVersion ? (
-                      <span className="text-xs font-semibold tabular-nums text-zinc-600 dark:text-zinc-300">
-                        第{selectedVersion.version_no}版
-                      </span>
-                    ) : (
-                      <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">第?版</span>
-                    )}
-                  </button>
-                  {versionOpen && detail && (
-                    <>
-                      {/* 透明点击捕获层：点浮层外部即关闭（非模态，不遮罩正文） */}
-                      <div
-                        className="fixed inset-0 z-40"
-                        aria-hidden
-                        onClick={() => setVersionOpen(false)}
-                      />
-                      <div className="absolute left-0 top-full z-50 mt-2 max-h-[60vh] w-72 overflow-y-auto rounded-lg border border-zinc-200 bg-surface p-2 shadow-book dark:border-zinc-700 dark:bg-zinc-900">
-                        <p className="px-2 py-1 text-[11px] leading-5 text-zinc-400">
-                          点开是这一章的版本列表，每次生成或重写都会新增一版；按评价优化出的新版会排在被优化那版的下面，可以一直改下去。点节点切换预览。
-                        </p>
-                        {detail.versions.length > 0 ? (
-                          <VersionTree
-                            versions={detail.versions}
-                            selectedId={selectedVersion?.id ?? null}
-                            aiBusy={aiBusy}
-                            onSelect={(id) => {
-                              handleSelectVersion(id);
-                              setVersionOpen(false);
-                            }}
-                          />
-                        ) : (
-                          <p className="py-4 text-center text-xs text-zinc-400">这章还没有生成过正文。</p>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </span>
-                <span className="ml-1 text-xs font-normal text-zinc-500">
-                  {selectedIsFinal ? "已定稿" : "草稿"}
-                </span>
-                {/* 当前章节版本字数：跟随正文实时统计（含就地编辑中的内容） */}
-                {selectedVersion != null && (
-                  <span className="ml-1.5 text-xs font-normal tabular-nums text-zinc-500">
-                    · {editText.length} 字
-                  </span>
-                )}
-                {/* 就地编辑保存状态（无改动时不显示；有未保存改动提醒作者，防抖 2s 自动落盘） */}
-                {selectedVersion && saveState !== "saved" && (
-                  <span className="ml-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                    {saveState === "saving" ? "保存中…" : "已修改"}
-                  </span>
-                )}
-                {/* 选中版本签约未过签：红色警示，提示需按评价修正或强制定稿 */}
-                {selectedVersion?.signing_blocked && (
-                  <span className="ml-1.5 inline-flex items-center gap-1 rounded-md bg-red-600/10 px-1.5 py-0.5 text-xs font-medium text-red-600 ring-1 ring-inset ring-red-600/30 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/30">
-                    有红线问题 · 定稿需二次确认
-                  </span>
-                )}
-              </h3>
-            </div>
-            {selectedVersion ? (
-              <textarea
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                spellCheck={false}
-                aria-label="本章正文（可直接编辑，停止输入后自动保存）"
-                placeholder="直接在正文上修改，停止输入后自动保存；修改后右侧「评价与优化」会出现「重新评价」按钮。"
-                className="reading w-full flex-1 min-h-0 resize-none overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50 p-5 outline-none focus:border-primary dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              />
-            ) : (
-              <p className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs text-zinc-400 dark:border-zinc-700">
-                本章还没有已选定的正文版本。
-              </p>
-            )}
-          </div>
-        ) : activeNo != null ? (
-          <div className="panel flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="panel-head">
-              <h3 className="panel-title">
-                第 {activeNo} 章
-              </h3>
-            </div>
-            <p className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs text-zinc-400 dark:border-zinc-700">
-              第 {activeNo} 章正文还没生成，或暂时没读到，请稍后重试。
-            </p>
-          </div>
-        ) : (
-          <div className="panel flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="panel-head">
-              <h3 className="panel-title">
-                本章正文
-              </h3>
-            </div>
-            <p className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
-              在左侧章节目录选一章查看正文，或点「新增章节」写新的一章。
-            </p>
-          </div>
-        )}
+        <ChapterContent
+          detail={detail}
+          activeNo={activeNo}
+          selectedVersion={selectedVersion}
+          selectedIsFinal={selectedIsFinal}
+          editText={editText}
+          onEditText={setEditText}
+          saveState={saveState}
+          versionOpen={versionOpen}
+          onToggleVersionOpen={() => setVersionOpen((o) => !o)}
+          onCloseVersionOpen={() => setVersionOpen(false)}
+          aiBusy={aiBusy}
+          onSelectVersion={handleSelectVersion}
+          showToast={showToast}
+        />
 
         {/* 评价与优化：右侧常驻侧栏（替代原弹窗），评价师结果与「按评价优化」与正文同屏可见；
             可点标题栏「收起」按钮折叠为窄条，正文即恢复全宽阅读；再点窄条展开。 */}
-        {reviewCollapsed ? (
-          <div className="panel flex max-h-[45vh] min-h-0 flex-row items-center justify-center gap-2 py-2 xl:max-h-none xl:w-12 xl:flex-col xl:shrink-0 xl:justify-start xl:py-3">
-            <button
-              type="button"
-              onClick={() => setReviewCollapsed(false)}
-              title="展开评价与优化"
-              aria-label="展开评价与优化"
-              className="btn btn-ghost h-8 w-8 shrink-0 p-0"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 6l6 6-6 6" /></svg>
-            </button>
-            <span className="text-xs tracking-widest text-zinc-500 dark:text-zinc-400 xl:[writing-mode:vertical-rl]">评价与优化</span>
-          </div>
-        ) : (
-          <div
-            className="panel flex max-h-[45vh] min-h-0 flex-col xl:max-h-none xl:w-[var(--review-w)] xl:shrink-0"
-            style={{ "--review-w": `${Math.round(reviewWidth)}px` } as CSSProperties}
-          >
-          <div className="panel-head shrink-0">
-            <h3 className="panel-title">评价与优化</h3>
-            <div className="flex items-center gap-2">
-              {/* 宽度三档（仅并排时有效）：窄/中/宽一键切换 */}
-              <div className="hidden items-center gap-0.5 rounded border border-zinc-200 p-0.5 xl:flex dark:border-zinc-700">
-                {REVIEW_W_PRESETS.map(([label, w]) => {
-                  const on = Math.round(reviewWidth) === w;
-                  return (
-                    <button
-                      key={label}
-                      type="button"
-                      onClick={() => setReviewWidth(w)}
-                      aria-pressed={on}
-                      title={`评价栏宽度设为 ${w}`}
-                      className={`rounded px-1.5 py-0.5 text-[11px] leading-none transition-colors ${
-                        on
-                          ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                          : "text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-              <button
-                type="button"
-                onClick={() => setReviewCollapsed(true)}
-                title="收起，正文全宽阅读"
-                aria-label="收起评价与优化"
-                className="btn btn-ghost h-7 w-7 shrink-0 p-0"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M15 6l-6 6 6 6" /></svg>
-              </button>
-            </div>
-          </div>
-          <div className="@container min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
-            {detail ? (
-              <>
-                {reviewStale && currentReview != null && (
-                  <div className="mb-2.5 flex items-start justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-500/10">
-                    <p className="min-w-0 flex-1 text-xs leading-5 text-amber-800 dark:text-amber-200">
-                      正文已修改，现有评价基于修改前的内容，已不对应当前版本。点击「重新评价」对本版本重新评价。
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleReview}
-                      disabled={reviewing || reviewTaskRunning || !selectedVersion}
-                      className="btn btn-primary shrink-0 px-3 py-1 text-xs font-medium"
-                    >
-                      {reviewing ? "评价中…" : reviewTaskRunning ? "已有评价任务进行中…" : "重新评价"}
-                    </button>
-                  </div>
-                )}
-                {currentReview ? (
-                <ReviewCard
-                  review={currentReview}
-                  onRevise={handleRevise}
-                  revising={revising}
-                  activeVersionId={selectedVersion?.id ?? null}
-                  viewButton={
-                    revising ? (
-                      <button
-                        type="button"
-                        onClick={() => setShowReviseRun(true)}
-                        className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                      >
-                        查看生成过程
-                      </button>
-                    ) : undefined
-                  }
-                />
-              ) : (
-                <div className="rounded-lg border border-dashed border-zinc-300 p-5 text-center dark:border-zinc-700">
-                  {!reviewing && reviewBusyForChapter ? (
-                    /* 评价任务进行中：显示加载态——手动评价/优化在后台异步跑（约几分钟），
-                       此时不打扰、也不让作者重复点手动评价（会撞 409）。
-                       任务完成由 agent-task-toasts 派发事件触发本面板刷新，评价会自动显示。 */
-                    <div className="flex flex-col items-center gap-2.5 py-1">
-                      <svg aria-hidden viewBox="0 0 24 24" fill="none" className="h-6 w-6 animate-spin text-seal">
-                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2.5" />
-                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-                      </svg>
-                      <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
-                        正在评价第 {detail.chapter_no} 章（正在后台处理，约几分钟，完成后会自动显示）…
-                      </p>
-                      <p className="text-xs leading-5 text-zinc-400 dark:text-zinc-500">
-                        评价完成后会自动显示在这里，无需重复操作
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-xs leading-6 text-zinc-500 dark:text-zinc-400">
-                        {selectedVersion ? (
-                          <>
-                            当前选中的第{selectedVersion.version_no}版正文还没有评价。
-                            {reviewTaskRunning ? (
-                              <>当前已有评价任务在后台运行，请等待其完成后再手动评价。</>
-                            ) : isRecentlyGenerated ? (
-                              <>
-                                该版本刚生成，还没有评价。点下方「评价本章」手动评价。
-                              </>
-                            ) : (
-                              <>点下方「评价本章」，AI 会对照全书设定、已埋的伏笔逐项打分。</>
-                            )}
-                          </>
-                        ) : (
-                          "该章还没有选定版本的正文，先在界面生成并选定一版，再回来评价。"
-                        )}
-                      </p>
-                      <div className="mt-2.5 flex items-center justify-center gap-2">
-                        <button
-                          onClick={handleReview}
-                          disabled={reviewing || reviewTaskRunning || !selectedVersion}
-                          className="btn btn-primary px-3 py-1.5 text-xs font-medium"
-                        >
-                          {reviewing ? "评价中…" : reviewTaskRunning ? "已有评价任务进行中…" : "评价本章"}
-                        </button>
-                        {reviewing && (
-                          <button
-                            type="button"
-                            onClick={() => setShowReviewRun(true)}
-                            className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                          >
-                            查看生成过程
-                          </button>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )
-              }
-              </>
-            ) : (
-              <p className="text-center text-xs text-zinc-400">请先在左侧章节目录选择一章。</p>
-            )}
-          </div>
-        </div>
-        )}
+        <ReviewSidebar
+          collapsed={reviewCollapsed}
+          onCollapsedChange={setReviewCollapsed}
+          reviewWidth={reviewWidth}
+          onReviewWidth={setReviewWidth}
+          detail={detail}
+          reviewStale={reviewStale}
+          currentReview={currentReview}
+          onReview={() => void handleReview()}
+          reviewing={reviewing}
+          reviewTaskRunning={reviewTaskRunning}
+          selectedVersion={selectedVersion}
+          isRecentlyGenerated={isRecentlyGenerated}
+          reviewBusyForChapter={reviewBusyForChapter}
+          onRevise={handleRevise}
+          revising={revising}
+          onShowReviewRun={() => setShowReviewRun(true)}
+          onShowReviseRun={() => setShowReviseRun(true)}
+        />
 
         {/* 联动重写中断：已迁移为右上角全局 error Notification（writing-panel 顶部 rewriteFail 同步 effect 管理） */}
       </section>
 
       {/* ── 新增章节抽屉：右侧滑入的内联面板（替代居中弹窗，不遮挡正文，填写时可对照左侧正文） ── */}
       {showAddModal && (
-        <>
-          <div
-            className="fixed inset-0 z-[90] bg-black/30"
-            aria-hidden
-            onClick={() => {
-              setShowAddModal(false);
-              setRegenerateNo(null);
-            }}
-          />
-          <aside
-            role="dialog"
-            aria-modal="true"
-            className="fixed right-0 top-0 z-[95] flex h-[100dvh] w-[440px] max-w-[92vw] flex-col border-l border-zinc-200 bg-surface shadow-book dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-700">
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  {regenerateNo != null ? "重新生成章节正文" : "新增章节"}
-                </h3>
-                <p className="mt-0.5 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
-                  {regenerateNo != null
-                    ? `将重新写第 ${form.chapter_no} 章（会另存新的一版，原稿保留），标题 / 大纲目标 / 本章节奏定位等均可修改。`
-                    : `将追加为第 ${nextNo} 章（目录最新一章的下一章）。写正文前会先让你确认这一章的安排；生成后是草稿，确认满意后定稿。`}
-                </p>
-              </div>
-              <button
-                type="button"
-                aria-label="关闭"
-                onClick={() => {
-                  setShowAddModal(false);
-                  setRegenerateNo(null);
-                }}
-                className="shrink-0 rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-4 w-4"><path d="M18 6 6 18M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        <div className="flex flex-col gap-3">
-          {/* 沿用大纲开关：仅该章有已批大纲时出现（无已批大纲时不显示任何规划提示） */}
-          {targetOutline && (
-            <>
-              <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900">
-                <span className="flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-300">
-                  沿用该章已确认的大纲
-                  <InfoTip portal>
-                    <p className="font-medium text-zinc-700 dark:text-zinc-200">第 {form.chapter_no} 章有已确认的大纲</p>
-                    开启：自动填到下方「本章目标」，写正文前仍会弹出本章规划供你确认沿用或另选
-                    <br />关闭：不用大纲，让 AI 自由发挥，标题由 AI 根据内容生成
-                  </InfoTip>
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={useOutline}
-                  onClick={() => toggleUseOutline(!useOutline)}
-                  disabled={generating}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                    useOutline ? "bg-seal" : "bg-zinc-300 dark:bg-zinc-600"
-                  }`}
-                >
-                  <span
-                    aria-hidden
-                    className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                      useOutline ? "translate-x-4" : ""
-                    }`}
-                  />
-                </button>
-              </div>
-              {useOutline ? (
-                <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5 text-xs leading-5 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300">
-                  将基于已确认的大纲：第 {targetOutline.chapter_no} 章
-                  {targetOutline.title ? `《${targetOutline.title}》` : ""}（大纲内容已自动填入下方「本章目标」，
-                  写正文前仍会弹出本章规划，你可确认沿用或另选一套）。
-                </div>
-              ) : (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs leading-5 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400">
-                  已关闭大纲沿用：本章不用大纲，让 AI 自由发挥，标题由 AI 根据内容生成
-                  （写正文前仍会弹出本章规划供你确认）。
-                </div>
-              )}
-            </>
-          )}
-
-          {/* 自由草稿（未沿用大纲）：章节名称可手动填（带标签，避免高度错位） */}
-          {!useOutline && (
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-zinc-500">章节名称</span>
-              <input
-                className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                placeholder="章节标题（留空则 AI 自动生成）"
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                disabled={generating}
-              />
-            </label>
-          )}
-
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">本章节奏定位</span>
-            <select
-              className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              value={form.chapter_function}
-              onChange={(e) => setForm({ ...form, chapter_function: e.target.value })}
-              disabled={generating}
-            >
-              <option value="">本章节奏定位：自动判定</option>
-              {FUNCTIONS.map(([v, l]) => (
-                <option key={v} value={v}>
-                  本章节奏定位：{l}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">本章目标 / 写作要求</span>
-            <AutoTextarea
-              value={form.outline}
-              onChange={(v) => setForm({ ...form, outline: v })}
-              maxHeight={200}
-              disabled={generating}
-              placeholder={
-                targetOutline && useOutline
-                  ? "已自动来自该章已确认的大纲（可微调）。写正文前仍会弹出本章规划供确认"
-                  : "本章目标/写作要求（可选）。写正文前会弹出本章规划供确认，不填则按蓝图自动规划"
-              }
-              className="resize-none rounded-lg border border-zinc-300 bg-zinc-50 p-3 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            />
-          </label>
-
-          {/* 信息控制：高级可选项，点开独立弹窗填写/清空 */}
-          <div className="flex items-center justify-between border-t border-zinc-200 pt-3 dark:border-zinc-800">
-            <span className="text-xs text-zinc-500">
-              谁知道了什么（可选）
-              <InfoTip portal>
-                <p className="font-medium text-zinc-700 dark:text-zinc-200">控制「谁知道了什么」</p>
-                防止 AI 提前剧透或逻辑穿帮；全部留空则让 AI 自己把握。
-                <span className="mt-1.5 block text-zinc-400">
-                  读者已知 / 主角已知 / 必须向读者隐瞒 / 只能点到为止（伏笔暗示）
-                </span>
-              </InfoTip>
-            </span>
-            <button
-              type="button"
-              onClick={openInfoModal}
-              disabled={generating}
-              className="btn btn-ghost px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {infoFilledCount > 0 ? `已填 ${infoFilledCount} 项 · 编辑` : "填写"}
-            </button>
-          </div>
-        </div>
-            </div>
-            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-zinc-200 px-5 py-3 dark:border-zinc-700">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAddModal(false);
-                  setRegenerateNo(null);
-                }}
-                className="btn btn-ghost px-4 py-1.5"
-              >
-                取消
-              </button>
-              <div className="flex items-center gap-2">
-                <span className="hidden sm:inline">
-                  <CostHint />
-                </span>
-                <button
-                  type="button"
-                  onClick={() => void handleGenerate()}
-                  disabled={generating || !canAdd}
-                  className="btn btn-primary px-4 py-1.5 disabled:opacity-50"
-                >
-                  {generating ? "生成中…" : "生成正文"}
-                </button>
-                {/* 点击生成后出现：打开生成过程弹窗（与大纲新增弹窗一致，仅生成中显示） */}
-                {generating && (
-                  <button
-                    type="button"
-                    onClick={() => setShowGenRun(true)}
-                    className="btn btn-ghost px-3 py-1.5 text-xs font-medium"
-                  >
-                    查看生成过程
-                  </button>
-                )}
-              </div>
-            </div>
-          </aside>
-        </>
+        <AddChapterDrawer
+          regenerateNo={regenerateNo}
+          form={form}
+          onFormChange={setForm}
+          nextNo={nextNo}
+          targetOutline={targetOutline}
+          useOutline={useOutline}
+          onToggleUseOutline={toggleUseOutline}
+          generating={generating}
+          onOpenInfo={openInfoModal}
+          infoFilledCount={infoFilledCount}
+          onGenerate={() => void handleGenerate()}
+          onViewRun={() => setShowGenRun(true)}
+          onClose={() => {
+            setShowAddModal(false);
+            setRegenerateNo(null);
+          }}
+        />
       )}
 
       {/* ── 信息控制弹窗（本地 draft：取消丢弃 / 清空只清本地 / 完成才提交） ── */}
-      <Modal
+      <InfoModal
         open={showInfoModal}
-        title="谁知道了什么（可选）"
-        subtitle="控制本章「谁知道了什么」，防止 AI 提前剧透或逻辑穿帮。"
         onClose={() => setShowInfoModal(false)}
-        footer={
-          <div className="flex w-full items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => setShowInfoModal(false)}
-              className="btn btn-ghost px-4 py-1.5"
-            >
-              取消
-            </button>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() =>
-                  setInfoDraft({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" })
-                }
-                className="btn btn-ghost px-4 py-1.5"
-              >
-                清空
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setForm((f) => ({ ...f, ...infoDraft }));
-                  setShowInfoModal(false);
-                }}
-                className="btn btn-primary px-4 py-1.5"
-              >
-                完成
-              </button>
-            </div>
-          </div>
-        }
-      >
-        <div className="grid gap-3">
-          <input
-            className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            placeholder="读者已知：…"
-            value={infoDraft.reader_knows}
-            onChange={(e) => setInfoDraft({ ...infoDraft, reader_knows: e.target.value })}
-          />
-          <input
-            className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            placeholder="主角已知：…"
-            value={infoDraft.protagonist_knows}
-            onChange={(e) => setInfoDraft({ ...infoDraft, protagonist_knows: e.target.value })}
-          />
-          <input
-            className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            placeholder="必须向读者隐瞒：…"
-            value={infoDraft.must_hide}
-            onChange={(e) => setInfoDraft({ ...infoDraft, must_hide: e.target.value })}
-          />
-          <input
-            className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            placeholder="只能点到为止（伏笔暗示）：…"
-            value={infoDraft.hint_only}
-            onChange={(e) => setInfoDraft({ ...infoDraft, hint_only: e.target.value })}
-          />
-          <p className="text-xs leading-relaxed text-zinc-500">
-            全部留空则让 AI 自己把握。点「完成」才保存；点「清空」只清当前输入、不立即生效；点「取消」则放弃本次改动。
-          </p>
-        </div>
-      </Modal>
+        draft={infoDraft}
+        onDraftChange={setInfoDraft}
+        onSubmit={() => {
+          setForm((f) => ({ ...f, ...infoDraft }));
+          setShowInfoModal(false);
+        }}
+      />
 
       {/* 评价与优化、版本树已改为右侧常驻内联面板，不再使用弹窗 */}
 
-      {/* ── AI 处理过程弹窗：生成正文 / 评价 / 优化统一复用蓝图、大纲页的公共组件（DeepSeek 同款交互） ── */}
-      <AgentStreamModal
-        open={showGenRun}
-        onClose={() => setShowGenRun(false)}
-        title={`AI 写作 · 第 ${regenerateNo ?? form.chapter_no} 章 · ${regenerateNo != null ? "重新生成正文" : "新增正文"}`}
-        running={genRun?.running ?? false}
-        draftText={genRun?.output ?? ""}
-        thinkingText={genRun?.thinking ?? ""}
-        elapsed={genElapsed}
+      {/* ── AI 处理过程弹窗 + 定稿/提取二次确认弹窗：统一收口到 run-modals ── */}
+      <RunModals
         novelId={novelId}
-        emptyRunningText={
-          "AI 写作正在构思正文（AI 思考期约 1-3 分钟，此阶段通常没有正文输出），\n正文开始生成后会在这里实时滚动显示…"
-        }
-        emptyDoneText="生成完成，正文已保存为新的一版，请手动确认定稿。"
-      />
-      <AgentStreamModal
-        open={showReviewRun}
-        onClose={() => setShowReviewRun(false)}
-        title={`AI 评审 · 第 ${activeNo ?? "?"} 章`}
-        running={reviewRun?.running ?? false}
-        draftText={reviewRun?.output ?? ""}
-        thinkingText={reviewRun?.thinking ?? ""}
-        elapsed={reviewElapsed}
-        novelId={novelId}
-        emptyRunningText={
-          "AI 正在对照全书设定和已埋伏笔逐项评审（思考期约1-3分钟，通常没字，属正常），\n评价内容开始输出后会在这里实时滚动显示…"
-        }
-        emptyDoneText="评价完成，结果已展示在下方评价卡片。"
-      />
-      <AgentStreamModal
-        open={showReviseRun}
-        onClose={() => setShowReviseRun(false)}
-        title={`AI 优化 · 第 ${activeNo ?? "?"} 章`}
-        running={reviseRun?.running ?? false}
-        draftText={reviseRun?.output ?? ""}
-        thinkingText={reviseRun?.thinking ?? ""}
-        elapsed={reviseElapsed}
-        novelId={novelId}
-        emptyRunningText={
-          "AI 正在逐条对照评价问题优化正文（AI 思考期约 1-3 分钟），\n优化后的正文开始输出后会在这里实时滚动显示…"
-        }
-        emptyDoneText="优化完成，已生成新草稿版本，请手动定稿。"
-      />
-
-      {/* ── 二次确认弹窗（定稿 / 提取记忆层）：页面内自定义弹窗替代 window.confirm ── */}
-      <ConfirmDialog
-        open={confirmDialog != null}
-        title={
-          confirmDialog?.kind === "finalize-force"
-            ? "强制定稿（有红线或抄袭风险）"
-            : confirmDialog?.kind === "finalize"
-              ? "确认定稿"
-              : "确认提取到记忆层"
-        }
-        message={
-          confirmDialog?.kind === "finalize-force"
-            ? "这一版有红线或抄袭风险，不能直接定稿。\n\n强制定稿会把有问题的正文作为本章正式正文，请先按 AI 的修改建议改一下，或确认风险后继续。\n\n仍要强制定稿吗？"
-            : confirmDialog?.kind === "finalize"
-              ? `确认把第${selectedVersion?.version_no ?? "?"}版（${sourceLabel(selectedVersion?.source ?? "")}）作为本章正式正文？\n\n之前定稿的那版会自动变回草稿（一章只能有一个正式版）。`
-              : "确认提取本章到记忆层？\n\n会把本章摘要、角色当前状态、新埋伏笔等写入记忆层，下一章生成时小说家会自动读到。\n\n每写完一章记得提取一次，否则下一章可能「忘了」刚才发生了什么。"
-        }
-        confirmText={confirmDialog?.kind === "finalize-force" ? "仍要强制定稿" : "确认"}
-        tone={confirmDialog?.kind === "finalize-force" ? "danger" : "primary"}
+        showGenRun={showGenRun}
+        onCloseGenRun={() => setShowGenRun(false)}
+        genRun={genRun}
+        genElapsed={genElapsed}
+        regenerateNo={regenerateNo}
+        formChapterNo={form.chapter_no}
+        showReviewRun={showReviewRun}
+        onCloseReviewRun={() => setShowReviewRun(false)}
+        reviewRun={reviewRun}
+        reviewElapsed={reviewElapsed}
+        activeNo={activeNo}
+        showReviseRun={showReviseRun}
+        onCloseReviseRun={() => setShowReviseRun(false)}
+        reviseRun={reviseRun}
+        reviseElapsed={reviseElapsed}
+        confirmDialog={confirmDialog}
+        selectedVersion={selectedVersion}
         onConfirm={() => {
           if (confirmDialog?.kind === "extract") void doExtract();
           else void doFinalize();

@@ -27,143 +27,30 @@ import {
   type OutlineApprovalStatusResult,
   type Setting,
 } from "@/lib/api";
-import Modal from "./modal";
 import ConfirmDialog from "./confirm-dialog";
 import AgentStreamModal from "./agent-stream-modal";
 import { pushAuthorConfirm } from "./author-confirm";
 import { useElapsed } from "@/lib/use-elapsed";
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
-import { CostHint, useAiStatus } from "@/lib/ai-status";
+import { useAiStatus } from "@/lib/ai-status";
+import { type VolumeInfo } from "@/constants";
+import OutlineList from "./outline/outline-list";
+import OutlineDetail from "./outline/outline-detail";
+import GenOutlineModal from "./outline/gen-outline-modal";
 import {
-  DEFAULT_VOLUME,
-  FUNCTIONS,
-  ROLE_RANKS,
-  STAGE_LABEL,
-  TYPE_LABELS,
-  formatVolumeLabel,
-  type VolumeInfo,
-} from "@/constants";
+  deriveStage,
+  groupByVolume,
+  isCharacterActive,
+  nextAutoChapterNo,
+  EMPTY_FORM,
+  type GenForm,
+  type OutlineContent,
+  type VolumeGroup,
+} from "./outline/outline-utils";
 
 interface Props {
   novelId: string;
-}
-
-interface GenForm {
-  chapter_no: number;
-  goal: string;
-  chapter_function: string;
-  pov: string;
-}
-
-const EMPTY_FORM: GenForm = {
-  chapter_no: 1,
-  goal: "",
-  chapter_function: "", // 留空 = 由大纲师按剧情节奏自动判定
-  pov: "",
-};
-
-const FUNCTION_LABELS: Record<string, string> = Object.fromEntries(FUNCTIONS);
-
-function roleRankOf(s: Setting): string {
-  const rk = s.structured?.role_rank;
-  return typeof rk === "string" ? rk : "";
-}
-
-/** 与后端 derive_stage 一致：按蓝图 volumes 最大结束章三分全书，推导章节所处阶段。 */
-function deriveStage(chapterNo: number, volumes: VolumeInfo[] | undefined): string | null {
-  if (!volumes || chapterNo <= 0) return null;
-  let total = 0;
-  for (const v of volumes) {
-    const rng = v.chapters_range ?? "";
-    const idx = rng.lastIndexOf("-");
-    if (idx >= 0) {
-      const end = Number(rng.slice(idx + 1).trim());
-      if (Number.isFinite(end)) total = Math.max(total, end);
-    }
-  }
-  if (total <= 0) return null;
-  const third = total / 3;
-  if (chapterNo <= third) return "early";
-  if (chapterNo <= third * 2) return "middle";
-  return "late";
-}
-
-/** 与后端 filter_settings_for_chapter 一致：角色在指定章节是否生效（生效阶段/章节范围）。 */
-function isCharacterActive(
-  c: Setting,
-  chapterNo: number,
-  volumes: VolumeInfo[] | undefined,
-): boolean {
-  const st = c.structured ?? {};
-  if (typeof st.appear_from === "number" && chapterNo < st.appear_from) return false;
-  if (typeof st.appear_until === "number" && chapterNo > st.appear_until) return false;
-  const stage = deriveStage(chapterNo, volumes);
-  if (stage && Array.isArray(st.stages) && st.stages.length > 0 && !st.stages.includes(stage)) {
-    return false;
-  }
-  return true;
-}
-
-/** 该角色在指定章节不生效的原因（用于置灰展示，让被过滤的角色不会凭空消失）。 */
-function inactiveReason(
-  c: Setting,
-  chapterNo: number,
-  volumes: VolumeInfo[] | undefined,
-): string {
-  const st = c.structured ?? {};
-  if (typeof st.appear_from === "number" && chapterNo < st.appear_from) {
-    return `出场于第 ${st.appear_from} 章起`;
-  }
-  if (typeof st.appear_until === "number" && chapterNo > st.appear_until) {
-    return `第 ${st.appear_until} 章后退场`;
-  }
-  const stage = deriveStage(chapterNo, volumes);
-  if (stage && Array.isArray(st.stages) && st.stages.length > 0 && !st.stages.includes(stage)) {
-    return `于${(st.stages as string[]).map((x) => STAGE_LABEL[x] ?? x).join("、")}阶段出场`;
-  }
-  return "本章未生效";
-}
-
-interface VolumeGroup {
-  key: string;
-  label: string;
-  items: Outline[];
-}
-
-/** 把章节大纲按当前生效蓝图的 volumes（chapters_range）归组；蓝图无卷时兜底为默认「第1卷」。 */
-function groupByVolume(outlines: Outline[], volumes: VolumeInfo[] | undefined): VolumeGroup[] {
-  const vols = volumes ?? [];
-  const parsed = vols
-    .map((v) => {
-      const m = v.chapters_range?.match(/(\d+)\s*[-~至到]\s*(\d+)/);
-      return { v, start: m ? Number(m[1]) : NaN, end: m ? Number(m[2]) : NaN };
-    })
-    .filter((x) => Number.isFinite(x.start) && Number.isFinite(x.end));
-
-  // 无卷或全部卷范围解析失败 → 用一个默认「第1卷」吸收全部章节
-  const effectiveVols = parsed.length > 0 ? vols : [DEFAULT_VOLUME];
-  const effectiveParsed =
-    parsed.length > 0 ? parsed : [{ v: DEFAULT_VOLUME, start: 1, end: Number.MAX_SAFE_INTEGER }];
-
-  const groups: VolumeGroup[] = effectiveVols.map((v) => ({
-    key: `vol-${v.no ?? v.name ?? "?"}`,
-    label: formatVolumeLabel(v.no, v.name),
-    items: [],
-  }));
-  const rest: VolumeGroup = { key: "rest", label: "未分卷", items: [] };
-
-  for (const o of [...outlines].sort((a, b) => a.chapter_no - b.chapter_no)) {
-    const hit = effectiveParsed.find(({ start, end }) => o.chapter_no >= start && o.chapter_no <= end);
-    const target = hit
-      ? groups.find((g) => g.key === `vol-${hit.v.no ?? hit.v.name ?? "?"}`)
-      : undefined;
-    (target ?? rest).items.push(o);
-  }
-
-  const result = groups.filter((g) => g.items.length > 0);
-  if (rest.items.length > 0) result.push(rest);
-  return result;
 }
 
 export default function OutlinePanel({ novelId }: Props) {
@@ -469,6 +356,13 @@ export default function OutlinePanel({ novelId }: Props) {
   const outlineQ = outlineSearch.trim().toLowerCase();
   const outlineMatches = (o: Outline) =>
     !outlineQ || `第${o.chapter_no}章 ${o.title ?? ""}`.toLowerCase().includes(outlineQ);
+  // 搜索过滤后的卷分组（只保留命中组；空搜索即全量）——传给 OutlineList 直接渲染
+  const filteredGroups = groups
+    .map((g) => {
+      const items = outlineQ ? g.items.filter(outlineMatches) : g.items;
+      return items.length > 0 ? { g, items } : null;
+    })
+    .filter((x): x is { g: VolumeGroup; items: Outline[] } => x != null);
 
   // 视角角色：仅列出当前章节号下生效的角色（生效阶段/出场章节范围/隐藏 与后端过滤一致）
   const stage = deriveStage(form.chapter_no, volumes);
@@ -476,16 +370,6 @@ export default function OutlinePanel({ novelId }: Props) {
   const inactiveCharacters = characters.filter(
     (c) => !isCharacterActive(c, form.chapter_no, volumes),
   );
-
-  /** 自动推导下一个大纲章节号：已有大纲（含草稿）的最大章号 + 1；还没有任何大纲则从第一卷第一章开始 */
-  function nextAutoChapterNo(list: Outline[], vols: VolumeInfo[]): number {
-    if (list.length === 0) {
-      // 第一卷的起始章号（chapters_range 的左边界），无法解析则回退到 1
-      const m = vols[0]?.chapters_range?.match(/(\d+)\s*[-~至到]\s*(\d+)/);
-      return m ? Number(m[1]) : 1;
-    }
-    return Math.max(...list.map((o) => o.chapter_no)) + 1;
-  }
 
   /** 打开「新增大纲」弹窗：每次打开按当前大纲重算自动章节号，并清空上次表单。
    *  rewriteNo 不为 null 时是「重写指定章」模式：章节号锁定为 rewriteNo，不参与自动推导。
@@ -506,20 +390,7 @@ export default function OutlinePanel({ novelId }: Props) {
 
   /** 详情当前展示的版本：有正在预览的历史版本就用它，否则是选中章当前生效版。 */
   const viewing = versions.find((v) => v.id === viewVersionId) ?? selected;
-  const content = viewing?.content as
-    | {
-        no?: number;
-        title?: string;
-        goal?: string;
-        chapter_function?: string;
-        pov?: string;
-        beats?: Array<{ beat_no?: number; type?: string; pov?: string; content?: string; length_hint?: string; emotion?: string }>;
-        conflicts?: Array<{ type?: string; with?: string; stakes?: string }>;
-        plant_foreshadowing?: Array<{ desc?: string; payoff_hint?: string; latest_payoff_chapter?: number }>;
-        resolve_foreshadowing?: Array<{ ledger_id?: string; how?: string }>;
-        thread_updates?: Array<{ thread?: string; new_state?: string }>;
-      }
-    | undefined;
+  const content = viewing?.content as OutlineContent | undefined;
 
   /** 发起大纲生成：置生成中 → 校验 AI 配置 → runAgent SSE 流式调用（回调里分流处理流式/确认/stored 事件）。
    *  成功判定：SSE 事件流中出现 stored（带 chapter_no + id）即视为成功落库，统一在 finally 出口提示一次
@@ -654,111 +525,19 @@ export default function OutlinePanel({ novelId }: Props) {
       <div className="grid items-start gap-6 lg:grid-cols-[340px_minmax(0,1fr)] xl:gap-8">
       {/* 左侧：章节大纲（与写作页「章节目录」模块统一：按卷分组、可展开、可搜索）。
           模块高度跟随内容，最多与页面底部对齐；内容多时在列表内滚动，互不影响其他模块。 */}
-      <aside className="flex max-h-[calc(100dvh-6rem)] min-w-0 flex-col gap-4 overflow-hidden">
-        <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="panel-head shrink-0">
-            <h3 className="panel-title">章节大纲</h3>
-            <div className="flex items-center gap-2">
-              <span className="panel-hint">{outlines.length} 条</span>
-              <button
-                type="button"
-                onClick={() => openAddModal()}
-                disabled={generatingRewrite}
-                title={generatingRewrite ? "大纲生成中，暂不能新增大纲" : undefined}
-                className="btn btn-primary px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                新增大纲
-              </button>
-            </div>
-          </div>
-          {outlines.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
-              还没有大纲。点右上角「新增大纲」，让 AI 排出第一章大纲。
-            </p>
-          ) : (
-            <>
-              <input
-                className="mb-3 w-full shrink-0 rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                placeholder="搜索大纲（章号 / 标题）"
-                value={outlineSearch}
-                onChange={(e) => setOutlineSearch(e.target.value)}
-              />
-              <div className="min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
-                {groups
-                  .map((g) => {
-                    const items = outlineQ ? g.items.filter(outlineMatches) : g.items;
-                    return items.length > 0 ? { g, items } : null;
-                  })
-                  .filter((x): x is { g: VolumeGroup; items: Outline[] } => x != null)
-                  .map(({ g, items }, idx, arr) => {
-                    const collapsed = !outlineQ && collapsedKeys[g.key];
-                    const isLast = idx === arr.length - 1;
-                    return (
-                      <section key={g.key} className={isLast ? "" : "mb-2"}>
-                        <button
-                          type="button"
-                          onClick={() => !outlineQ && toggleCollapse(g.key)}
-                          title={collapsed ? "展开该卷章节" : "收起该卷章节"}
-                          className={`mb-1.5 flex w-full items-start gap-1.5 rounded-md px-1 py-0.5 text-left transition-colors ${
-                            outlineQ
-                              ? "cursor-default"
-                              : "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                          }`}
-                        >
-                          <span
-                            className={`mt-0.5 shrink-0 text-[10px] text-zinc-400 transition-transform ${
-                              collapsed ? "-rotate-90" : ""
-                            }`}
-                          >
-                            ▾
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <h4 className="text-xs font-bold text-zinc-500 dark:text-zinc-400">{g.label}</h4>
-                          </div>
-                          <span className="ml-auto shrink-0 text-[10px] text-zinc-400">{items.length} 章</span>
-                        </button>
-                        {!collapsed && (
-                          <ul className="flex flex-col gap-2">
-                            {items.map((o) => (
-                              <li key={o.id}>
-                                <button
-                                  className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
-                                    selectedId === o.id
-                                      ? "border-zinc-500 bg-zinc-100 dark:bg-zinc-800"
-                                      : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
-                                  }`}
-                                  onClick={() => setSelectedId(o.id)}
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-sm font-medium">
-                                      第{o.chapter_no}章{o.title ? ` ${o.title}` : ""}
-                                    </span>
-                                    {o.status === "approved" ? (
-                                      <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">
-                                        已批准
-                                      </span>
-                                    ) : (
-                                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                                        未批准
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="mt-0.5 line-clamp-1 text-[11px] text-zinc-500">
-                                    {(o.content?.goal as string | undefined) ?? ""}
-                                  </div>
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </section>
-                    );
-                  })}
-              </div>
-            </>
-          )}
-        </div>
-      </aside>
+      <OutlineList
+        total={outlines.length}
+        groups={filteredGroups}
+        outlineSearch={outlineSearch}
+        outlineQ={outlineQ}
+        collapsedKeys={collapsedKeys}
+        selectedId={selectedId}
+        generatingRewrite={generatingRewrite}
+        onSearchChange={setOutlineSearch}
+        onToggleCollapse={toggleCollapse}
+        onSelect={setSelectedId}
+        onAdd={() => openAddModal()}
+      />
 
       {/* 右侧：大纲详情 */}
       <section className="flex min-w-0 flex-col gap-5 sm:gap-7">
@@ -775,369 +554,42 @@ export default function OutlinePanel({ novelId }: Props) {
 
         {/* 大纲详情 */}
         {selected && viewing && (
-          <div className="panel flex max-h-[calc(100dvh-6rem)] min-h-0 flex-col overflow-hidden">
-            <div className="panel-head shrink-0">
-              <h3 className="panel-title">
-                第 {viewing.chapter_no} 章大纲
-                {viewing.title ? ` ${viewing.title}` : ""}
-                {content?.pov ? <span className="ml-2 text-xs font-normal text-zinc-500">视角：{content.pov}</span> : null}
-                {content?.chapter_function ? (
-                  <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-normal text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                    节奏：{FUNCTION_LABELS[content.chapter_function] ?? content.chapter_function}
-                  </span>
-                ) : null}
-              </h3>
-              <div className="flex shrink-0 items-center gap-2">
-                {/* 版本号按钮：点击展开内联版本浮层（替代原弹窗），点外部自动收起，不遮正文 */}
-                <span className="relative inline-flex">
-                  <button
-                    type="button"
-                    onClick={() => setShowVersionModal((o) => !o)}
-                    className="btn btn-ghost px-3 py-1.5 text-sm font-medium"
-                    title="点击切换大纲版本"
-                  >
-                    <span>v{viewing.version_no}</span>
-                  </button>
-                  {showVersionModal && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-40"
-                        aria-hidden
-                        onClick={() => setShowVersionModal(false)}
-                      />
-                      <div className="absolute right-0 top-full z-50 mt-2 max-h-[60vh] w-80 overflow-y-auto rounded-lg border border-zinc-200 bg-surface p-2 shadow-book dark:border-zinc-700 dark:bg-zinc-900">
-                        <p className="px-2 py-1 text-[11px] leading-5 text-zinc-400">
-                          同一章可保留多版大纲，点击版本预览；已批准标 ✓。
-                        </p>
-                        {versions.length === 0 ? (
-                          <p className="py-4 text-center text-xs text-zinc-400">该章还没有任何大纲版本。</p>
-                        ) : (
-                          <ul className="mt-1 space-y-1">
-                            {versions.map((v) => {
-                              const active = v.id === viewing?.id;
-                              const approved = v.status === "approved";
-                              return (
-                                <li key={v.id}>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setViewVersionId(v.id);
-                                      setShowVersionModal(false);
-                                    }}
-                                    className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-                                      active
-                                        ? "border-zinc-500 bg-zinc-100 dark:bg-zinc-800"
-                                        : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
-                                    }`}
-                                  >
-                                    <span className="flex min-w-0 flex-col gap-0.5">
-                                      <span className="flex items-center gap-2 font-medium">
-                                        <span>v{v.version_no}</span>
-                                        {approved ? (
-                                          <span className="rounded bg-green-100 px-1.5 py-px text-[10px] text-green-700 dark:bg-green-900 dark:text-green-300">
-                                            ✓ 已批准
-                                          </span>
-                                        ) : (
-                                          <span className="rounded bg-zinc-100 px-1.5 py-px text-[10px] text-zinc-400 dark:bg-zinc-800 dark:text-zinc-400">
-                                            未批准
-                                          </span>
-                                        )}
-                                      </span>
-                                      {v.title && <span className="truncate text-xs text-zinc-500">{v.title}</span>}
-                                    </span>
-                                    <span className="shrink-0 text-[11px] text-zinc-400">
-                                      {new Date(v.created_at).toLocaleString("zh-CN", {
-                                        month: "2-digit",
-                                        day: "2-digit",
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                      })}
-                                    </span>
-                                  </button>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </span>
-                {/* 重写当前章大纲：复用新增大纲弹窗，章节号锁定为本章（生成的新版本与旧版本各自独立） */}
-                <button
-                  type="button"
-                  onClick={() => openAddModal(viewing.chapter_no)}
-                  disabled={generatingNew}
-                  className="btn btn-ghost px-3 py-1.5 text-sm font-medium"
-                  title={
-                    generatingNew
-                      ? "大纲生成中，暂不能重写"
-                      : "重写本章大纲：生成一个新版本（未批准），批准后切换生效"
-                  }
-                >
-                  重写
-                </button>
-                {viewing.status === "draft" ? (
-                  <button
-                    className="btn btn-approve"
-                    onClick={() => handleApprove(viewing)}
-                    disabled={approvingId !== null}
-                  >
-                    {approvingId !== null ? "批准中…" : "批准此版本"}
-                  </button>
-                ) : (
-                  <span className="rounded bg-green-100 px-2 py-1 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">
-                    正在使用
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* 详情正文：超出页面高度时在该区域内滚动，头部「批准此版本」保持可见 */}
-            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-            {content?.goal && (
-              <p className="mb-3 rounded-lg bg-zinc-50 p-3 text-sm dark:bg-zinc-900">
-                <span className="font-semibold">目标：</span>
-                {content.goal}
-              </p>
-            )}
-
-            {content?.beats && content.beats.length > 0 && (
-              <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">节拍</h4>
-                <ol className="flex flex-col gap-1.5">
-                  {content.beats.map((b, i) => (
-                    <li key={i} className="rounded-lg border border-zinc-200 p-2.5 text-sm dark:border-zinc-800">
-                      <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
-                        <span className="rounded bg-zinc-100 px-1.5 py-0.5 dark:bg-zinc-800">
-                          #{b.beat_no ?? i + 1} · {TYPE_LABELS[b.type ?? ""] ?? b.type ?? "场景"}
-                        </span>
-                        {b.pov && <span>视角 {b.pov}</span>}
-                        {b.length_hint && <span>{b.length_hint}</span>}
-                        {b.emotion && <span>情绪：{b.emotion}</span>}
-                      </div>
-                      <div className="text-zinc-700 dark:text-zinc-300">{b.content}</div>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            )}
-
-            {content?.conflicts && content.conflicts.length > 0 && (
-              <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">冲突</h4>
-                <ul className="flex flex-col gap-1">
-                  {content.conflicts.map((c, i) => (
-                    <li key={i} className="text-sm text-zinc-700 dark:text-zinc-300">
-                      <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] dark:bg-zinc-800">
-                        {c.type === "internal" ? "内心" : "外部"}
-                      </span>{" "}
-                      与{c.with} · 赌注：{c.stakes}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {content?.plant_foreshadowing && content.plant_foreshadowing.length > 0 && (
-              <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">埋设伏笔（入账）</h4>
-                <ul className="flex flex-col gap-1">
-                  {content.plant_foreshadowing.map((p, i) => (
-                    <li key={i} className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-sm dark:border-amber-900 dark:bg-amber-950">
-                      {p.desc}
-                      <span className="ml-2 text-[11px] text-zinc-500">
-                        {p.payoff_hint ? `回收线索：${p.payoff_hint} · ` : ""}
-                        {p.latest_payoff_chapter ? `最迟第${p.latest_payoff_chapter}章` : ""}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {content?.resolve_foreshadowing && content.resolve_foreshadowing.length > 0 && (
-              <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-green-600 dark:text-green-400">回收伏笔</h4>
-                <ul className="flex flex-col gap-1">
-                  {content.resolve_foreshadowing.map((r, i) => (
-                    <li key={i} className="rounded-lg border border-green-200 bg-green-50 p-2 text-sm dark:border-green-900 dark:bg-green-950">
-                      {r.how}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {content?.thread_updates && content.thread_updates.length > 0 && (
-              <div>
-                <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">线索推进（入账）</h4>
-                <ul className="flex flex-col gap-1">
-                  {content.thread_updates.map((t, i) => (
-                    <li key={i} className="text-sm text-zinc-700 dark:text-zinc-300">
-                      线索「{t.thread}」→ {t.new_state}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            </div>
-          </div>
+          <OutlineDetail
+            viewing={viewing}
+            versions={versions}
+            showVersionModal={showVersionModal}
+            content={content}
+            generatingNew={generatingNew}
+            approvingId={approvingId}
+            onToggleVersionModal={() => setShowVersionModal((o) => !o)}
+            onCloseVersionModal={() => setShowVersionModal(false)}
+            onSelectVersion={(id) => {
+              setViewVersionId(id);
+              setShowVersionModal(false);
+            }}
+            onRewrite={(no) => openAddModal(no)}
+            onApprove={(o) => void handleApprove(o)}
+          />
         )}
       </section>
 
       {/* ── 新增大纲弹窗（参考蓝图页「新增蓝图」/写作页「新增章节」：按钮 + Modal）。
            rewriteChapterNo != null 时是「重写本章」：章节号锁定，生成的是本章的新版本（与旧版本各自独立）。 ── */}
-      <Modal
+      <GenOutlineModal
         open={showAddModal}
-        title={rewriteChapterNo != null ? `重写第 ${rewriteChapterNo} 章大纲` : "新增大纲"}
-        subtitle={
-          rewriteChapterNo != null
-            ? "重写本章：生成一个新版本（未批准），与本章已有版本各自独立、互不影响。批准新版本后，AI 写本章时会优先参考它。"
-            : "大纲 = 单章的施工图。AI 会按当前使用的蓝图，排出这一章的目标、节拍、冲突和视角。生成的是「未批准」版本，批准后，AI 写这一章时会优先照它来。"
-        }
+        rewriteChapterNo={rewriteChapterNo}
+        form={form}
+        stage={stage}
+        activeCharacters={activeCharacters}
+        inactiveCharacters={inactiveCharacters}
+        blueprintTitle={blueprintTitle}
+        generating={generating}
+        volumes={volumes}
         onClose={() => setShowAddModal(false)}
-        maxWidth="max-w-xl"
-        footer={
-          <div className="flex w-full items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => setShowAddModal(false)}
-              className="btn btn-ghost px-4 py-1.5"
-            >
-              取消
-            </button>
-            <div className="flex items-center gap-2">
-              <span className="hidden sm:inline">
-                <CostHint />
-              </span>
-              <button
-                type="button"
-                onClick={handleGenerate}
-                disabled={generating || !blueprintTitle}
-                className="btn btn-primary px-4 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {generating ? "生成中…" : rewriteChapterNo != null ? "重新生成大纲" : "生成大纲"}
-              </button>
-              {/* 点击生成后出现：打开生成过程弹窗（DeepSeek 风格，思考+正文流式滚动） */}
-              {generating && (
-                <button
-                  type="button"
-                  onClick={() => setShowStreamModal(true)}
-                  className="btn btn-ghost px-3 py-1.5"
-                >
-                  查看生成过程
-                </button>
-              )}
-            </div>
-          </div>
-        }
-      >
-        <div className="flex flex-col gap-3">
-          {/* 无生效蓝图时提醒（新增大纲的前提）；有蓝图则不打扰 */}
-          {!blueprintTitle && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs leading-6 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-              还没有生效的蓝图，无法生成大纲。
-              <br />
-              请先到「蓝图」页创建蓝图并设为当前使用，再回来新增大纲。
-            </div>
-          )}
-
-          {/* 章节号不手动填写：打开弹窗时已自动推导（已有大纲最大章号 + 1，无则从第一卷第一章开始） */}
-          <span className="text-[11px] text-zinc-400">
-            {rewriteChapterNo != null ? (
-              <>
-                将重写：第 {rewriteChapterNo} 章
-                {stage ? `（当前处于：${STAGE_LABEL[stage]}，这个阶段能出场的角色如下）` : ""}
-              </>
-            ) : (
-              <>
-                将自动生成：第 {form.chapter_no} 章
-                {stage ? `（当前处于：${STAGE_LABEL[stage]}，这个阶段能出场的角色如下）` : ""}
-              </>
-            )}
-          </span>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">视角角色</span>
-            <select
-              className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              value={form.pov}
-              onChange={(e) => setForm({ ...form, pov: e.target.value })}
-              disabled={generating}
-            >
-              <option value="">
-                {activeCharacters.length > 0
-                  ? "视角角色（留空由 AI 自定）"
-                  : "该章节无生效角色（留空由 AI 自定）"}
-              </option>
-              {ROLE_RANKS.map((g) => {
-                const items = activeCharacters.filter((c) => roleRankOf(c) === g.value);
-                if (items.length === 0) return null;
-                return (
-                  <optgroup key={g.value} label={g.label}>
-                    {items.map((c) => (
-                      <option key={c.id} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                );
-              })}
-              {activeCharacters.some((c) => !ROLE_RANKS.some((g) => roleRankOf(c) === g.value)) && (
-                <optgroup label="未标注等级">
-                  {activeCharacters
-                    .filter((c) => !ROLE_RANKS.some((g) => roleRankOf(c) === g.value))
-                    .map((c) => (
-                      <option key={c.id} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                </optgroup>
-              )}
-              {inactiveCharacters.length > 0 && (
-                <optgroup label="这章不能出场（不能选）">
-                  {inactiveCharacters.map((c) => (
-                    <option key={c.id} value={c.name} disabled>
-                      {c.name}（{inactiveReason(c, form.chapter_no, volumes)}）
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">章节功能</span>
-            <select
-              className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              value={form.chapter_function}
-              onChange={(e) => setForm({ ...form, chapter_function: e.target.value })}
-              disabled={generating}
-            >
-              <option value="">本章节奏定位：自动判定</option>
-              {FUNCTIONS.map(([v, l]) => (
-                <option key={v} value={v}>
-                  本章节奏定位：{l}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">本章目标</span>
-            <textarea
-              className="resize-none rounded-lg border border-zinc-300 bg-zinc-50 p-3 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              placeholder="本章目标（留空则由 AI 自行把握）"
-              rows={2}
-              value={form.goal}
-              onChange={(e) => setForm({ ...form, goal: e.target.value })}
-              disabled={generating}
-            />
-          </label>
-          {/* 生成中的实时展示移入独立的「生成过程弹窗」（AgentStreamModal，参考蓝图页）。 */}
-        </div>
-      </Modal>
+        onFormChange={setForm}
+        onGenerate={handleGenerate}
+        onShowStream={() => setShowStreamModal(true)}
+      />
 
       {/* ── 版本选择已改为详情标题 vN 旁的内联浮层（见上方 trigger），不再用弹窗 ── */}
 

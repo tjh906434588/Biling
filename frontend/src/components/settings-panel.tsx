@@ -6,8 +6,11 @@
  * 出现时机按蓝图分卷推导每阶段章范围，用双滑块限定后落为 appear_from/until 或 appear_ranges；
  * 时代行业研究仅非纯架空展示（蓝图生成时自动研究，作者可查看/修改）。
  * 结构：本文件只做状态编排与组合子组件；子模块按逻辑边界拆到 components/settings/ 下——
- * timing.tsx（「出现时机」控件与时间线规划纯函数）、era.tsx（时代行业研究）、
- * import.tsx（批量导入解析纯函数，UI 与状态强耦合留本文件）、helpers.ts（设定条目纯函数）。
+ * timing.tsx（「出现时机」控件与时间线规划纯函数）、era.tsx（时代行业研究展示与表单字段）、
+ * import.tsx（批量导入解析纯函数）、helpers.ts（设定条目纯函数）、settings-utils.ts
+ * （本面板的类型与展示常量）、meta-panel.tsx（左栏：世界背景/题材 + 时代行业研究）、
+ * setting-list.tsx（设定列表与条目卡片）、setting-form.tsx（新增/编辑设定弹窗）、
+ * import-modal.tsx（批量导入弹窗）、era-form.tsx（编辑时代行业研究弹窗）。
  */
 "use client";
 
@@ -24,19 +27,9 @@ import {
   type Blueprint,
   type Novel,
   type Setting,
-  type SettingType,
 } from "@/lib/api";
-import {
-  IMPORT_INSTRUCTION,
-  ROLE_RANKS,
-  SETTING_SPECS,
-  SETTING_TYPES,
-  STAGE_LABEL,
-} from "@/constants";
-import { BackgroundTypePicker, GenrePicker } from "@/components/novel-meta";
-import InfoTip from "./info-tip";
+import { IMPORT_INSTRUCTION } from "@/constants";
 import ConfirmDialog from "./confirm-dialog";
-import Modal from "./modal";
 import Loading from "@/components/loading";
 import { message } from "@/components/message";
 import { copyText } from "@/utils/clipboard";
@@ -44,67 +37,22 @@ import {
   alignSegmentsToBlocks,
   deriveBlocks,
   deriveStageRanges,
-  orderStages,
   timingStructured,
-  TimingBlock,
-  type Seg,
   type StagePlan,
 } from "./settings/timing";
-import {
-  EMPTY_ERA_FORM,
-  EraField,
-  EraListCard,
-  eraFromForm,
-  eraToForm,
-  type EraFormState,
-} from "./settings/era";
+import { EMPTY_ERA_FORM, eraFromForm, eraToForm, type EraFormState } from "./settings/era";
 import { parseImportText, type ImportItem } from "./settings/import";
 import { settingMeta, splitSetting } from "./settings/helpers";
-
-const TYPE_LABEL: Record<string, string> = Object.fromEntries(SETTING_SPECS.map((s) => [s.key, s.label]));
-const SPEC_OF = (t: SettingType) => SETTING_SPECS.find((s) => s.key === t) ?? SETTING_SPECS[0];
-
-/** 角色等级：AI 据此分配篇幅与视角权重。 */
-const ROLE_RANK_LABEL: Record<string, string> = Object.fromEntries(ROLE_RANKS.map((r) => [r.value, r.label]));
-const ROLE_RANK_STYLE: Record<string, string> = {
-  protagonist: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
-  major: "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300",
-  minor: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
-  extra: "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500",
-};
-
-/** 阶段标签：设定生效的故事情节阶段（可多选；不选 = 不限制）。 */
-const STAGE_STYLE: Record<string, string> = {
-  early: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
-  middle: "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300",
-  late: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
-};
+import { EMPTY_FORM, type FormState } from "./settings/settings-utils";
+import SettingsSidebar from "./settings/meta-panel";
+import SettingList from "./settings/setting-list";
+import SettingFormModal from "./settings/setting-form";
+import ImportModal from "./settings/import-modal";
+import EraEditModal from "./settings/era-form";
 
 interface Props {
   novelId: string;
 }
-
-interface FormState {
-  type: SettingType;
-  name: string;
-  role_rank: string;
-  is_background: boolean;
-  constitution_text: string;
-  dynamic_text: string;
-  appear_segments: Seg[];
-  stages: string[];
-}
-
-const EMPTY_FORM: FormState = {
-  type: "character",
-  name: "",
-  role_rank: "protagonist",
-  is_background: false,
-  constitution_text: "",
-  dynamic_text: "",
-  appear_segments: [],
-  stages: [],
-};
 
 export default function SettingsPanel({ novelId }: Props) {
   const [settings, setSettings] = useState<Setting[]>([]);
@@ -198,6 +146,12 @@ export default function SettingsPanel({ novelId }: Props) {
     setForm(EMPTY_FORM);
     setEditing(null);
     setShowForm(true);
+  }
+
+  /** 关闭「新增/编辑设定」弹窗：清空正在编辑的设定。 */
+  function closeForm() {
+    setShowForm(false);
+    setEditing(null);
   }
 
   /** 打开「批量导入」弹窗：每次都是全新状态。 */
@@ -325,6 +279,12 @@ export default function SettingsPanel({ novelId }: Props) {
     }
   }
 
+  /** 打开「编辑时代行业研究」弹窗：用当前研究预填表单（无研究则清空）。 */
+  function handleEditEra() {
+    setEraForm(eraResearch ? eraToForm(eraResearch) : EMPTY_ERA_FORM);
+    setEraEditing(true);
+  }
+
   /** 保存时代行业研究：全部清空视为清除（置 null），否则合并原对象保留 confidence 等表单外字段。 */
   async function handleSaveEra() {
     setEraBusy(true);
@@ -417,649 +377,76 @@ export default function SettingsPanel({ novelId }: Props) {
     <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:gap-5">
         {/* 左侧参考栏：世界背景/题材 + 时代行业研究（只读参考信息），窄栏竖排，内容多时独立滚动；主区留给设定列表 */}
-        <div className="flex min-h-0 flex-col gap-4 lg:w-[400px] lg:shrink-0 lg:overflow-y-auto lg:pr-1">
-        {/* 世界背景类型与题材：创建时可留空，导入蓝图时 AI 按素材推断、弹窗引导作者确认；这里可直接修改 */}
-        <section className="panel flex shrink-0 flex-col gap-2.5">
-          <div className="panel-head mb-0">
-            <div className="flex items-center gap-1.5">
-              <h3 className="panel-title">世界背景类型与题材</h3>
-              <InfoTip width="w-80" side="bottom">
-                <p>
-                  <span className="font-medium text-zinc-800 dark:text-zinc-100">这本书属于哪个世界背景、什么题材。</span>
-                  背景类型决定平台签约时会不会去核查设定（现实 / 半架空 / 纯架空），题材是软性写作方向。
-                  不确定可以先不选，导入蓝图时 AI 会先猜一个，弹窗请你确认后自动保存，你也可以在这里直接改。
-                </p>
-              </InfoTip>
-            </div>
-            {/* 有未保存改动时显示「保存修改」：按钮始终占位（无改动时 invisible），
-                避免按钮出现/消失引发模块与整页布局抖动；固定宽度防「保存中…」文字变化抖动 */}
-            <button
-              type="button"
-              disabled={metaBusy}
-              className={`btn btn-primary min-w-[92px] px-3 py-1.5 text-xs ${metaDirty ? "" : "invisible"}`}
-              onClick={handleSaveMeta}
-            >
-              {metaBusy ? "保存中…" : "保存修改"}
-            </button>
-          </div>
-          <div className="grid gap-3">
-            <div className="flex flex-col gap-1.5">
-              <p className="text-[12px] font-medium text-zinc-500">世界背景类型</p>
-              <BackgroundTypePicker value={bgType} onChange={setBgType} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <p className="text-[12px] font-medium text-zinc-500">题材（可多选）</p>
-              <GenrePicker value={genres} onChange={setGenres} />
-            </div>
-          </div>
-        </section>
-
-        {/* 时代行业研究：仅「现实年代 / 半架空」展示（选中后才出现，默认隐藏）；蓝图生成时自动研究，作者可查看/修改 */}
-        {showEraResearch && (
-        <section className="panel flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
-          <div className="panel-head mb-0">
-            <div className="flex items-center gap-1.5">
-              <h3 className="panel-title">时代行业研究</h3>
-              <InfoTip width="w-80" side="bottom">
-                <p>
-                  <span className="font-medium text-zinc-800 dark:text-zinc-100">这本书所处的年代×行业长什么样。</span>
-                  生成蓝图时自动研究一次，
-                  后面生成设定、写作、检查时都会参考它，避免机构、老板、业务写得不符当时情况。
-                  换一本小说会自动重新研究。你可以在这里直接查看和修改。
-                </p>
-              </InfoTip>
-            </div>
-            {eraResearch ? (
-              <div className="flex items-center gap-2">
-                <span className="panel-hint">生成蓝图时自动研究</span>
-                <button
-                  type="button"
-                  className="btn btn-ghost px-3 py-1.5 text-xs"
-                  onClick={() => {
-                    setEraForm(eraResearch ? eraToForm(eraResearch) : EMPTY_ERA_FORM);
-                    setEraEditing(true);
-                  }}
-                >
-                  编辑
-                </button>
-              </div>
-            ) : (
-              <span className="panel-hint">尚未研究（生成蓝图时自动研究）</span>
-            )}
-          </div>
-
-          {eraResearch ? (
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5 text-[12.5px]">
-                <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">开局年份</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.story_start_year ?? "（未判定）")}</span></span>
-                <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">时代定位</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.era ?? "（未明确）")}</span></span>
-                <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">行业</span><span className="text-zinc-700 dark:text-zinc-200">{String(eraResearch.industry ?? "（未明确）")}</span></span>
-                <span><span className="mr-2 text-[10px] font-medium tracking-[0.2em] text-zinc-400">判定</span><span className="text-zinc-500">{String(eraResearch.note ?? "—")}</span></span>
-              </div>
-              {Boolean(eraResearch.boss_portrait) && (
-                <p className="rounded-lg bg-sunken/40 px-3 py-2 text-[12.5px] leading-5 text-zinc-600 dark:text-zinc-300">
-                  <span className="mr-2 align-middle text-[11px] font-medium text-zinc-500">老板 / 负责人画像</span>
-                  {String(eraResearch.boss_portrait)}
-                </p>
-              )}
-              {Boolean(eraResearch.location_pattern) && (
-                <p className="rounded-lg bg-sunken/40 px-3 py-2 text-[12.5px] leading-5 text-zinc-600 dark:text-zinc-300">
-                  <span className="mr-2 align-middle text-[11px] font-medium text-zinc-500">地域分布特征</span>
-                  {String(eraResearch.location_pattern)}
-                </p>
-              )}
-              {(Array.isArray(eraResearch.organization_forms) && eraResearch.organization_forms.length > 0) ||
-               (Array.isArray(eraResearch.business_list) && eraResearch.business_list.length > 0) ||
-               (Array.isArray(eraResearch.evolution) && eraResearch.evolution.length > 0) ||
-               (Array.isArray(eraResearch.era_mismatch_red_flags) && eraResearch.era_mismatch_red_flags.length > 0) ? (
-                <div className="grid gap-2.5">
-                  {Array.isArray(eraResearch.organization_forms) && eraResearch.organization_forms.length > 0 && (
-                    <EraListCard title="机构典型形态" tone="jade" items={eraResearch.organization_forms} />
-                  )}
-                  {Array.isArray(eraResearch.business_list) && eraResearch.business_list.length > 0 && (
-                    <EraListCard title="业务范围" tone="dai" items={eraResearch.business_list} />
-                  )}
-                  {Array.isArray(eraResearch.evolution) && eraResearch.evolution.length > 0 && (
-                    <EraListCard title="行业阶段演进" tone="ochre" items={eraResearch.evolution} />
-                  )}
-                  {Array.isArray(eraResearch.era_mismatch_red_flags) && eraResearch.era_mismatch_red_flags.length > 0 && (
-                    <EraListCard title="时代错位雷点" tone="seal" items={eraResearch.era_mismatch_red_flags} warning />
-                  )}
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <p className="rounded-lg border border-dashed border-zinc-300 p-3 text-[12.5px] leading-5 text-zinc-400 dark:border-zinc-700">
-              现实题材下，点击「蓝图 → 生成蓝图」会自动研究这本书的年代×行业（机构形态、老板画像、业务范围等），
-              之后生成设定、写作、检查时都会参考它；纯架空小说不触发研究。
-            </p>
-          )}
-        </section>
-        )}
-        </div>
+        <SettingsSidebar
+          bgType={bgType}
+          onBgTypeChange={setBgType}
+          genres={genres}
+          onGenresChange={setGenres}
+          metaBusy={metaBusy}
+          metaDirty={metaDirty}
+          onSaveMeta={handleSaveMeta}
+          showEraResearch={showEraResearch}
+          eraResearch={eraResearch}
+          onEditEra={handleEditEra}
+        />
 
         {/* 设定列表：主工作区，占满剩余高度与宽度，内容多时仅此区滚动 */}
-      <section className="panel flex min-h-0 flex-1 flex-col gap-3.5">
-        <div className="panel-head mb-0">
-          <div className="flex items-center gap-1.5">
-            <h3 className="panel-title">设定列表</h3>
-            <InfoTip width="w-80" side="bottom">
-              <p>
-                <span className="font-medium text-zinc-800 dark:text-zinc-100">设定 = 这本小说的「设定集」。</span>
-                AI 写每一章前都会读一遍。角色、地点、世界规则都记在这里；「不可变」栏的内容 AI 绝对不会改，其余可以随剧情发展。先写主角一条就能开笔，边写边补。
-              </p>
-            </InfoTip>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="panel-hint">
-              共 {visibleSettings.length} 条
-              {typeFilter ? ` · 只看「${TYPE_LABEL[typeFilter] ?? typeFilter}」` : ""}
-            </span>
-            <button
-              type="button"
-              className="btn btn-ghost px-3 py-1.5 text-xs"
-              onClick={openImportModal}
-            >
-              批量导入
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary px-3 py-1.5 text-xs"
-              onClick={openFormModal}
-            >
-              新增设定
-            </button>
-          </div>
-        </div>
+        <SettingList
+          settings={settings}
+          visibleSettings={visibleSettings}
+          q={q}
+          onQChange={setQ}
+          typeFilter={typeFilter}
+          onTypeFilterChange={setTypeFilter}
+          onAdd={openFormModal}
+          onImport={openImportModal}
+          onEdit={startEdit}
+          onDelete={handleDelete}
+        />
 
-        <div className="flex items-center gap-2">
-          <input
-            className="flex-1 rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            placeholder="搜索名称/描述…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-          <div className="flex gap-1 overflow-x-auto">
-            <button
-              className={`rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
-                typeFilter === ""
-                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                  : "border border-zinc-300 hover:border-zinc-500 dark:border-zinc-700"
-              }`}
-              onClick={() => setTypeFilter("")}
-            >
-              全部
-            </button>
-            {SETTING_TYPES.map((t) => (
-              <button
-                key={t}
-                className={`whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
-                  typeFilter === t
-                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                    : "border border-zinc-300 hover:border-zinc-500 dark:border-zinc-700"
-                }`}
-                onClick={() => setTypeFilter(t)}
-              >
-                {TYPE_LABEL[t]}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* 新增/编辑设定弹窗 */}
+        <SettingFormModal
+          open={showForm}
+          editing={editing}
+          form={form}
+          setForm={setForm}
+          busy={busy}
+          stagePlan={stagePlan}
+          onSave={handleSave}
+          onClose={closeForm}
+        />
 
-        {visibleSettings.length === 0 ? (
-          settings.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-zinc-300 p-6 text-center text-sm leading-6 text-zinc-400 dark:border-zinc-700">
-              还没有设定。点击「新增设定」先加一条，建议从主角开始：
-              <br />
-              选择「角色」→ 名称写「岚」→ 在「可变」栏写一句外貌、性格和目的。
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed border-zinc-300 p-6 text-center text-sm leading-6 text-zinc-400 dark:border-zinc-700">
-              还没有任何设定。点右上角「新增设定」自己加一条。
-              <br />
-              可以先手动加一条。
-            </div>
-          )
-        ) : (
-          <ul className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
-            {visibleSettings.map((s) => {
-              const { con, dyn } = splitSetting(s);
-              const meta = settingMeta(s);
-              return (
-              <li
-                key={s.id}
-                className="rounded-lg bg-sunken/40 p-3.5 dark:bg-sunken/30"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                    {TYPE_LABEL[s.type] ?? s.type}
-                  </span>
-                  {s.source === "blueprint" && (
-                    <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300">
-                      蓝图导入
-                    </span>
-                  )}
-                  {s.source === "outline" && (
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                      来自大纲
-                    </span>
-                  )}
-                  <span className="text-sm font-medium">{s.name}</span>
-                  {orderStages(meta.stages).map((st) => (
-                    <span
-                      key={st}
-                      className={`rounded px-1.5 py-0.5 text-[11px] ${
-                        STAGE_STYLE[st] ?? "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-                      }`}
-                    >
-                      {STAGE_LABEL[st] ?? st}
-                    </span>
-                  ))}
-                  {meta.ranges.length > 0 && (
-                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                      第{meta.ranges.map((r) => `${r.from ?? "?"}–${r.until ?? "终"}`).join("、")}章生效
-                    </span>
-                  )}
-                  {s.type === "character" &&
-                    (() => {
-                      const st = (s.structured ?? {}) as Record<string, unknown>;
-                      const rk = typeof st.role_rank === "string" ? st.role_rank : "";
-                      if (!rk) return null;
-                      return (
-                        <span
-                          className={`rounded px-1.5 py-0.5 text-[11px] ${
-                            ROLE_RANK_STYLE[rk] ?? "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-                          }`}
-                        >
-                          {ROLE_RANK_LABEL[rk] ?? rk}
-                        </span>
-                      );
-                    })()}
-                  <div className="ml-auto flex items-center gap-1">
-                    <button
-                      className="btn btn-ghost px-2 py-1 text-xs"
-                      onClick={() => startEdit(s)}
-                    >
-                      编辑
-                    </button>
-                    <button
-                      className="btn btn-ghost px-2 py-1 text-xs text-red-500"
-                      onClick={() => handleDelete(s)}
-                    >
-                      删除
-                    </button>
-                  </div>
-                </div>
-                {(con || dyn) && (
-                  <div className="mt-1.5 flex flex-col gap-1">
-                      {con && (
-                        <p className="text-sm text-amber-700 dark:text-amber-300">
-                          <span className="mr-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                            不可变
-                          </span>
-                          {con}
-                        </p>
-                      )}
-                      {dyn && (
-                        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                          <span className="mr-1.5 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                            可变
-                          </span>
-                          {dyn}
-                        </p>
-                      )}
-                    </div>
-                )}
-              </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+        {/* 批量导入弹窗 */}
+        <ImportModal
+          open={showImport}
+          importText={importText}
+          onImportTextChange={setImportText}
+          parsed={parsed}
+          importBusy={importBusy}
+          onCopy={copyInstruction}
+          onParse={handleParse}
+          onImport={handleImport}
+          onClose={() => setShowImport(false)}
+        />
 
-      {/* 新增/编辑设定弹窗 */}
-      <Modal
-        open={showForm}
-        onClose={() => {
-          setShowForm(false);
-          setEditing(null);
-        }}
-        title={editing ? "编辑设定" : "新增设定"}
-        subtitle="「不可变」栏 AI 永不违背，其余随剧情演变；先写主角一条就能开笔，边写边补。"
-        maxWidth="max-w-xl"
-        fullHeight
-        footer={
-          <>
-            <button
-              type="button"
-              className="btn btn-ghost px-4 py-1.5 text-sm"
-              onClick={() => {
-                setShowForm(false);
-                setEditing(null);
-              }}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary px-4 py-1.5 text-sm"
-              onClick={handleSave}
-              disabled={busy}
-            >
-              {editing ? "保存修改" : "保存设定"}
-            </button>
-          </>
-        }
-      >
-        <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <label className="flex shrink-0 items-center gap-1.5">
-            <span className="text-[11px] font-medium text-zinc-500">类型</span>
-            <InfoTip>
-              <p className="mb-1 font-medium text-zinc-700 dark:text-zinc-200">类型怎么选？</p>
-              <ul className="grid gap-y-1">
-                {SETTING_SPECS.map((s) => (
-                  <li key={s.key}>
-                    <span className="font-medium text-zinc-600 dark:text-zinc-300">{s.label}</span>
-                    ：{s.judge}
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">
-                <span className="font-medium text-zinc-600 dark:text-zinc-300">不可变 / 可变</span>
-                ：表单分两栏——「不可变」栏的内容 AI 永不违背；「可变」栏随剧情演变（如性格成长，AI 会自动记住）。
-                只填「不可变」栏 = 整条都不可变。
-              </p>
-            </InfoTip>
-          </label>
-          <select
-            className="shrink-0 rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            value={form.type}
-            onChange={(e) => setForm({ ...form, type: e.target.value as SettingType })}
-            disabled={!!editing}
-          >
-            {SETTING_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {TYPE_LABEL[t]} — {SPEC_OF(t).hint}
-              </option>
-            ))}
-          </select>
-          {editing && <p className="shrink-0 text-[11px] text-zinc-400">类型不可修改（如需更换类型，删除后重建）</p>}
-          <p className="shrink-0 text-[11px] text-zinc-400">完整示例：{SPEC_OF(form.type).example}</p>
-          {form.type === "character" && (
-            <label className="flex shrink-0 flex-col gap-1">
-              <span className="text-[11px] font-medium text-zinc-500">角色等级（AI 据此分配篇幅 / 视角）</span>
-              <select
-                className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                value={form.role_rank}
-                onChange={(e) => setForm({ ...form, role_rank: e.target.value })}
-              >
-                {ROLE_RANKS.map((r) => (
-                  <option key={r.value} value={r.value}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {form.type === "faction" && (
-            <label className="flex shrink-0 cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-zinc-300 accent-amber-600"
-                checked={form.is_background}
-                onChange={(e) => setForm({ ...form, is_background: e.target.checked })}
-              />
-              <span className="text-[11px] font-medium text-zinc-500">
-                背景机构（正文只提名字就行，AI 不会一直提醒你要补全）
-              </span>
-            </label>
-          )}
-          <label className="flex shrink-0 flex-col gap-1">
-            <span className="text-[11px] font-medium text-zinc-500">名称</span>
-            <input
-              className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              placeholder={`如：${SPEC_OF(form.type).name_hint}`}
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
-          </label>
-          <label className="flex min-h-0 flex-1 flex-col gap-1">
-            <span className="shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400">不可变（AI 永不违背）</span>
-            <textarea
-              className="min-h-0 flex-1 rounded-lg border border-amber-300 bg-amber-50/40 p-3 text-sm outline-none focus:border-amber-500 dark:border-amber-800 dark:bg-amber-950/20 dark:text-zinc-100"
-              placeholder="填死规矩：性别、身份、血统、世界法则这类。例：女性占卜师，左眼异能"
-              rows={2}
-              value={form.constitution_text}
-              onChange={(e) => setForm({ ...form, constitution_text: e.target.value })}
-            />
-          </label>
-          <label className="flex min-h-0 flex-1 flex-col gap-1">
-            <span className="shrink-0 text-[11px] font-medium text-zinc-500">可变 · 随剧情（可演变）</span>
-            <textarea
-              className="min-h-0 flex-1 rounded-lg border border-zinc-300 bg-zinc-50 p-3 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              placeholder={SPEC_OF(form.type).desc_hint}
-              rows={3}
-              value={form.dynamic_text}
-              onChange={(e) => setForm({ ...form, dynamic_text: e.target.value })}
-            />
-          </label>
-          <p className="shrink-0 text-[11px] leading-4 text-zinc-400">类型提示：{SPEC_OF(form.type).constitution_advice}</p>
-          {/* 出现时机：生效阶段 / 限定时段（按蓝图前中后期章数选，无蓝图时按已创建章节选） */}
-          <div className="shrink-0">
-            <TimingBlock
-              stages={form.stages}
-              onStagesChange={(v) => setForm((f) => ({ ...f, stages: v }))}
-              segments={form.appear_segments}
-              onSegmentsChange={(v) => setForm((f) => ({ ...f, appear_segments: v }))}
-              plan={stagePlan}
-            />
-          </div>
-        </div>
-      </Modal>
+        {/* 编辑时代行业研究：弹窗承载表单，不打断下方设定列表的浏览（原地编辑会把整个模块顶成表单） */}
+        <EraEditModal
+          open={eraEditing}
+          form={eraForm}
+          setForm={setEraForm}
+          busy={eraBusy}
+          onSave={handleSaveEra}
+          onClose={() => setEraEditing(false)}
+        />
 
-      {/* 批量导入弹窗 */}
-      <Modal
-        open={showImport}
-        onClose={() => setShowImport(false)}
-        title="批量导入设定"
-        subtitle="先复制指令发给外部 AI（豆包 / DeepSeek 等），再把它的输出粘贴回来，一键批量添加进设定集。"
-        maxWidth="max-w-xl"
-        regionScroll
-      >
-        <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <button
-            className="btn btn-ghost w-full shrink-0 px-3 py-1.5 text-xs"
-            onClick={copyInstruction}
-          >
-            复制导入指令
-          </button>
-          <textarea
-            className="w-full shrink-0 resize-y rounded-lg border border-zinc-300 bg-zinc-50 p-2 text-[12px] outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            rows={10}
-            placeholder='把 AI 输出的设定清单粘贴到这里（含类型、名称、固定信息与可变信息），可直接复制，无需手动编辑'
-            value={importText}
-            onChange={(e) => setImportText(e.target.value)}
-          />
-          <button
-            className="btn btn-ghost w-full shrink-0 px-3 py-1.5 text-xs"
-            onClick={handleParse}
-            disabled={!importText.trim()}
-          >
-            解析预览
-          </button>
-
-          {parsed && parsed.length > 0 && (
-            <div className="flex min-h-0 flex-1 flex-col gap-1.5">
-              <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-                {parsed.map((it, i) => (
-                  <li key={i} className="rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
-                    <div className="flex items-center gap-1.5">
-                      <span className="rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                        {TYPE_LABEL[it.type]}
-                      </span>
-                      <span className="truncate text-xs font-medium">{it.name}</span>
-                      {orderStages(it.stages).map((st) => (
-                        <span
-                          key={st}
-                          className={`rounded px-1 py-0.5 text-[10px] ${
-                            STAGE_STYLE[st] ?? "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-                          }`}
-                        >
-                          {STAGE_LABEL[st] ?? st}
-                        </span>
-                      ))}
-                      {(() => {
-                        const ranges =
-                          it.appear_ranges && it.appear_ranges.length
-                            ? it.appear_ranges
-                            : it.appear_from !== null || it.appear_until !== null
-                              ? [{ from: it.appear_from, until: it.appear_until }]
-                              : [];
-                        if (!ranges.length) return null;
-                        return (
-                          <span className="rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                            第{ranges.map((r) => `${r.from ?? "?"}–${r.until ?? "终"}`).join("、")}章生效
-                          </span>
-                        );
-                      })()}
-                    </div>
-                    {it.constitution && (
-                      <p className="mt-0.5 truncate text-[11px] text-amber-700 dark:text-amber-300">不可变：{it.constitution}</p>
-                    )}
-                    {it.dynamic && (
-                      <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">可变：{it.dynamic}</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              <button
-                className="btn btn-primary shrink-0 px-3 py-2 text-xs"
-                onClick={handleImport}
-                disabled={importBusy}
-              >
-                {importBusy ? "导入中…" : `确认导入（${parsed.length} 条）`}
-              </button>
-            </div>
-          )}
-        </div>
-      </Modal>
-
-      {/* 编辑时代行业研究：弹窗承载表单，不打断下方设定列表的浏览（原地编辑会把整个模块顶成表单） */}
-      <Modal
-        open={eraEditing}
-        onClose={() => setEraEditing(false)}
-        title="编辑时代行业研究"
-        subtitle="生成蓝图时自动研究一次；修改后蓝图 / 设定 / 评价都会参考。每一项一行；全部清空后保存 = 删掉这份研究。"
-        maxWidth="max-w-2xl"
-        footer={
-          <>
-            <button
-              type="button"
-              className="btn btn-ghost px-4 py-1.5 text-sm"
-              onClick={() => setEraEditing(false)}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary px-4 py-1.5 text-sm"
-              onClick={handleSaveEra}
-              disabled={eraBusy}
-            >
-              {eraBusy ? "保存中…" : "保存修改"}
-            </button>
-          </>
-        }
-      >
-        <div className="flex min-h-0 flex-1 flex-col gap-2.5">
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            <EraField
-              label="开局年份"
-              hint="故事从哪一年开始"
-              placeholder="如：2000"
-              value={eraForm.story_start_year}
-              onChange={(v) => setEraForm({ ...eraForm, story_start_year: v })}
-            />
-            <EraField
-              label="行业"
-              hint="判定出的行业"
-              placeholder="如：人才中介 / 职业介绍"
-              value={eraForm.industry}
-              onChange={(v) => setEraForm({ ...eraForm, industry: v })}
-            />
-          </div>
-          <EraField
-            label="时代定位"
-            hint="如：2000 年代起的现代都市"
-            value={eraForm.era}
-            onChange={(v) => setEraForm({ ...eraForm, era: v })}
-          />
-          <EraField
-            label="判定依据"
-            hint="AI 是从哪里判断出这个年代与行业的"
-            textarea
-            rows={2}
-            value={eraForm.note}
-            onChange={(v) => setEraForm({ ...eraForm, note: v })}
-          />
-          <EraField
-            label="老板 / 负责人画像"
-            textarea
-            rows={2}
-            value={eraForm.boss_portrait}
-            onChange={(v) => setEraForm({ ...eraForm, boss_portrait: v })}
-          />
-          <EraField
-            label="地域分布特征"
-            hint="门店 / 机构通常开在哪里、为什么"
-            textarea
-            rows={2}
-            value={eraForm.location_pattern}
-            onChange={(v) => setEraForm({ ...eraForm, location_pattern: v })}
-          />
-          <EraField
-            label="机构典型形态"
-            hint="一行一条"
-            textarea
-            rows={3}
-            value={eraForm.organization_forms}
-            onChange={(v) => setEraForm({ ...eraForm, organization_forms: v })}
-          />
-          <EraField
-            label="业务范围"
-            hint="一行一条"
-            textarea
-            rows={3}
-            value={eraForm.business_list}
-            onChange={(v) => setEraForm({ ...eraForm, business_list: v })}
-          />
-          <EraField
-            label="行业阶段演进时间轴"
-            hint="一行一条，带起止年份"
-            textarea
-            rows={3}
-            value={eraForm.evolution}
-            onChange={(v) => setEraForm({ ...eraForm, evolution: v })}
-          />
-          <EraField
-            label="时代错位雷点"
-            hint="一行一条，写作红线（需带时间前提）"
-            textarea
-            rows={3}
-            value={eraForm.era_mismatch_red_flags}
-            onChange={(v) => setEraForm({ ...eraForm, era_mismatch_red_flags: v })}
-          />
-        </div>
-      </Modal>
-
-      <ConfirmDialog
-        open={delTarget !== null}
-        title={delTarget ? `删除设定「${delTarget.name}」？` : "删除设定？"}
-        message="删除后不可恢复。"
-        confirmText="删除"
-        onConfirm={confirmDelete}
-        onCancel={() => setDelTarget(null)}
-      />
+        <ConfirmDialog
+          open={delTarget !== null}
+          title={delTarget ? `删除设定「${delTarget.name}」？` : "删除设定？"}
+          message="删除后不可恢复。"
+          confirmText="删除"
+          onConfirm={confirmDelete}
+          onCancel={() => setDelTarget(null)}
+        />
       </div>
     </Loading>
   );

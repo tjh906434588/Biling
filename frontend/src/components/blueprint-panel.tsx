@@ -4,6 +4,9 @@
  * 核心机制：生成任务走模块级 store + SSE（useSyncExternalStore，切页/刷新后仍可恢复）；
  * 激活状态 1.5s 轮询（跨小说用 ref 隔离，避免误弹提示）；输入草稿与导入会话分别持久化
  * 到 localStorage 断点续作；导入后骨架检测采用「关键词初筛 + LLM 语义校验覆盖」两段式。
+ * 结构：本文件只做状态编排与组合子组件；子模块按逻辑边界拆到 components/blueprint/ 下——
+ * blueprint-utils.ts（骨架检测纯函数/类型、大纲模板本地缓存）、status-badge.tsx（生效徽章）、
+ * version-list.tsx（版本列表）、detail.tsx（详情区）、add-modal.tsx（新增蓝图弹窗）。
  */
 "use client";
 
@@ -19,7 +22,6 @@ import {
   listBlueprints,
   type Blueprint,
   type BlueprintActivationStatusResult,
-  type OutlineSkeletonModule,
 } from "@/lib/api";
 import {
   getBlueprintRun,
@@ -32,11 +34,17 @@ import { useElapsed } from "@/lib/use-elapsed";
 import { copyText } from "@/utils/clipboard";
 import AgentStreamModal from "./agent-stream-modal";
 import ConfirmDialog from "./confirm-dialog";
-import InfoTip from "./info-tip";
-import Modal from "./modal";
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
-import { CostHint, useAiStatus } from "@/lib/ai-status";
+import { useAiStatus } from "@/lib/ai-status";
+import {
+  keywordOutlineCheck,
+  OUTLINE_TEMPLATE_TEXT,
+  type OutlineCheckState,
+} from "./blueprint/blueprint-utils";
+import { BlueprintVersionList } from "./blueprint/version-list";
+import { BlueprintDetail } from "./blueprint/detail";
+import { BlueprintAddModal } from "./blueprint/add-modal";
 
 interface Props {
   novelId: string;
@@ -76,10 +84,6 @@ export default function BlueprintPanel({ novelId }: Props) {
   // importName 非空 = 当前内容是导入的文档
   const [importName, setImportName] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
-  // 隐藏的文件选择框 ref：点「导入大纲」按钮时触发其 click()
-  const fileRef = useRef<HTMLInputElement | null>(null);
-  // 文本框 ref：预留聚焦/滚动控制
-  const boxRef = useRef<HTMLTextAreaElement | null>(null);
 
   // 生成任务状态来自模块级 store：切到其他 tab 再回来，流式输出/进度/结果依然在
   // 第三参 getServerSnapshot：SSR/预渲染时返回模块级初始态（React 19 要求），避免 500
@@ -309,7 +313,6 @@ export default function BlueprintPanel({ novelId }: Props) {
 
   // 默认选中当前生效中的蓝图（无则回退第一条）；用户手动点选后以点选为准
   const selected = items.find((b) => b.id === selectedId) ?? items.find((b) => b.status === "active") ?? items[0] ?? null;
-  const c = selected?.content;
 
   /** 发起蓝图生成：校验输入与 AI 配置 → 草稿持久化 → 按「导入/手写」两种模式启动后台任务。
    *  成功判定：任务已交给后端即视为成功发起（run 进入 running，SSE 完成/失败由下方 status 监听 effect 统一提示）。 */
@@ -394,13 +397,18 @@ export default function BlueprintPanel({ novelId }: Props) {
     }
   }
 
+  /** 「已复制」短暂反馈：2 秒后恢复（复制成功与本地回退分支共用）。 */
+  function flashCopied() {
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   /** 一键复制大纲模板文本：优先拉取后端单一事实来源（与识别机制同步），失败回退本地缓存。 */
   async function handleCopyOutlineTemplate() {
     try {
       const tpl = await getOutlineTemplate();
       await copyText(tpl.text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      flashCopied();
       message.success(`已复制大纲模板 ${tpl.version}`);
       return;
     } catch {
@@ -408,12 +416,20 @@ export default function BlueprintPanel({ novelId }: Props) {
     }
     try {
       await copyText(OUTLINE_TEMPLATE_TEXT);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      flashCopied();
       message.warning("已复制模板（网络不好，用的是备用版）");
     } catch {
       message.error("复制失败，请手动复制模板。");
     }
+  }
+
+  /** 清除导入的文档：取消进行中的骨架校验并清空输入框/导入名/校验状态（「清除导入」按钮回调）。 */
+  function clearImport() {
+    checkAbortRef.current?.abort();
+    checkAbortRef.current = null;
+    setInputText("");
+    setImportName(null);
+    setOutlineCheck(null);
   }
 
   /** 设为生效中：激活即把该蓝图内容注入写作/大纲/设定等页面，先弹风险确认框（新增蓝图一律手动激活）。 */
@@ -515,556 +531,81 @@ export default function BlueprintPanel({ novelId }: Props) {
     setShowAddModal(true);
   }
 
-  /** 生效状态徽章（纯展示）：生效中 / 未生效。 */
-  const statusBadge = (s: Blueprint["status"]) =>
-    s === "active" ? (
-      <span className="shrink-0 whitespace-nowrap rounded bg-green-100 px-1.5 py-0.5 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">正在使用</span>
-    ) : (
-      <span className="shrink-0 whitespace-nowrap rounded bg-zinc-200 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">未使用</span>
-    );
-
   return (
     <Loading loading={loading}>
       <div className="grid items-start gap-6 lg:grid-cols-[300px_1fr]">
-      <aside className="panel flex min-w-0 max-h-[calc(100dvh-6rem)] flex-col gap-3">
-        <div className="panel-head mb-0">
-          <h3 className="panel-title">蓝图版本</h3>
-          <button
-            type="button"
-            onClick={openAddModal}
-            disabled={activatingId !== null}
-            title={activatingId !== null ? "蓝图正在切换中，完成后方可新增" : "让 AI 帮你整理一份全新的全书方案"}
-            className="btn btn-primary px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            新增蓝图
-          </button>
-        </div>
-        {items.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
-            还没有蓝图。点右上角「新增蓝图」，让 AI 帮你整理全书方案（规则/人物弧/分卷/伏笔计划）。
-          </p>
-        ) : (
-          <ul className="flex min-h-0 flex-col gap-1.5 overflow-y-auto">
-            {items.map((b) => (
-              <li key={b.id}>
-                <button
-                  className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
-                    selected?.id === b.id
-                      ? "border-zinc-500 bg-zinc-100 dark:bg-zinc-800"
-                      : "border-zinc-200 hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-600"
-                  }`}
-                  onClick={() => setSelectedId(b.id)}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">v{b.version} {b.content?.title ?? ""}</span>
-                    {statusBadge(b.status)}
-                  </div>
-                  <div className="mt-0.5 line-clamp-1 text-[11px] text-zinc-500">{b.content?.logline ?? ""}</div>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </aside>
+        <BlueprintVersionList
+          items={items}
+          selectedId={selected?.id ?? null}
+          activatingId={activatingId}
+          onAdd={openAddModal}
+          onSelect={setSelectedId}
+        />
 
-      <section className="flex min-w-0 flex-col gap-5 sm:gap-7">
-        {!selected && (
-          <div className="panel flex min-h-0 flex-col gap-3">
-            <div className="panel-head mb-0">
-              <h3 className="panel-title">蓝图详情</h3>
-            </div>
-            <p className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs leading-6 text-zinc-400 dark:border-zinc-700">
-              还没有蓝图。点左侧「新增蓝图」，让 AI 帮你整理全书方案（规则/人物弧/分卷/伏笔计划）。
-            </p>
-          </div>
-        )}
-
-        {/* ② 蓝图详情 */}
-        {selected && (
-          <div className="panel flex min-h-0 h-[calc(100dvh-6rem)] flex-col">
-            <div className="panel-head">
-              <h3 className="panel-title">
-                蓝图 v{selected.version} {c?.title ?? ""}
-                {statusBadge(selected.status)}
-              </h3>
-              <div className="flex flex-wrap items-center gap-2">
-                {selected.status !== "active" && (
-                  <button
-                    className="btn btn-approve"
-                    onClick={() => handleActivateClick(selected)}
-                    disabled={activatingId !== null}
-                  >
-                    {activatingId !== null ? "正在切换…" : "设为当前使用"}
-                  </button>
-                )}
-                {selected.status !== "active" && (
-                  <button
-                    className="btn btn-danger"
-                    onClick={() => handleDelete(selected)}
-                    disabled={activatingId !== null}
-                  >
-                    删除
-                  </button>
-                )}
-                {selected.status === "active" && (
-                  <span className="rounded-lg border border-green-200 bg-green-50 px-3 py-1.5 text-xs text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-300">
-                    当前正在使用 · 不可删除，想删需先切换到另一版
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto">
-            {c?.logline && (
-              <p className="mb-2 rounded-lg bg-zinc-50 p-3 text-sm dark:bg-zinc-900">
-                <span className="font-semibold">一句话：</span>
-                {c.logline}
-              </p>
-            )}
-            {c?.theme && (
-              <p className="mb-2 text-sm text-zinc-700 dark:text-zinc-300">
-                <span className="font-semibold">主题：</span>
-                {c.theme}
-              </p>
-            )}
-            {c?.core_conflict && (
-              <p className="mb-3 text-sm text-zinc-700 dark:text-zinc-300">
-                <span className="font-semibold">核心冲突：</span>
-                {c.core_conflict}
-              </p>
-            )}
-
-            {(c?.total_word_count || c?.total_chapters || c?.chapter_word_count) && (
-              <p className="mb-3 rounded-lg bg-zinc-50 p-3 text-xs text-zinc-500 dark:bg-zinc-900">
-                <span className="font-semibold">全书体量规划：</span>
-                {c.total_word_count ? `总字数 ${c.total_word_count}` : ""}
-                {c.total_word_count && c.total_chapters ? " · " : ""}
-                {c.total_chapters ? `总章数 ${c.total_chapters}` : ""}
-                {(c.total_word_count || c.total_chapters) && c.chapter_word_count ? " · " : ""}
-                {c.chapter_word_count ? `单章 ${c.chapter_word_count}` : ""}
-              </p>
-            )}
-
-            {c?.world_rules && c.world_rules.length > 0 && (
-              <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">世界规则</h4>
-                <ul className="flex flex-col gap-1">
-                  {c.world_rules.map((r, i) => (
-                    <li key={i} className="text-sm text-zinc-700 dark:text-zinc-300">
-                      <span className="font-medium">{r.name}</span>：{r.detail}
-                      {r.constraints?.length ? (
-                        <span className="ml-2 text-[11px] text-red-500 dark:text-red-400">约束：{r.constraints.join("；")}</span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {c?.character_arcs && c.character_arcs.length > 0 && (
-              <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">人物弧光</h4>
-                <ul className="flex flex-col gap-1">
-                  {c.character_arcs.map((a, i) => (
-                    <li key={i} className="text-sm text-zinc-700 dark:text-zinc-300">
-                      <span className="font-medium">{a.character}</span>
-                      {a.personality ? <span className="ml-1.5 text-[11px] text-zinc-500">性格：{a.personality}</span> : null}
-                      ：{a.start} → {a.end}
-                      {a.turning_points?.length ? (
-                        <span className="ml-2 text-[11px] text-zinc-500">转折：{a.turning_points.join("；")}</span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {c?.volumes && c.volumes.length > 0 && (
-              <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">分卷</h4>
-                <div className="flex flex-wrap gap-1.5">
-                  {c.volumes.map((v, i) => (
-                    <span key={i} className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs dark:border-zinc-800">
-                      第{v.no}卷《{v.name}》{v.focus}
-                      {v.word_count ? <span className="ml-1 text-[11px] text-zinc-400">（{v.word_count}）</span> : null}
-                      （{v.chapters_range}）
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {c?.foreshadowing_plan && c.foreshadowing_plan.length > 0 && (
-              <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">伏笔计划</h4>
-                <ul className="flex flex-col gap-1">
-                  {c.foreshadowing_plan.map((f, i) => (
-                    <li key={i} className="text-sm text-zinc-700 dark:text-zinc-300">
-                      第{f.plant_chapter}章埋 → 第{f.payoff_chapter}章揭：{f.desc}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {c?.subplots && c.subplots.length > 0 && (
-              <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">长线支线</h4>
-                <ul className="flex flex-col gap-1">
-                  {c.subplots.map((s, i) => (
-                    <li key={i} className="text-sm text-zinc-700 dark:text-zinc-300">
-                      {s}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {c?.notes && c.notes.length > 0 && (
-              <div className="mb-3">
-                <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">保留要点（原文）</h4>
-                <ul className="flex flex-col gap-1">
-                  {c.notes.map((n, i) => (
-                    <li key={i} className="text-sm text-zinc-700 dark:text-zinc-300">
-                      {n}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            </div>
-          </div>
-        )}
-      </section>
-
-      <ConfirmDialog
-        open={delTarget !== null}
-        title={delTarget ? `删除蓝图 v${delTarget.version}？` : "删除蓝图？"}
-        message="删除后，该蓝图及其导入的设定、文风将一并清除，且不可恢复。"
-        confirmText="删除"
-        onConfirm={confirmDelete}
-        onCancel={() => setDelTarget(null)}
-      />
-
-      {/* 切换生效中风险确认：所有未生效蓝图激活前一律弹风险确认框（新增蓝图不自动生效） */}
-      <ConfirmDialog
-        open={activateTarget !== null}
-        title={activateTarget ? `将 v${activateTarget.version} 设为当前使用？` : "设为当前使用？"}
-        message={`切到这一版后：\n1) 写正文、写大纲、写设定都会按这一版来；\n2) 之前那版里的设定先收起来，不会丢，随时能切回去；\n3) 已经写好的正文和章节不会动。\n\n要切换吗？`}
-        confirmText="确定切换"
-        tone="primary"
-        onConfirm={confirmActivate}
-        onCancel={() => setActivateTarget(null)}
-      />
-
-      {/* ── 新增蓝图弹窗 ── */}
-      <Modal
-        open={showAddModal}
-        title="新增蓝图"
-        subtitle="蓝图 = 整本书的底稿：主题、核心冲突、人物弧光、分卷和伏笔计划。每一版都会保留，AI 写正文和大纲时只照着最新选中这版来。"
-        onClose={closeAddModal}
-        maxWidth="max-w-xl"
-        fill
-        footer={
-          <div className="flex w-full items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={closeAddModal}
-              className="btn btn-ghost px-4 py-1.5"
-            >
-              取消
-            </button>
-            <div className="flex items-center gap-2">
-              <span className="hidden sm:inline">
-                <CostHint />
-              </span>
-              <button
-                type="button"
-                onClick={handleGenerate}
-                disabled={running || importing || outlineCheck?.status === "pending" || !inputText.trim()}
-                className="btn btn-primary px-4 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {running ? "生成中…" : importName ? "按这份大纲生成全书方案" : "生成蓝图"}
-              </button>
-              {/* 点击生成后出现：打开生成过程弹窗（DeepSeek 风格，思考+正文流式滚动）；生成完毕即隐藏 */}
-              {run.novelId === novelId && running && (
-                <button
-                  type="button"
-                  onClick={() => setShowStreamModal(true)}
-                  className="btn btn-ghost px-3 py-1.5"
-                >
-                  查看生成过程
-                </button>
-              )}
-            </div>
-          </div>
-        }
-      >
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {/* 生成期间按钮不隐藏、仅禁止点击（等蓝图生成完毕解除） */}
-            <button
-              type="button"
-              className="btn btn-ghost px-3 py-1.5 text-sm"
-              onClick={() => fileRef.current?.click()}
-              disabled={importing || running || outlineCheck?.status === "pending"}
-            >
-              {importing ? "导入中…" : "导入大纲"}
-            </button>
-            {importName && (
-              <button
-                type="button"
-                className="btn btn-ghost px-3 py-1.5 text-sm"
-                onClick={() => {
-                  checkAbortRef.current?.abort();
-                  checkAbortRef.current = null;
-                  setInputText("");
-                  setImportName(null);
-                  setOutlineCheck(null);
-                }}
-                disabled={running || outlineCheck?.status === "pending"}
-              >
-                清除导入
-              </button>
-            )}
-            {/* 大纲模板参考：一键复制给 AI 识别的模板文本，? 悬浮说明在按钮内部、仅图标触发（InfoTip 渲染到 body，不被弹窗遮挡） */}
-            <div className="ml-auto">
-              <button
-                type="button"
-                className="btn btn-ghost px-3 py-1.5 text-sm"
-                onClick={handleCopyOutlineTemplate}
-              >
-                {copied ? "已复制" : "复制大纲模板"}
-                <InfoTip side="bottom" align="right" width="w-80">
-                  <p className="mb-1 font-medium text-zinc-700 dark:text-zinc-200">
-                    推荐结构（顺序可调整、模块可增删）
-                  </p>
-                  <ol className="list-decimal pl-4">
-                    <li><b>全书总纲</b>：一句话故事 · 核心主题 · 全书体量（总字数/总章数/单章字数）· 核心冲突或叙事逻辑</li>
-                    <li><b>分卷结构</b>：每卷 = 卷名 + 章节范围 + 本卷重点 + 核心剧情</li>
-                    <li><b>人物设定</b>：主角 = 姓名/性格/起点→终点/成长转折；重要配角有则必写</li>
-                    <li><b>主线与支线</b>：主线剧情走向 + 长效支线</li>
-                    <li><b>世界观/规则</b>：题材相关才写（系统/力量体系/世界规则）</li>
-                    <li><b>伏笔计划</b>：选填，有具体埋/揭安排才写（无则留空，由 AI 规划）</li>
-                    <li><b>爽点/节奏规划</b>：通用模块，按前期/中期/后期排爽点·钩子·糖点，防节奏枯竭</li>
-                    <li><b>差异化/卖点定位</b>：通用模块，对标作品 · 独特设定 · 立意/平台卖点，回答&ldquo;凭什么被记住&rdquo;</li>
-                  </ol>
-                  <p className="mt-1.5 text-[11px] text-zinc-400">
-                    点击按钮复制模板文本：可粘贴进文本框作为底稿，或发给 AI 按模板整理你的大纲。
-                  </p>
-                </InfoTip>
-              </button>
-            </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".docx,.pdf,.md,.markdown,.txt"
-              className="hidden"
-              onChange={handleImportFile}
-            />
-          </div>
-
-          <textarea
-            ref={boxRef}
-            className="min-h-0 w-full flex-1 resize-none overflow-y-auto rounded-lg border border-zinc-300 bg-zinc-50 p-3 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            placeholder={
-              running
-                ? "蓝图正在生成中，输入框暂时锁定；生成完成后即可继续编辑或重新导入。"
-                : importName
-                  ? `已导入「${importName}」：下面是文档全文，可直接修改，完成后点「按这份大纲生成全书方案」。`
-                  : "作者补充要求（可选：类型/主题/风格取向…），也可以先点「导入大纲」把文档填进来。"
-            }
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            // 生成中 / AI 骨架校验中禁止编辑：用 readOnly 而非 disabled，保证已有内容正常显示不被淡化
-            readOnly={running || outlineCheck?.status === "pending"}
+        <section className="flex min-w-0 flex-col gap-5 sm:gap-7">
+          <BlueprintDetail
+            selected={selected}
+            activatingId={activatingId}
+            onActivate={handleActivateClick}
+            onDelete={handleDelete}
           />
+        </section>
 
-          {/* 导入后骨架检测：先关键词初筛立即提示，AI 语义校验结果回来覆盖；只列缺失模块，可跳过直接生成。高度随内容自适应，最多占弹窗一半，超出自身滚动 */}
-          {importName &&
-            !running &&
-            outlineCheck &&
-            (outlineCheck.status === "pending" || outlineCheck.modules.some((m) => !m.ok)) && (
-              <div className="shrink-0 max-h-[50%] overflow-y-auto rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 dark:border-amber-800 dark:bg-amber-950/60">
-                {outlineCheck.status === "pending" && !outlineCheck.modules.some((m) => !m.ok) ? (
-                  /* AI 语义校验进行中且关键词初筛无缺失：给用户加载反馈（说明输入框为何暂时锁定） */
-                  <div className="flex items-center gap-2">
-                    <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
-                    <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
-                      AI 正在检查你的大纲缺不缺东西…（检查期间输入框暂时锁定，完成后即可编辑）
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
-                      {outlineCheck.status === "pending"
-                        ? "检查发现以下几项可以补全（AI 正在细看…）"
-                        : outlineCheck.source === "llm"
-                          ? "检查发现以下几项可以补全（可跳过直接生成）"
-                          : "检查发现以下几项可以补全（AI 检查暂时不可用，可跳过直接生成）"}
-                    </p>
-                    <ul className="mt-1.5 flex flex-col gap-1.5">
-                      {outlineCheck.modules
-                        .filter((m) => !m.ok)
-                        .map((m) => (
-                          <li key={m.id} className="text-xs leading-5 text-amber-700 dark:text-amber-300">
-                            {m.optional ? (
-                              <span className="text-amber-500/90 dark:text-amber-400/90">（选填建议）{m.reason}</span>
-                            ) : (
-                              m.reason
-                            )}
-                          </li>
-                        ))}
-                    </ul>
-                  </>
-                )}
-              </div>
-            )}
-        </div>
-      </Modal>
+        <ConfirmDialog
+          open={delTarget !== null}
+          title={delTarget ? `删除蓝图 v${delTarget.version}？` : "删除蓝图？"}
+          message="删除后，该蓝图及其导入的设定、文风将一并清除，且不可恢复。"
+          confirmText="删除"
+          onConfirm={confirmDelete}
+          onCancel={() => setDelTarget(null)}
+        />
 
-      {/* ── 生成过程弹窗：DeepSeek 网页版同款交互（复用公共组件） ── */}
-      <AgentStreamModal
-        open={showStreamModal}
-        onClose={() => setShowStreamModal(false)}
-        title="AI 生成过程"
-        running={running}
-        draftText={run.draftText}
-        thinkingText={run.thinkingText}
-        error={run.status === "error"}
-        elapsed={elapsed}
-        novelId={novelId}
-        emptyRunningText={
-          "AI 正在思考整理，头1-3分钟通常没字，属正常，\n正文开始生成后会在这里实时滚动显示…"
-        }
-        emptyDoneText="生成完成，新蓝图已出现在版本列表，可关闭此弹窗查看。"
-      />
+        {/* 切换生效中风险确认：所有未生效蓝图激活前一律弹风险确认框（新增蓝图不自动生效） */}
+        <ConfirmDialog
+          open={activateTarget !== null}
+          title={activateTarget ? `将 v${activateTarget.version} 设为当前使用？` : "设为当前使用？"}
+          message={`切到这一版后：\n1) 写正文、写大纲、写设定都会按这一版来；\n2) 之前那版里的设定先收起来，不会丢，随时能切回去；\n3) 已经写好的正文和章节不会动。\n\n要切换吗？`}
+          confirmText="确定切换"
+          tone="primary"
+          onConfirm={confirmActivate}
+          onCancel={() => setActivateTarget(null)}
+        />
+
+        <BlueprintAddModal
+          open={showAddModal}
+          onClose={closeAddModal}
+          importName={importName}
+          importing={importing}
+          outlineCheck={outlineCheck}
+          inputText={inputText}
+          onInputChange={setInputText}
+          onImportFile={handleImportFile}
+          onClearImport={clearImport}
+          copied={copied}
+          onCopyTemplate={handleCopyOutlineTemplate}
+          running={running}
+          showStreamBtn={run.novelId === novelId && running}
+          onShowStream={() => setShowStreamModal(true)}
+          onGenerate={handleGenerate}
+        />
+
+        {/* ── 生成过程弹窗：DeepSeek 网页版同款交互（复用公共组件） ── */}
+        <AgentStreamModal
+          open={showStreamModal}
+          onClose={() => setShowStreamModal(false)}
+          title="AI 生成过程"
+          running={running}
+          draftText={run.draftText}
+          thinkingText={run.thinkingText}
+          error={run.status === "error"}
+          elapsed={elapsed}
+          novelId={novelId}
+          emptyRunningText={
+            "AI 正在思考整理，头1-3分钟通常没字，属正常，\n正文开始生成后会在这里实时滚动显示…"
+          }
+          emptyDoneText="生成完成，新蓝图已出现在版本列表，可关闭此弹窗查看。"
+        />
       </div>
     </Loading>
   );
 }
-
-/** 导入后骨架检测状态：
- *  - pending：关键词快速扫描已出初筛结果，AI 语义校验进行中；
- *  - done：终态（source=llm 为 AI 语义校验结果；source=keyword 为 AI 不可用时的关键词扫描回退）。
- *  六个通用大纲模块：必填骨架四件套（全书体量、分卷/章节结构、核心人物、主线/支线）
- *  + 选填建议两项（爽点节奏 pacing、差异化卖点 differentiators，模块通用、内容因书而异）。
- *  世界规则/伏笔等题材相关模块不在此列——由蓝图师按材料实际情况取舍，避免误拦现实题材。 */
-interface OutlineCheckState {
-  status: "pending" | "done";
-  source: "keyword" | "llm";
-  modules: OutlineSkeletonModule[];
-}
-
-const OUTLINE_CHECKS: {
-  id: OutlineSkeletonModule["id"];
-  hint: string;
-  patterns: RegExp[];
-  optional?: boolean;
-}[] = [
-  {
-    id: "scale",
-    hint: "未检测到全书体量规划，补充总字数/总章数/单章字数，如「240万字 · 800章 · 3000字/章」",
-    patterns: [
-      /\d[\d.,]*\s*万\s*字/, // 240万字 / 240万 字
-      /[一二三四五六七八九十百千零]+\s*万\s*字/, // 二百四十万字
-      /总字数|总体量|总章数|章节数|单章字数|单章标准|字\/章|字每章/,
-      /\d+\s*章/, // 800章 / 120章
-    ],
-  },
-  {
-    id: "volumes",
-    hint: "未检测到分卷/章节结构，补充卷名 + 章节范围（如【第1-85章】）+ 本卷重点/剧情；仅有「第X卷：字数｜章数」的数据表不算分卷结构",
-    patterns: [
-      /【\s*第?\s*\d+\s*[-–—\u2011~～至]\s*\d+\s*章?/, // 章节范围【第1-85章】/【1-85章】
-      /第[一二三四五六七八九十百千零\d]+[卷部][:：]?\s*【/, // 第X卷【章节范围】
-      /卷名\s*[:：]/, // 卷名：
-      /本卷重点|本卷剧情|本卷核心|本卷概要|本卷目标/, // 卷级重点/剧情标注
-      /第[一二三四五六七八九十百千零\d]+章\s*[:：]/, // 第一章：标题（章节列表）
-    ],
-  },
-  {
-    id: "characters",
-    hint: "未检测到核心人物设定，补充主角（至少）的姓名/性格/起点→终点/成长转折，配角有则一并列出",
-    patterns: [
-      /主角|配角|人物|角色|人设|人物弧|弧光|姓名|性格|成长线|成长弧线|心性/,
-    ],
-  },
-  {
-    id: "plot",
-    hint: "未检测到主线/支线，补充主线剧情走向或长效支线，如「核心剧情走向：…」",
-    patterns: [
-      /剧情|故事|主线|支线|剧情线|故事线|走向|梗概|核心逻辑|滚雪球/,
-    ],
-  },
-  {
-    id: "pacing",
-    optional: true,
-    hint: "未检测到爽点/节奏规划（选填建议），可按前期/中期/后期补充，如「前期：新手成长、吊打行业乱象」",
-    patterns: [
-      /爽点|爽感|钩子|糖点|期待感|节奏|高潮|情绪点|爆点/,
-    ],
-  },
-  {
-    id: "differentiators",
-    optional: true,
-    hint: "未检测到差异化/卖点定位（选填建议），可补充对标作品、独特设定、立意卖点，如「对标《工业之心》；系统认知绑定、办学创新」",
-    patterns: [
-      /差异化|卖点|对标|参考作品|独特设定|不撞|创新点|立意|平台流量/,
-    ],
-  },
-];
-
-/** 关键词快速扫描（AI 语义校验结果回来前的即时初筛；后端 LLM 失败时也用它兜底）。 */
-function keywordOutlineCheck(text: string): OutlineSkeletonModule[] {
-  return OUTLINE_CHECKS.map((c) => {
-    const hit = c.patterns.some((re) => re.test(text));
-    return {
-      id: c.id,
-      ok: hit,
-      reason: hit ? "已检测到相关内容" : c.hint,
-      optional: c.optional,
-    };
-  });
-}
-
-/** 大纲模板·本地缓存（离线兜底）：真实单一事实来源在后端 app/services/blueprint_outline_template.py，改模板请改后端。 */
-const OUTLINE_TEMPLATE_TEXT = `请把我的大纲信息，按下面模板整理成规范的全书大纲（保留所有信息、结构化输出）：
-
-一、全书总纲
-- 一句话故事：
-- 核心主题：
-- 全书体量（总字数/总章数/单章字数）：
-- 核心冲突或叙事逻辑：
-
-二、分卷结构（每卷）
-- 卷名【章节范围】
-- 本卷重点：
-- 核心剧情：
-
-三、人物设定
-- 主角：姓名 / 性格特质 / 起点 → 终点 / 成长转折
-- 重要配角：姓名 / 定位 / 弧线
-
-四、主线与支线
-- 主线剧情走向：
-- 长效支线：
-
-五、世界观/规则（题材相关才写）
-- 世界规则 / 力量体系 / 系统设定：
-- 系统/面板/界面的固定栏位结构（如面板固定展示哪些栏、界面固定字段），统一按「面板固定展示：栏位1+栏位2+栏位3」措辞列出，并注明「栏位值可为「-」」；这是界面结构定义，不是剧情内容要求
-- 剧情内容若要求"某场景/章节必须同时出现一组元素"（硬约束，如战斗必写敌人+地形+道具），用「必须包含：元素A+元素B+元素C」格式写（用+号分隔，别用、号），系统会作为每一章都必须出现的内容来核对
-- 涉及明确时间的事实（成立/入职/创业/搬迁/重大事件/人物关系变化）务必写清年份或时间段（如"2000年成立""2010—2022"），系统会记成固定事实，写作和检查时不能跟它冲突
-- 出现机构/组织/单位时尽量写全：成立时间；负责人；人员规模；业务范围；位置布局；时代特征（材料没给的写"待定"）
-
-六、伏笔计划（选填，有具体埋设/回收安排才写）
-- 伏笔描述：埋设章节 → 回收章节
-
-七、爽点/节奏规划（通用模块：按阶段规划阅读爽点/钩子，防节奏枯竭；悬疑称钩子、恋爱称糖点、爽文称爽点）
-- 前期爽点：
-- 中期爽点：
-- 后期爽点：
-
-八、差异化/卖点定位（通用模块：回答"凭什么不撞文、凭什么被记住"）
-- 对标作品 / 独特设定：
-- 立意 / 平台卖点：`;
