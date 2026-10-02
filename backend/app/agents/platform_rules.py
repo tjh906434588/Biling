@@ -526,10 +526,49 @@ GENRE_FAMILY_REGISTRY = [
 # 设定/金手指类标签（叠加型，不构成独立题材族）：随单题材软性方向（GENRE_DIRECTIONS）生效
 SETUP_GENRE_TAGS = {"重生", "穿越", "系统"}
 
+# 题材同义标签 → 标准标签（题材族匹配用的单一事实源；前端 constants/meta.ts 的 GENRE_ALIASES 与之同步）
+# 覆盖常见网文同义写法（修仙=仙侠、电竞=游戏 等），让自定义标签也能命中题材族。
+# 未收录的变体按原样参与匹配（匹配不上族时回退通用节奏，与现状一致）；发现高频变体再补。
+GENRE_ALIASES: dict[str, str] = {
+    "修仙": "仙侠",
+    "修真": "仙侠",
+    "魔幻": "奇幻",
+    "末世": "科幻",
+    "末日": "科幻",
+    "上班流": "职场",
+    "打工人": "职场",
+    "甜文": "甜宠",
+    "宠文": "甜宠",
+    "现言": "言情",
+    "古言": "言情",
+    "古代言情": "言情",
+    "电竞": "游戏",
+    "游戏竞技": "游戏",
+    "规则怪谈": "悬疑",
+    "恐怖": "灵异",
+    "惊悚": "灵异",
+}
+
+
+def _normalize_genres(genres: list[str] | None) -> set[str]:
+    """题材标签归一化：去空白/去重，并把同义变体映射为标准标签（GENRE_ALIASES）。
+
+    只影响题材族匹配，不改 novels.genres 存储值（用户写什么仍存什么）。
+    """
+    out: set[str] = set()
+    for g in genres or []:
+        if not isinstance(g, str):
+            continue
+        g = g.strip()
+        if not g:
+            continue
+        out.add(GENRE_ALIASES.get(g, g))
+    return out
+
 
 def _match_genre_families(background_type: str | None, genres: list[str] | None) -> list[dict]:
-    """按 背景×题材 解析命中的题材族（应用背景限定 + 负面过滤）。"""
-    gset = {g.strip() for g in (genres or []) if isinstance(g, str) and g.strip()}
+    """按 背景×题材 解析命中的题材族（应用背景限定 + 负面过滤；题材先经 GENRE_ALIASES 归一化）。"""
+    gset = _normalize_genres(genres)
     if not gset:
         return []
     bg = (background_type or "").strip()
