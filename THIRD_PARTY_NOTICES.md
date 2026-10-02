@@ -6,7 +6,7 @@
 
 | 项目 | License | 借鉴内容（设计思想，非代码） |
 |---|---|---|
-| [arboris-novel](https://github.com/t59688/arboris-novel) | MIT | POV 信息可见性过滤、小说宪法机制、伏笔健康度、RAG 分层架构 |
+| [arboris-novel](https://github.com/t59688/arboris-novel) | MIT | POV 信息可见性过滤、小说宪法机制、伏笔健康度 |
 | [neuro-book](https://github.com/notnotype/neuro-book) | AGPL-3.0 | 双时间轴 as-of 查询、主体别名合并、章节信息控制、AI 味检测方法论 |
 
 本项目使用的第三方开源依赖均为宽松许可（MIT / BSD / Apache-2.0 等），

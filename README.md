@@ -53,7 +53,7 @@
 |---|---|
 | 前端 | Next.js 16（App Router）+ React 19 + TypeScript + Tailwind CSS 4 |
 | 后端 | Python + FastAPI + Uvicorn + SQLAlchemy 2 + Alembic |
-| 数据库 | SQLite（本地/桌面版默认，位于数据目录 data\）/ PostgreSQL + pgvector（云部署，语义检索） |
+| 数据库 | SQLite（本地/桌面版默认，位于数据目录 data\） |
 | LLM 网关 | LiteLLM（DeepSeek / Qwen / Claude / GPT / Ollama 可切换） |
 | 流式 | SSE（正文 / 思考过程实时滚动） |
 | 桌面打包 | Electron 壳 + PyInstaller（绿色版 zip；本地脚本 / GitHub Actions 自动打包） |

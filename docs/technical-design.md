@@ -19,13 +19,13 @@
 │  ├────────────────────────────────────────────────────────────────────┤   │
 │  │ 共享记忆层：设定库 · 故事状态 · 伏笔账本 · 风格画像 · 质量账本        │   │
 │  ├────────────────────────────────────────────────────────────────────┤   │
-│  │ RAG：embedding + pgvector 语义检索 · 实体名精确匹配 · token 预算器   │   │
+│  │ 设定快照注入（宪法/固化优先） · 实体名精确匹配 · token 预算器            │   │
 │  ├────────────────────────────────────────────────────────────────────┤   │
 │  │ LLM 网关：LiteLLM（DeepSeek/Qwen/Claude/GPT/Ollama 可切换）         │   │
 │  └────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │
-                   PostgreSQL + pgvector（MVP 可换 SQLite）
+                                   SQLite（本地/桌面版默认，数据目录 data）
 ```
 
 **设计原则**
@@ -45,10 +45,9 @@
 | 状态/请求 | SWR 或 TanStack Query + fetch | 流式用 EventSource/fetch reader |
 | 后端 | Python 3.11 + FastAPI + Uvicorn | SSE、async、后台任务 |
 | ORM/迁移 | SQLAlchemy 2 + Alembic | |
-| 数据库 | PostgreSQL 15 + pgvector（开发可用 SQLite 兜底） | 语义检索 |
+| 数据库 | SQLite（默认，位于数据目录 data） | 本地/桌面版零依赖 |
 | LLM 网关 | LiteLLM（OpenAI 兼容） | provider 可切换 |
 | 结构化输出 | Pydantic v2 + JSON Schema + 自纠错重试 | |
-| Embedding | bge-m3 或 text-embedding-3-small | 设定/章节向量化 |
 | 任务队列 | asyncio + BackgroundTasks（MVP）；后续可换 Celery | 提取师等后处理 |
 | 部署 | Docker Compose（前端 + 后端 + PG） | |
 
@@ -66,7 +65,6 @@ biling/
 │  │  ├─ agents/              # 角色：blueprint_architect outliner novelist reviser extractor critic setting_extractor style_extractor import_checker
 │  │  │  └─ base.py           # 角色基类：build_context()/run()/parse_output() 约定
 │  │  ├─ memory/              # 共享记忆层仓储：settings_repo ledger_repo state_repo style_repo quality_repo
-│  │  ├─ rag/                 # embedding、检索、token 预算器
 │  │  ├─ llm/                 # LiteLLM 封装、模型路由（按任务选模型）、流式封装
 │  │  ├─ schemas/             # Pydantic：角色输入输出 schema + 数据模型 schema
 │  │  ├─ db/                  # SQLAlchemy 模型、session、迁移
@@ -100,7 +98,6 @@ settings(
   name TEXT, description TEXT,
   structured JSONB,                            -- 按 type 的字段：如角色{appearance, personality, goals, relations}
   is_constitution BOOLEAN DEFAULT false,       -- 小说宪法标记：不可变硬约束（世界规则/禁忌），评价师硬依据
-  embedding VECTOR(1024),                      -- pgvector；SQLite 开发期可为 NULL
   created_at, updated_at, deleted_at
 )
 -- 增强（借鉴 NeuroBook nb-memory，防"同一角色两条设定"分身问题）：
@@ -304,7 +301,7 @@ detector_config(
 
 **输入（ContextPack，由 token 预算器装配，详见 §7）**：
 - 本章大纲（beats/goal/chapter_function/plant/resolve）
-- 相关设定（RAG 检索结果，过滤到本章涉及实体）
+- 相关设定（快照注入，过滤到本章涉及实体）
 - 前文压缩记忆（最近 story_state 若干条）
 - 最近 1–2 章全文（保留文风连续性）
 - 风格画像（traits + avoid_list）
@@ -319,7 +316,7 @@ detector_config(
 **实现要点**：
 - 上下文装配是核心，杜绝"整库灌给模型"。为此在 `build_context` 里：
   1. **信息可见性过滤（POV 裁剪，借鉴 Arboris）**：先算"本章可见角色集合" = 已登场角色（从已完成章节/记忆提取）∪ 本章大纲计划登场角色；只把可见角色的设定给模型，**未登场角色连名字都不出现**；同时剔除蓝图中的剧透字段（full_synopsis、后续章节大纲等），防"主角全知"。
-  2. 大纲师产出已含 `characters/locations` 清单 → 精确匹配 + embedding 召回相关设定（top-10 以内）；
+  2. 大纲师产出已含 `characters/locations` 清单 → 精确匹配 + 快照注入相关设定；
   3. **三层写作指令装配（§5.7）**：L1 从系统级 prompt 模板取固定段；L2 从 `style_profiles` active 版取 traits/avoid_list/示例；L3 按 `chapter_function` + 写作模式**运行时派生**——`climax/turning` 给"加快节奏、冲突升级"指令，`buildup/interlude` 才允许"舒缓从容、不急于推进"；`draft_free` 才注入"写到哪算哪"的放松心态，`outline_guided` 注入"完成本章 goal"的目标推进指令。**L3 同时注入大纲的 `info_control`（§5.3）**：读者/主角各知道什么、必须向读者隐瞒什么、只能点到为止的伏笔——正文不得提前泄露 `must_hide` 内容；
   4. 冲突校验：设定库规则（含"小说宪法"硬约束） vs 大纲中的 plant/conflict，冲突项提示进上下文让小说家避坑；
   5. 生成后强制 schema 校验章节正文长度下限，防止空章/截断。
@@ -407,7 +404,7 @@ detector_config(
 
 | 记忆 | 存储 | 写入方 | 读取方 |
 |---|---|---|---|
-| 设定库 | settings + embedding | 设定抽取（概念转正）、作者手动、蓝图师（规则） | 所有角色的 build_context |
+| 设定库 | settings | 设定抽取（概念转正）、作者手动、蓝图师（规则） | 所有角色的 build_context |
 | 故事状态 | story_state | 提取师 | 大纲师、小说家 |
 | 伏笔账本 | plot_ledger | 大纲师、提取师 | 大纲师、小说家、评价师 |
 | 风格画像 | style_profiles | 风格学习服务（§9） | 小说家、评价师（L2） |
@@ -428,23 +425,22 @@ detector_config(
 | 系统提示 + 输出约束 | ~2.5k | 固定段：角色指令 + 输出 schema + **L1 通用防 AI 硬约束**（§5.7） |
 | 三层写作指令（L2+L3） | ~1.5k | L2 风格画像 + L3 本章节奏/心态指令（由 chapter_function 派生） |
 | 本章大纲（beats/goal/plant/resolve） | ~2k | |
-| 相关设定（RAG top-10 过滤到本章实体） | ~4k | 精确匹配 + embedding 双路召回 |
+| 相关设定（快照注入，过滤到本章实体） | ~4k | 宪法/固化优先 + 最近更新 |
 | 前文压缩记忆（最近 3 条 story_state） | ~3k | 不用全文堆历史 |
 | 最近 1–2 章全文 | ~8k | 保文风连续性 |
 | 风格画像（traits + avoid_list + 示例片段） | ~1k | |
 | active 蓝图相关片段 | ~1k | theme/core_conflict/本卷 focus |
 | **生成余量** | **~10k** | 约 7000 中文字，足够一章 |
 
-**RAG 流程**：
+**相关设定装配**：
 1. 取大纲中 `characters/locations/entities` 清单 → 设定库**精确匹配**；
-2. 对"规则/概念"类做 embedding 相似度召回（补充遗漏）；
-3. 合并去重、按 type 排序，超过预算截断并在上下文中标注"以下设定被截断"；
-4. 冲突校验结果附在上下文尾部（"注意：规则 X 与大纲冲突，请规避/化解"）。
+2. 合并去重、按 type 排序，超过预算截断并在上下文中标注"以下设定被截断"；
+3. 冲突校验结果附在上下文尾部（"注意：规则 X 与大纲冲突，请规避/化解"）。
 
 > **换模型不断片（关键认知）**：连续性是**记忆层**（数据库）保证的，不是模型上下文。每次 `build_context` 都从 story_state/plot_ledger/settings/style_profiles 重新装配，换模型 = 换一个"读记忆的人"，记忆没丢。换模型唯一要适配的是**上下文窗口大小**：
 >
 > 1. `model_routes` 每行带 `context_window`，token 预算器按目标模型窗口动态装配；
-> 2. 超窗口时按**裁剪优先级**截断（先剪旧的）：最近全文（2章→1章）→ RAG 设定（减 top-k）→ 旧 story_state（保留最近 3 条）→ 蓝图片段；**必保**：本章大纲 + 三层写作指令（L1/L2/L3）+ 最近 1 条 story_state；
+> 2. 超窗口时按**裁剪优先级**截断（先剪旧的）：最近全文（2章→1章）→ 相关设定（减量）→ 旧 story_state（保留最近 3 条）→ 蓝图片段；**必保**：本章大纲 + 三层写作指令（L1/L2/L3）+ 最近 1 条 story_state；
 > 3. 被截断的组件在上下文末尾标注"以下设定/记忆被截断"，让模型知道自己信息不完整；
 > 4. 32k 窗口即可正常跑；128k 给更多上下文但**不是质量线性提升**——"给得对"比"给得多"重要（记忆层保证给得对）。
 
@@ -492,7 +488,7 @@ detector_config(
 |---|---|---|
 | POST | /api/novels | 建项目 |
 | GET | /api/novels/:id | 项目详情 |
-| CRUD | /api/novels/:id/settings | 设定条目（GET 支持 `?type=&q=` 语义检索） |
+| CRUD | /api/novels/:id/settings | 设定条目（GET 支持 `?type=&q=` 名称/描述检索） |
 | POST | /api/novels/:id/settings/conflicts | 设定冲突预检 |
 | POST | /api/novels/:id/blueprints/generate | 生成蓝图（流式）→ draft |
 | GET | /api/novels/:id/blueprints | 版本列表 |
@@ -520,7 +516,7 @@ detector_config(
 | 路由 | 页面 | 关键交互 |
 |---|---|---|
 | / | 项目列表 | 新建/进入项目 |
-| /novels/[id]/settings | 设定管理 | 卡片视图、类型筛选、全文/语义搜索、冲突提示 |
+| /novels/[id]/settings | 设定管理 | 卡片视图、类型筛选、全文搜索、冲突提示 |
 | /novels/[id]/blueprint | 蓝图 | 分卷结构可视化、版本切换 |
 | /novels/[id]/outline | 大纲 + 账本 | 章节列表、伏笔账本（open/closed 泳道） |
 | /novels/[id]/write | **写作页（核心）** | 三栏：左侧相关设定/记忆摘要 · 中间 TipTap 编辑器 · 右侧伏笔待回收与评价 |
@@ -564,8 +560,8 @@ detector_config(
 
 ### 13.4 成本护栏
 
-- 记录每次调用 token 用量；embedding 结果按 (novel, type, name) 缓存；超长自动截断 + 告警。
-- 章节生成单版本（`version_count` 默认 1，字段保留便于未来扩展）。
+- 记录每次调用 token 用量；超长自动截断 + 告警。
+- 章节生成固定单版本，保留章节「版本历史」供对比回滚。
 - 本地部署可选 Ollama（`model_routes` 指向本地 endpoint）。
 
 ### 13.5 AI 生成检测（可选，体检性质）
@@ -648,10 +644,9 @@ detector_config(
 | 1 | **信息可见性过滤（POV 裁剪）**：只给写手"已登场/本章计划登场"角色的设定，未登场角色连名字都不出现；剔除 full_synopsis 等剧透字段 | §5.4 小说家 build_context |
 | 2 | **小说宪法（Constitution）**：不可变的世界观规则/约束/禁忌单独成"宪法"，作为评价师一致性检查的硬依据 | 设定库 `world_rule` 类型中标记 `is_constitution=true` 的条目；评价师 rubric 依据 |
 | 3 | **伏笔健康度**：伏笔带 urgency、target_reveal_chapter，自动检测"埋下超期未回收"并给出健康度评分/建议 | §4.1 `plot_ledger` 已加 urgency/target_reveal_chapter；账本查询增加 overdue 视图 |
-| 4 | **RAG 五层信息架构与切分参数**：L1 蓝图(JSON, 不检索) / L2 正文分块(向量) / L3 章节摘要(向量) / L4 上一章摘要+结尾500字 / L5 当前章目标；chunk≈480、overlap≈120、Top-K 正文5+摘要3 | §7 token 预算细化参数 |
-| 5 | **自我批评-修订循环**：生成后同模型以评审态自检→修订→重评，最多2轮、目标分75 | §13.2 L1 双态冷启动的落地形态 |
-| 6 | **提示词模板存库可配置**：prompt 存 DB，管理员/作者可后台编辑调优 | 增加 `prompts` 表 + 提示词管理接口 |
-| 7 | **节奏/情绪曲线指导**：按章节号/总章节数/弧线类型给出每章目标情绪强度，防止节奏失控 | 可选，情绪曲线服务 |
+| 4 | **自我批评-修订循环**：生成后同模型以评审态自检→修订→重评，最多2轮、目标分75 | §13.2 L1 双态冷启动的落地形态 |
+| 5 | **提示词模板存库可配置**：prompt 存 DB，管理员/作者可后台编辑调优 | 增加 `prompts` 表 + 提示词管理接口 |
+| 6 | **节奏/情绪曲线指导**：按章节号/总章节数/弧线类型给出每章目标情绪强度，防止节奏失控 | 可选，情绪曲线服务 |
 
 ### 17.2 保持优于 Arboris 的设计（不复刻其短板）
 
