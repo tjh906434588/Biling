@@ -31,37 +31,41 @@ export function MemoryPanel({ memory }: { memory: MemoryReview }) {
         </span>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-        {Object.keys(memory.character_states).length === 0 ? (
-          memory.progress_chapter > 0 ? (
-            <p className="text-xs text-zinc-400">还缺角色状态。写完章节后点『记进 AI 记忆』重新提取一次即可</p>
-          ) : (
-            <p className="text-xs text-zinc-400">还没有章节。写完章节后，AI 会自动整理出每个角色当前的状态</p>
-          )
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {Object.entries(memory.character_states).map(([name, st]) => (
-              <li key={name} className="flex gap-2 text-xs">
-                <span className="w-20 shrink-0 break-words font-medium leading-5 text-zinc-500 dark:text-zinc-400">{name}</span>
-                <span className="min-w-0 flex-1 break-words font-semibold leading-5 text-zinc-800 dark:text-zinc-200">
-                  {st.state}
-                  <span className="font-normal text-zinc-400 dark:text-zinc-500"> · 第{st.chapter_no}章</span>
-                  {st.confidence === "low" && (
-                    <span className="ml-1.5 shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900 dark:text-amber-300">存疑</span>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+      {/* 内容区：仅当有角色状态或问题清单时才启用滚动容器（空态直接渲染提示，
+          避免空提示文本的行高亚像素溢出 1px 凭空出现滚动条） */}
+      {Object.keys(memory.character_states).length === 0 && memory.issues.length === 0 ? (
+        <p className="text-xs text-zinc-400">
+          {memory.progress_chapter > 0
+            ? "还缺角色状态。写完章节后点『记进 AI 记忆』重新提取一次即可"
+            : "还没有章节。写完章节后，AI 会自动整理出每个角色当前的状态"}
+        </p>
+      ) : (
+        <div className="flex min-h-0 grow flex-col gap-4 overflow-y-auto">
+          {Object.keys(memory.character_states).length > 0 && (
+            <ul className="flex flex-col gap-2">
+              {Object.entries(memory.character_states).map(([name, st]) => (
+                <li key={name} className="flex gap-2 text-xs">
+                  <span className="w-20 shrink-0 break-words font-medium leading-5 text-zinc-500 dark:text-zinc-400">{name}</span>
+                  <span className="min-w-0 flex-1 break-words font-semibold leading-5 text-zinc-800 dark:text-zinc-200">
+                    {st.state}
+                    <span className="font-normal text-zinc-400 dark:text-zinc-500"> · 第{st.chapter_no}章</span>
+                    {st.confidence === "low" && (
+                      <span className="ml-1.5 shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900 dark:text-amber-300">存疑</span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
 
-        {memory.issues.length > 0 && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-            <span className="font-semibold">问题清单：</span>
-            {memory.issues.join("；")}
-          </div>
-        )}
-      </div>
+          {memory.issues.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+              <span className="font-semibold">问题清单：</span>
+              {memory.issues.join("；")}
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
