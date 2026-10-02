@@ -41,6 +41,10 @@ _ADD_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "chapters": [
         ("author_directives", "TEXT"),  # 作者对本章的历史修改意见（JSON list[{text,version_no,created_at}]），后续生成自动注入
+        ("info_control", "JSON"),  # 本章信息控制（谁知道了什么）：{reader_knows, protagonist_knows, must_hide, hint_only}
+    ],
+    "chapter_versions": [
+        ("info_control", "JSON"),  # 生成该版本时生效的信息控制快照
     ],
     "story_state": [
         ("since_chapter", "INTEGER"),

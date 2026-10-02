@@ -174,13 +174,13 @@ export function AddChapterDrawer({
           />
         </label>
 
-        {/* 信息控制：本书级全局配置（谁知道了什么），设置一次对所有章节生效；点开独立弹窗填写/清空 */}
+        {/* 信息控制：本章信息控制，随本章生成生效、之后章节自动沿用；点开独立弹窗填写/清空 */}
         <div className="flex items-center justify-between border-t border-zinc-200 pt-3 dark:border-zinc-800">
           <span className="text-xs text-zinc-500">
             谁知道了什么（可选）
             <InfoTip portal>
               <p className="font-medium text-zinc-700 dark:text-zinc-200">控制「谁知道了什么」</p>
-              设置一次，之后所有章节生成都会持续生效。这些是「信息边界」：正文可以不写出来（可能后面才揭示），但绝不能与它们冲突——主角不得对已「已知」的内容表现无知、不得提前泄露「必须隐瞒」的内容。全部留空则让 AI 自己把握。
+              本章填的信息控制随本章生成生效，之后的章节自动沿用，直到有新的章填写覆盖。这些是「信息边界」：正文可以不写出来（可能后面才揭示），但绝不能与它们冲突——主角不得对已「已知」的内容表现无知、不得提前泄露「必须隐瞒」的内容。全部留空则让 AI 自己把握。
               <span className="mt-1.5 block text-zinc-400">
                 读者已知 / 主角已知 / 必须向读者隐瞒 / 只能点到为止（伏笔暗示）
               </span>

@@ -1532,6 +1532,10 @@ def _persist_novelist(
         db.add(chapter)
         db.flush()
 
+    # 信息控制（谁知道了什么）：本章填的写入 chapters.info_control（重写覆盖/清空），
+    # 生效信息快照到本版本（供回看该版生成时的信息状态）
+    chapter.info_control = params.get("_chapter_info_control")
+
     last_ver = db.execute(
         select(func.max(ChapterVersion.version_no)).where(ChapterVersion.chapter_id == chapter.id)
     ).scalar() or 0
@@ -1591,6 +1595,7 @@ def _persist_novelist(
         outline_id=uuid.UUID(str(outline_id)) if outline_id is not None else None,
         parent_version_id=uuid.UUID(str(parent_version_id)) if parent_version_id is not None else None,
         is_active=False,
+        info_control=params.get("info_control"),
     ))
     # 意见持久化：作者在「评价优化」时提交的批注（review.author_note）落库到本章指令，
     # 后续重新生成/规划/续写本章时由 novelist/chapter_planner 注入（防止"说过突兀还照写"）。

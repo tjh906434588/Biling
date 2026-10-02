@@ -352,6 +352,12 @@ export interface InfoControl {
   hint_only: string;
 }
 
+/** 某章信息控制查看/保存响应：chapter=该章自己填的（可编辑），effective=当前生效合并（只读展示）。 */
+export interface ChapterInfoControl {
+  chapter: InfoControl;
+  effective: InfoControl;
+}
+
 export interface ModelRoute {
   id: string;
   task_type: TaskType;

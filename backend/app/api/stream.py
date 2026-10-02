@@ -1279,6 +1279,18 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
     if existing is not None:
         raise HTTPException(409, "该角色已有生成任务在后台运行，请等待完成后再试。")
 
+    # 信息控制（谁知道了什么）生效合并：生成正文前，按「全局默认 + 已定稿章节链 + 本章填的」计算
+    # 生效信息（同名后者覆盖、不同名合并），注入 params 供 novelist 使用；
+    # 本章填的原文另存一份，落库时写入 chapters.info_control（不可事后编辑，重写覆盖）。
+    if agent == "novelist":
+        from app.services.info_control import effective_info_control
+
+        chapter_no = (payload.params or {}).get("chapter_no")
+        if chapter_no is not None:
+            own = (payload.params or {}).get("info_control") or {}
+            effective = effective_info_control(db, payload.novel_id, int(chapter_no), own)
+            payload.params = {**(payload.params or {}), "info_control": effective, "_chapter_info_control": own or None}
+
     task = AgentTask(novel_id=payload.novel_id, agent=agent, params=payload.params or {})
     db.add(task)
     db.commit()

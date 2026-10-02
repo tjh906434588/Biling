@@ -7,6 +7,7 @@
 "use client";
 
 import Modal from "@/components/modal";
+import type { InfoControl } from "@/lib/api";
 import type { InfoDraft } from "./panel-utils";
 
 /** 信息控制弹窗 props：草稿值、变更/提交/关闭回调由 writing-panel 传入。 */
@@ -14,18 +15,29 @@ interface InfoModalProps {
   open: boolean;
   onClose: () => void;
   draft: InfoDraft;
+  /** 当前本章生效的合并结果（全局默认 + 此前已定稿章节链 + 本章），只读展示 */
+  effective: InfoControl;
   onDraftChange: (d: InfoDraft) => void;
-  /** 点「完成」：把草稿合并进 form 并关闭弹窗（父组件实现）。 */
+  /** 点「完成」：把草稿作为本章信息控制并关闭弹窗（父组件实现）。 */
   onSubmit: () => void;
 }
 
 /** 谁知道了什么（可选）：信息控制弹窗（本地 draft，取消丢弃 / 清空只清本地 / 完成才提交）。 */
-export function InfoModal({ open, onClose, draft, onDraftChange, onSubmit }: InfoModalProps) {
+export function InfoModal({ open, onClose, draft, effective, onDraftChange, onSubmit }: InfoModalProps) {
+  // 生效合并里的非空字段（此前定稿章节已确立的信息边界），只读展示给作者参考
+  const effEntries = (
+    [
+      ["读者已知", effective.reader_knows],
+      ["主角已知", effective.protagonist_knows],
+      ["必须向读者隐瞒", effective.must_hide],
+      ["只能点到为止", effective.hint_only],
+    ] as const
+  ).filter(([, v]) => v.trim());
   return (
     <Modal
       open={open}
       title="谁知道了什么（可选）"
-      subtitle="本书级设置，一次填写、之后所有章节生成时都持续生效。这些是「信息边界」：正文可以不体现，但绝不能与它们冲突。"
+      subtitle="本章信息控制：随本章生成/重写生效，之后章节自动沿用，直到有新的章覆盖。这些是「信息边界」：正文可以不体现，但绝不能与它们冲突。"
       onClose={onClose}
       footer={
         <div className="flex w-full items-center justify-between gap-2">
@@ -56,6 +68,16 @@ export function InfoModal({ open, onClose, draft, onDraftChange, onSubmit }: Inf
       }
     >
       <div className="grid gap-3">
+        {effEntries.length > 0 && (
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-2.5 text-xs leading-5 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+            <span className="font-medium text-zinc-600 dark:text-zinc-300">当前本章生效（含此前已定稿章节的）：</span>
+            {effEntries.map(([label, v]) => (
+              <span key={label} className="mt-0.5 block">
+                {label}：{v}
+              </span>
+            ))}
+          </div>
+        )}
         <input
           className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
           placeholder="读者已知：…"

@@ -236,12 +236,10 @@ class NovelistAgent(Agent[NovelChapter]):
             except Exception:  # 统计失败不影响写作主流程
                 pass
 
-        # L3 信息控制（info_control）：本书级全局配置（谁知道了什么）+ 当章可选覆盖。
-        # 全局设置一次后所有章节生成都持续注入，防止「主角/读者知识断层」穿帮；
-        # 当章若传了 info_control（如章节级临时调整）则覆盖全局对应字段。
+        # L3 信息控制（info_control）：由 stream 层在生成前按「全局默认 + 已定稿章节链 + 本章填的」
+        # 合并好的生效信息（info_control），这里直接注入。
         # 语义是「信息边界」：正文可以不体现这些内容（可能后文才揭示），但涉及它们时绝不能冲突。
-        global_info = getattr(novel, "info_control", None) or {}
-        info = {**global_info, **(params.get("info_control") or {})}
+        info = params.get("info_control") or {}
         info_lines: list[str] = []
         if info.get("reader_knows"):
             info_lines.append(f"读者已知：{info['reader_knows']}（不得把已『读者已知』的内容当作未知重新解释）")

@@ -16,6 +16,7 @@ from app.schemas.chapter import (
     SelectVersionRequest,
     UpdateVersionRequest,
 )
+from app.schemas.novel import ChapterInfoControl, InfoControl
 
 router = APIRouter(prefix="/api/novels", tags=["chapters"])
 
@@ -26,6 +27,49 @@ def _get_novel(db: Session, novel_id: uuid.UUID) -> Novel:
     if novel is None:
         raise HTTPException(404, "项目不存在")
     return novel
+
+
+def _get_chapter(db: Session, novel_id: uuid.UUID, chapter_no: int) -> Chapter:
+    """按章号取章节，不存在抛 404。"""
+    chapter = db.execute(
+        select(Chapter).where(Chapter.novel_id == novel_id, Chapter.chapter_no == chapter_no)
+    ).scalar_one_or_none()
+    if chapter is None:
+        raise HTTPException(404, "章节不存在")
+    return chapter
+
+
+@router.get("/{novel_id}/chapters/{chapter_no}/info-control", response_model=ChapterInfoControl)
+def get_chapter_info_control(novel_id: uuid.UUID, chapter_no: int, db: Session = Depends(get_db)):
+    """某章信息控制：chapter=该章自己填的（可编辑），effective=当前生效合并（只读展示）。
+    章节尚不存在（如新增下一章）时 chapter 返回空，effective 仍按已定稿章节链计算。"""
+    from app.services.info_control import effective_info_control
+
+    _get_novel(db, novel_id)
+    chapter = db.execute(
+        select(Chapter).where(Chapter.novel_id == novel_id, Chapter.chapter_no == chapter_no)
+    ).scalar_one_or_none()
+    own = (chapter.info_control or {}) if chapter else {}
+    return {"chapter": own, "effective": effective_info_control(db, novel_id, chapter_no, own) or {}}
+
+
+@router.put("/{novel_id}/chapters/{chapter_no}/info-control", response_model=ChapterInfoControl)
+def update_chapter_info_control(
+    payload: InfoControl,
+    novel_id: uuid.UUID,
+    chapter_no: int,
+    db: Session = Depends(get_db),
+):
+    """保存某章信息控制（生成/重写本章时填写；仅保留非空字段，全空 = 清空该章）。
+    注意：信息控制只能随本章生成/重写填写，不能事后单独编辑已生成版本。"""
+    from app.services.info_control import effective_info_control
+
+    _get_novel(db, novel_id)
+    chapter = _get_chapter(db, novel_id, chapter_no)
+    cleaned = {k: v.strip() for k, v in payload.model_dump().items() if v and v.strip()}
+    chapter.info_control = cleaned or None
+    db.commit()
+    return {"chapter": cleaned, "effective": effective_info_control(db, novel_id, chapter_no, cleaned) or {}}
 
 
 @router.get("/{novel_id}/chapters", response_model=list[ChapterListItem])

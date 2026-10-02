@@ -230,6 +230,10 @@ class Chapter(Base):
     # 作者对本章的历史修改意见（意见持久化）：评价优化时提交的 author_note 落库，
     # 后续重新生成/规划/续写本章时自动注入给 AI，防止"说过突兀还照写"。list[{text, version_no, created_at}]
     author_directives: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # 本章信息控制（谁知道了什么）：生成/重写本章时填写，存 {reader_knows, protagonist_knows,
+    # must_hide, hint_only}，可空。不可事后单独编辑——只能重写本章时覆盖/清空。
+    # 生效规则：某章生成时注入「已定稿章节的信息控制按章号顺序合并 + 本章自己填的」，同名后者覆盖。
+    info_control: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -252,6 +256,9 @@ class ChapterVersion(Base):
         Uuid, nullable=True, index=True
     )  # 版本树父节点：新增章节/重新生成正文=根（null）；评价优化（reviser）= 被优化版本 → 多级树
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 生成该版本时「生效的信息控制」快照（合并已定稿章节 + 本章填的），供回看当时信息状态；
+    # 若生成时未启用信息控制则为空。存 {reader_knows, protagonist_knows, must_hide, hint_only}
+    info_control: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     # 签约未过签标记：最新评价存在 severity=high 的签约红线类 issue（内容红线/抄袭）时为 True，
     # 定稿（select_version）默认拒绝；评价更新后自动重算，通过后自动解除
     signing_blocked: Mapped[bool] = mapped_column(Boolean, default=False)

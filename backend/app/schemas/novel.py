@@ -63,6 +63,16 @@ class InfoControl(BaseModel):
     hint_only: str = Field(default="", max_length=500)
 
 
+class ChapterInfoControl(BaseModel):
+    """某章信息控制的查看/保存响应：
+    - chapter：该章自己填的信息控制（生成/重写本章时填写，可编辑）；
+    - effective：当前生效的合并结果（全局默认 + 已定稿章节链 + 本章），只读展示。
+    """
+
+    chapter: InfoControl
+    effective: InfoControl
+
+
 class SettingCreate(BaseModel):
     """新增设定条目入参：类型 / 名称 / 来源 / 描述 / 结构化字段等。"""
     type: str = Field(..., pattern="^(character|location|faction|world_rule|item|concept)$")

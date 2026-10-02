@@ -3,7 +3,7 @@
  * 书架 / 小说 CRUD 接口（/novels）。
  */
 import { BASE } from "@/constants/api";
-import type { InfoControl, Novel } from "@/types/api";
+import type { ChapterInfoControl, InfoControl, Novel } from "@/types/api";
 import { httpError } from "./errors";
 
 export async function listNovels(q?: string): Promise<Novel[]> {
@@ -93,16 +93,16 @@ export async function importNovel(file: File): Promise<Novel> {
   return res.json();
 }
 
-/** 读取本书级信息控制（谁知道了什么）：设置一次，所有章节生成时持续注入。 */
-export async function getInfoControl(novelId: string): Promise<InfoControl> {
-  const res = await fetch(`${BASE}/novels/${novelId}/info-control`);
+/** 读取某章信息控制（谁知道了什么）：chapter=该章自己填的，effective=当前生效合并（已定稿章节链 + 本章）。 */
+export async function getChapterInfoControl(novelId: string, chapterNo: number): Promise<ChapterInfoControl> {
+  const res = await fetch(`${BASE}/novels/${novelId}/chapters/${chapterNo}/info-control`);
   if (!res.ok) throw new Error("加载信息控制失败");
   return res.json();
 }
 
-/** 保存本书级信息控制：全部留空 = 清空（不注入）。 */
-export async function saveInfoControl(novelId: string, data: InfoControl): Promise<InfoControl> {
-  const res = await fetch(`${BASE}/novels/${novelId}/info-control`, {
+/** 保存某章信息控制（生成/重写本章时填写；全空 = 清空该章）。 */
+export async function saveChapterInfoControl(novelId: string, chapterNo: number, data: InfoControl): Promise<ChapterInfoControl> {
+  const res = await fetch(`${BASE}/novels/${novelId}/chapters/${chapterNo}/info-control`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),

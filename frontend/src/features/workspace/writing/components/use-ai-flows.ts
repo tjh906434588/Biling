@@ -18,6 +18,7 @@ import {
   selectVersion,
   type ChapterDetail,
   type ChapterListItem,
+  type InfoControl,
   type Outline,
   type QualityReview,
   type SettingGap,
@@ -47,6 +48,8 @@ export interface FlowCtx {
   // ── 只读状态 ──
   form: GenForm;
   useOutline: boolean;
+  /** 当前目标章已填的信息控制（谁知道了什么）：生成时提交为本章信息控制 */
+  infoControl: InfoControl;
   chapters: ChapterListItem[];
   approvedOutlines: Outline[];
   approvedOutline: Outline | null;
@@ -126,6 +129,19 @@ export async function handleGenerate(
     // 重新生成=新增，与新增同权：不传 rewrite，后端 novelist 前置钩子照常弹「本章规划」
     // 方向咨询（作者重新定夺）；仅批量自动重写（handleRerunAffected）传 rewrite+auto_rewrite 跳过
   };
+
+  // 信息控制（谁知道了什么）：提交本章填的信息控制，后端按「已定稿章节链 + 本章」合并生效并快照到版本
+  const ic = ctx.infoControl ?? {};
+  const infoControl: Record<string, string> = {};
+  for (const [k, v] of [
+    ["reader_knows", ic.reader_knows],
+    ["protagonist_knows", ic.protagonist_knows],
+    ["must_hide", ic.must_hide],
+    ["hint_only", ic.hint_only],
+  ] as const) {
+    if (v.trim()) infoControl[k] = v.trim();
+  }
+  if (Object.keys(infoControl).length > 0) params.info_control = infoControl;
 
   try {
     ctx.ensureReady();

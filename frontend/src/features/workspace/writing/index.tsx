@@ -28,11 +28,10 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import {
   getActiveBlueprint,
   getChapter,
-  getInfoControl,
+  getChapterInfoControl,
   listChapters,
   listOutlines,
   listReviews,
-  saveInfoControl,
   type ChapterDetail,
   type ChapterListItem,
   type InfoControl,
@@ -276,34 +275,32 @@ export default function WritingPanel({ novelId }: Props) {
   const [genIsRegenerate, setGenIsRegenerate] = useState(false);
 
   /** 信息控制弹窗：本地 draft，点「完成」才提交，点「取消」丢弃。
-   *  「谁知道了什么」是本书级全局配置（novels/info-control）：设置一次、所有章节生成时持续注入，
-   *  不再随单章表单保存（第一章填的，之后各章自动一直生效）。 */
+   *  「谁知道了什么」按章设立（chapters.info_control）：生成/重写本章时填写，不可事后单独编辑；
+   *  生效信息由后端按「全局默认 + 已定稿章节链 + 本章」合并（弹窗里 effective 只读展示）。 */
   const [infoDraft, setInfoDraft] = useState<InfoDraft>({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
-  /** 已保存的本书级信息控制（弹窗入口按钮据此显示「已填 N 项」；挂载时加载一次） */
+  /** 当前目标章已填的信息控制（生成时提交为本章信息控制；打开新增/重写弹窗时加载该章已有值） */
   const [infoControl, setInfoControl] = useState<InfoControl>({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
-  useEffect(() => {
-    let alive = true;
-    void getInfoControl(novelId)
-      .then((s) => {
-        if (alive) setInfoControl(s);
-      })
-      .catch(() => {
-        /* 加载失败保持空，打开弹窗时可再试 */
-      });
-    return () => {
-      alive = false;
-    };
-  }, [novelId]);
-  /** 打开信息控制弹窗：先拉取本书级配置填入草稿（取消丢弃不落库） */
-  const openInfoModal = useCallback(async () => {
+  /** 当前章生效的合并结果（只读展示；打开弹窗时拉取） */
+  const [infoEffective, setInfoEffective] = useState<InfoControl>({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
+  /** 按目标章拉取信息控制：填入草稿 + 生效合并展示 */
+  const loadChapterInfo = useCallback(async (chapterNo: number) => {
     try {
-      const saved = await getInfoControl(novelId);
-      setInfoDraft({ ...saved });
+      const { chapter, effective } = await getChapterInfoControl(novelId, chapterNo);
+      setInfoControl({ ...chapter });
+      setInfoEffective({ ...effective });
+      return chapter;
     } catch {
-      setInfoDraft({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
+      setInfoControl({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
+      setInfoEffective({ reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" });
+      return null;
     }
-    setShowInfoModal(true);
   }, [novelId]);
+  /** 打开信息控制弹窗：按当前目标章拉取（取消丢弃不落库） */
+  const openInfoModal = useCallback(async () => {
+    const chapter = await loadChapterInfo(form.chapter_no);
+    setInfoDraft({ ...(chapter ?? { reader_knows: "", protagonist_knows: "", must_hide: "", hint_only: "" }) });
+    setShowInfoModal(true);
+  }, [form.chapter_no, loadChapterInfo]);
 
   /** AI 服务状态检查：各 AI 操作发起前确认模型已配置可用，未配置则抛错拦截（避免发起注定失败的空请求）。 */
   const { ensureReady } = useAiStatus();
@@ -571,7 +568,9 @@ export default function WritingPanel({ novelId }: Props) {
     }));
     setRegenerateNo(null);
     setShowAddModal(true);
-  }, [approvedOutlines, nextNo]);
+    // 加载下一章已填的信息控制（新增弹窗入口按钮显示「已填 N 项」，生成时提交）
+    void loadChapterInfo(nextNo);
+  }, [approvedOutlines, nextNo, loadChapterInfo]);
 
   /** 打开「重新生成正文」弹窗：复用新增章节弹窗，章节号锁定为当前章，其余字段可改。
    *  后端 _persist_novelist 会基于该 chapter_no 追加一个新草稿版本（需手动定稿）。
@@ -590,7 +589,9 @@ export default function WritingPanel({ novelId }: Props) {
     }));
     setRegenerateNo(activeNo);
     setShowAddModal(true);
-  }, [activeNo]);
+    // 加载该章已填的信息控制（重写弹窗回显「已填 N 项」并可在生成时覆盖）
+    void loadChapterInfo(activeNo);
+  }, [activeNo, loadChapterInfo]);
 
   /** 弹窗内切换「沿用大纲」开关：开启回填该章已批大纲，关闭清空（= 自由草稿，标题交给 AI）。 */
   function toggleUseOutline(on: boolean) {
@@ -635,6 +636,7 @@ export default function WritingPanel({ novelId }: Props) {
     reviewBaselineRef,
     form,
     useOutline,
+    infoControl,
     chapters,
     approvedOutlines,
     approvedOutline,
@@ -789,23 +791,17 @@ export default function WritingPanel({ novelId }: Props) {
         />
       )}
 
-      {/* ── 信息控制弹窗（本地 draft：取消丢弃 / 清空只清本地 / 完成才保存到本书级配置） ── */}
+      {/* ── 信息控制弹窗（本地 draft：取消丢弃 / 清空只清本地 / 完成才提交到本章信息控制，随生成生效） ── */}
       <InfoModal
         open={showInfoModal}
         onClose={() => setShowInfoModal(false)}
         draft={infoDraft}
+        effective={infoEffective}
         onDraftChange={setInfoDraft}
         onSubmit={() => {
-          void (async () => {
-            try {
-              const saved = await saveInfoControl(novelId, infoDraft);
-              setInfoControl(saved);
-              setShowInfoModal(false);
-              message.success("已保存，之后所有章节生成都会生效。");
-            } catch (e) {
-              message.error((e as Error).message);
-            }
-          })();
+          // 完成：把编辑结果作为「本章信息控制」，生成正文时随请求提交（后端合并生效并快照）
+          setInfoControl({ ...infoDraft });
+          setShowInfoModal(false);
         }}
       />
 
