@@ -10,15 +10,15 @@
 
 **书架**：管理你的全部作品，一本书一个独立工作区。
 
-![书架](docs/screenshots/bookshelf.png)
+![书架](docs/screenshots/bookshelf.png?v=2)
 
 **工作台 · 设定**：角色 / 地点 / 派系 / 世界规则的结构化设定库，AI 会按相关性检索并做冲突预检。
 
-![工作台·设定](docs/screenshots/workspace-settings.png)
+![工作台·设定](docs/screenshots/workspace-settings.png?v=2)
 
 **工作台 · 写作**：小说家基于“相关设定 + 本章大纲 + 压缩记忆 + 风格画像”流式产出正文，双版本并行供你选定。
 
-![工作台·写作](docs/screenshots/workspace-write.png)
+![工作台·写作](docs/screenshots/workspace-write.png?v=2)
 
 ---
 
