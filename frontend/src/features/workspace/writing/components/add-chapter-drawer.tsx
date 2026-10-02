@@ -180,7 +180,7 @@ export function AddChapterDrawer({
             谁知道了什么（可选）
             <InfoTip portal>
               <p className="font-medium text-zinc-700 dark:text-zinc-200">控制「谁知道了什么」</p>
-              设置一次，之后所有章节生成都会持续生效，防止主角/读者「知识断层」穿帮；全部留空则让 AI 自己把握。
+              设置一次，之后所有章节生成都会持续生效。这些是「信息边界」：正文可以不写出来（可能后面才揭示），但绝不能与它们冲突——主角不得对已「已知」的内容表现无知、不得提前泄露「必须隐瞒」的内容。全部留空则让 AI 自己把握。
               <span className="mt-1.5 block text-zinc-400">
                 读者已知 / 主角已知 / 必须向读者隐瞒 / 只能点到为止（伏笔暗示）
               </span>

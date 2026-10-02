@@ -239,15 +239,22 @@ class NovelistAgent(Agent[NovelChapter]):
         # L3 信息控制（info_control）：本书级全局配置（谁知道了什么）+ 当章可选覆盖。
         # 全局设置一次后所有章节生成都持续注入，防止「主角/读者知识断层」穿帮；
         # 当章若传了 info_control（如章节级临时调整）则覆盖全局对应字段。
+        # 语义是「信息边界」：正文可以不体现这些内容（可能后文才揭示），但涉及它们时绝不能冲突。
         global_info = getattr(novel, "info_control", None) or {}
         info = {**global_info, **(params.get("info_control") or {})}
-        if info:
+        info_lines: list[str] = []
+        if info.get("reader_knows"):
+            info_lines.append(f"读者已知：{info['reader_knows']}（不得把已『读者已知』的内容当作未知重新解释）")
+        if info.get("protagonist_knows"):
+            info_lines.append(f"主角已知：{info['protagonist_knows']}（主角不得对已『主角已知』的内容表现无知或遗忘）")
+        if info.get("must_hide"):
+            info_lines.append(f"必须向读者隐瞒：{info['must_hide']}（正文绝不提前泄露，只能埋伏笔）")
+        if info.get("hint_only"):
+            info_lines.append(f"只能点到为止：{info['hint_only']}（只可暗示，不可点破）")
+        if info_lines:
             l3 += (
-                f"\n【L3·信息控制】读者已知：{info.get('reader_knows', '无')}；"
-                f"主角已知：{info.get('protagonist_knows', '无')}；"
-                f"必须向读者隐瞒：{info.get('must_hide', '无')}；"
-                f"只能点到为止：{info.get('hint_only', '无')}。"
-                f"正文不得提前泄露『必须隐瞒』的内容，伏笔只能暗示。"
+                "\n【L3·信息控制】以下为本书既定信息边界：正文可以不体现这些内容（可能后面才揭示），"
+                "但涉及它们时绝不能与之冲突：\n- " + "\n- ".join(info_lines)
             )
 
         # 组件化上下文（token 预算器按优先级裁剪：硬约束不裁，超窗先裁最近全文/风格）
