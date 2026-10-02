@@ -557,7 +557,6 @@ class AgentRunRequest(BaseModel):
     params: dict = Field(default_factory=dict, description="角色相关参数（如章节目标、章节号等）")
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
-    version_count: Optional[int] = None
     dry_run: bool = Field(
         default=False,
         description="true=只生成不落库（调试沙箱），stored 事件返回产出供用户决定是否加入正式库",

@@ -98,7 +98,7 @@ def main():
     ev1, _ = stream("novelist", nid, {"chapter_no": 1, "title": "第一章 序", "chapter_function": "progression"})
     ch1 = next(c for c in call("GET", f"/api/novels/{nid}/chapters") if c["chapter_no"] == 1)
     detail1 = call("GET", f"/api/novels/{nid}/chapters/1")
-    va = next(v for v in detail1["versions"] if v["source"] == "novelist_A")
+    va = detail1["versions"][0]
     call("POST", f"/api/novels/{nid}/chapters/1/select", {"version_id": va["id"]})
 
     overdue = call("GET", f"/api/novels/{nid}/ledger/overdue")

@@ -1,14 +1,11 @@
 """Pipeline 核心：Agent 统一接口编排，SSE 事件流（技术设计 §10）。
 
 事件流（单版本）：context_ready → stream_delta* → stream_end → schema_validate → stored
-事件流（多版本，如 novelist 双版本，§8）：
-    context_ready{version_count}
-    → 每版本：version_start → stream_delta* → stream_end → schema_validate
-    → stored{versions:[...]}
 
-- 多版本并行调用 LLM（asyncio.gather），事件按版本顺序播放，前端可清晰区分版本。
 - 产出 schema 校验失败 → 携带错误自纠错重试 1 次 → 仍失败 → 落 quality_reviews 告警 + 事件标记。
 - 结构化入库由各角色 _persist 钩子完成（M0 extractor 入库 story_state；M1 novelist 入库 chapters + chapter_versions）。
+- 说明：生成路径固定为单版本（前端只请求单版本生成）；章节的「版本历史」来自每次生成/编辑新增的
+  chapter_version 行，与多版本并行生成无关。
 """
 import asyncio
 import contextvars
@@ -129,81 +126,15 @@ async def _run_agent_stream_raw(
     if max_tokens is not None:
         base_ctx.max_tokens = max_tokens
 
-    versions: list[ContextPack] = agent.build_versioned_contexts(base_ctx)
-
     yield _event("context_ready", {
         "agent": agent_name,
         "meta": base_ctx.meta,
-        "version_count": len(versions),
         "dry_run": dry_run,
     })
 
-    if len(versions) == 1:
-        async for sse in _stream_single(db, agent, versions[0], agent_name, novel_id, params, dry_run):
-            yield sse
-        return
-
-    # ---------- 多版本：并行流式采集，按版本顺序播放事件 ----------
-    # 采集期间连接同样可能长时间闲置（长首 token），边等边发 ping 保活
-    gather_task = asyncio.create_task(
-        asyncio.gather(*[_collect_version(agent, vctx) for vctx in versions], return_exceptions=True)
-    )
-    while not gather_task.done():
-        done, _ = await asyncio.wait({gather_task}, timeout=SSE_KEEPALIVE_SECONDS)
-        if not done:
-            yield _event("ping", {})
-    results = gather_task.result()
-    stored_list: list[dict] = []
-    for vctx, result in zip(versions, results):
-        version = vctx.meta.get("version") or agent.version_source(versions.index(vctx))
-        yield _event("version_start", {"version": version})
-
-        if isinstance(result, BaseException):
-            logger.exception("agent=%s version=%s 流式调用失败", agent_name, version)
-            yield _event("stream_error", {"version": version, "message": str(result)})
-            continue
-
-        text, deltas = result
-        for piece in deltas:
-            yield _event("stream_delta", {"version": version, "delta": piece})
-        yield _event("stream_end", {"version": version, "text_length": len(text)})
-
-        parsed, ok, retried, last_error = await _validate_with_retry(agent, vctx, text, db)
-        yield _event("schema_validate", {
-            "version": version,
-            "status": "ok" if ok else "error",
-            "retried": retried,
-        })
-
-        if ok and parsed is not None:
-            if dry_run:
-                stored_list.append({"version": version, "data": parsed.model_dump(mode="json")})
-            else:
-                stored_list.append(await _persist(db, agent_name, novel_id, params, parsed, source=version))
-            # 写后设定自检：作家类产出（有 content）才核对，评审/大纲类没有正文可核
-            body = getattr(parsed, "content", None)
-            if isinstance(body, str) and body.strip():
-                gaps = _check_setting_gaps(db, novel_id, body)
-                if gaps:
-                    yield _event("setting_warning", {"version": version, "items": gaps})
-        else:
-            _alert_schema_error(db, agent_name, novel_id, version, last_error)
-            yield _event("stored", {"action": "alert", "version": version, "detail": "schema_error"})
-
-    if dry_run:
-        yield _event("stored", {"action": "dry_run", "versions": stored_list})
-    else:
-        yield _event("stored", {"action": "persisted", "versions": stored_list})
-
-
-async def _collect_version(agent: Agent, vctx: ContextPack) -> tuple[str, list[str]]:
-    """采集单个版本的完整文本与全部 delta（并行时用）。"""
-    text = ""
-    deltas: list[str] = []
-    async for piece in agent.run(vctx):
-        text += piece
-        deltas.append(piece)
-    return text, deltas
+    # 生成路径固定为单版本：直接走单版本流式（_stream_single）。
+    async for sse in _stream_single(db, agent, base_ctx, agent_name, novel_id, params, dry_run):
+        yield sse
 
 
 async def _stream_single(
@@ -215,7 +146,7 @@ async def _stream_single(
     params: dict,
     dry_run: bool = False,
 ) -> AsyncIterator[str]:
-    """单版本路径（原逻辑）：context_ready → delta* → end → validate → stored。
+    """单版本流式生成：context_ready → delta* → end → validate → stored。
 
     推理模型（deepseek 系）在正式输出前有较长的思考期（首 token 可达 1-3 分钟）。
     期间把 reasoning_content 通过 thinking_delta 事件逐段下发，前端滚动展示"思考中"，

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""M1 闭环冒烟测试：写章 → 双版本对比 → 选定 → 提取 → 续写。
+"""M1 闭环冒烟测试：写章 → 版本历史 → 选定 → 提取 → 续写。
 
 用法（后端已启动在 8000 端口）：
     .venv\\Scripts\\python.exe scripts\\smoke_m1.py
@@ -7,8 +7,8 @@
 覆盖：
 1. 创建小说
 2. 设定库 CRUD（新增 / type 过滤 / PATCH / 软删除）
-3. 小说家双版本并行生成（SSE 事件流：version_start → delta* → schema_validate）
-4. 章节路由（列表 / 详情 / 选定合并）
+3. 小说家单版本生成（SSE 事件流：stream_delta* → schema_validate → stored）
+4. 章节路由（列表 / 详情 / 版本选定）
 5. 提取师 → story_state 入库
 6. 续写下一章（依赖前文记忆与已定稿正文）
 """
@@ -91,33 +91,29 @@ def main():
     after = call("GET", f"/api/novels/{nid}/settings")
     check("软删除设定", len(after) == 1 and after[0]["id"] == s1["id"])
 
-    # 3) 双版本生成
-    events, texts = stream("novelist", nid, {
+    # 3) 单版本生成
+    events, _ = stream("novelist", nid, {
         "chapter_no": 1,
         "title": "第一章 半枚印记",
         "outline": "主角发现印记发光，决定去旧档案馆。",
         "chapter_function": "progression",
         "info_control": {"reader_knows": "主角左手有印记", "protagonist_knows": "自己失忆", "must_hide": "印记与通缉令的关联", "hint_only": "出生记录"},
     })
-    vers = sorted(texts.keys())
-    ok_a = any(e == ("schema_validate", {"version": "novelist_A", "status": "ok", "retried": False}) for e in events)
-    ok_b = any(e == ("schema_validate", {"version": "novelist_B", "status": "ok", "retried": False}) for e in events)
+    ok_schema = any(e == ("schema_validate", {"status": "ok", "retried": False}) for e in events)
     stored = next((d for e, d in events if e == "stored"), {})
-    check("双版本并行生成", vers == ["novelist_A", "novelist_B"], f"versions={vers}")
-    check("双版本校验通过", ok_a and ok_b)
-    check("双版本落库", stored.get("action") == "persisted" and len(stored.get("versions", [])) == 2,
+    check("单版本生成", ok_schema and stored.get("action") == "persisted",
           json.dumps(stored, ensure_ascii=False))
 
-    # 4) 章节路由 + 选定合并
+    # 4) 章节路由 + 版本选定
     chapters = call("GET", f"/api/novels/{nid}/chapters")
     check("章节列表", len(chapters) == 1 and chapters[0]["chapter_no"] == 1)
     detail = call("GET", f"/api/novels/{nid}/chapters/1")
-    check("章节详情两版本", len(detail["versions"]) == 2)
-    va = next(v for v in detail["versions"] if v["source"] == "novelist_A")
+    check("章节详情含版本", len(detail["versions"]) == 1 and detail["versions"][0]["source"] == "novelist")
+    va = detail["versions"][0]
     sel = call("POST", f"/api/novels/{nid}/chapters/1/select", {"version_id": va["id"]})
     active = [v for v in sel["versions"] if v["is_active"]]
     ch1 = next(c for c in call("GET", f"/api/novels/{nid}/chapters") if c["chapter_no"] == 1)
-    check("选定合并激活唯一版本", len(active) == 1 and active[0]["source"] == "novelist_A")
+    check("选定激活唯一版本", len(active) == 1 and active[0]["source"] == "novelist")
     check("章节正文/字数/状态同步", ch1["status"] == "complete" and ch1["word_count"] == len(ch1["active_content"] or ""))
 
     # 5) 提取师 → story_state
@@ -126,10 +122,9 @@ def main():
     check("提取师入库 story_state", ext_stored.get("table") == "story_state", json.dumps(ext_stored, ensure_ascii=False))
 
     # 6) 续写第 2 章（验证前文记忆连续性输入）
-    ev2, texts2 = stream("novelist", nid, {"chapter_no": 2, "title": "第二章 旧档案馆", "chapter_function": "buildup"})
+    ev2, _ = stream("novelist", nid, {"chapter_no": 2, "title": "第二章 旧档案馆", "chapter_function": "buildup"})
     stored2 = next((d for e, d in ev2 if e == "stored"), {})
-    check("续写第 2 章双版本", sorted(texts2.keys()) == ["novelist_A", "novelist_B"])
-    check("第 2 章落库", stored2.get("action") == "persisted")
+    check("续写第 2 章落库", stored2.get("action") == "persisted")
 
     print(f"\n===== 结果：{len(PASS)} 通过 / {len(FAIL)} 失败 =====")
     if FAIL:

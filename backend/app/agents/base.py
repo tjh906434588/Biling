@@ -64,7 +64,6 @@ class Agent(ABC, Generic[T]):
     # 温度是否固定用本 agent 默认值（不走路由配置）。默认 False = 路由配置的温度优先；
     # 少数任务（如修订师，需稳定输出）设 True，避免被同 task_type 的高温（如创作 0.8）带偏。
     temperature_fixed: bool = False
-    version_count: int = 1
     mock_output: dict | None = None  # 无 Key 时 Mock 流的合法 JSON 样例（演示完整链路）
 
     def __init__(self, db: Session):
@@ -82,19 +81,8 @@ class Agent(ABC, Generic[T]):
 
     # ---------- 默认实现 ----------
 
-    def build_versioned_contexts(self, ctx: ContextPack) -> list[ContextPack]:
-        """多版本上下文：version_count>1 时由子类产出 N 份差异化的 ContextPack（如双版本温度/风格变体）。
-
-        默认单版本。pipeline 检测 len>1 后并行流式、分别校验、按版本入库。
-        """
-        return [ctx]
-
-    def version_source(self, index: int) -> str:
-        """版本落库 source 标记（novelist_A/novelist_B...），默认 novelist_A/B。"""
-        return f"novelist_{'A' if index == 0 else chr(ord('A') + index)}"
-
     def run(self, ctx: ContextPack, *, on_reason=None):
-        """流式调用 LLM。可按版本数并行（见 novelist）。
+        """流式调用 LLM。
         on_reason：推理过程文字（reasoning_content）逐段回调，供"思考中"提示透传。"""
         from app.agents.context import apply_token_budget, assemble_components
 
