@@ -28,8 +28,12 @@ from app.logging_config import setup_logging
 
 settings = get_settings()
 
-# 日志落盘：data/logs/biling.log（桌面版排查问题的基础，详见 logging_config）
-setup_logging(settings.resolved_data_dir)
+# 日志落盘：data/logs/biling.log（桌面版排查问题的基础，详见 logging_config）；
+# 级别由 BILING_LOG_LEVEL 控制（默认 INFO），可调音量避免噪音
+setup_logging(
+    settings.resolved_data_dir,
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+)
 
 # 让 app 各模块的 INFO 日志可见（uvicorn 默认不配置应用 logger，会吞掉）
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
