@@ -20,13 +20,12 @@ export function MemoryPanel({ memory }: { memory: MemoryReview }) {
           </span>
         </h2>
         <span className="flex items-center gap-2">
-          <span
-            className={`rounded px-2 py-0.5 text-xs ${
-              memory.healthy ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"
-            }`}
-          >
-            {memory.healthy ? "健康" : "需关注"}
-          </span>
+          {/* 健康徽章：仅在确实有问题时显示「需关注」（空态/正常时隐藏，避免无意义的噪音标签） */}
+          {memory.issues.length > 0 && (
+            <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-900 dark:text-amber-300">
+              需关注
+            </span>
+          )}
           <span className="panel-hint">进度：第 {memory.progress_chapter} 章</span>
         </span>
       </div>
