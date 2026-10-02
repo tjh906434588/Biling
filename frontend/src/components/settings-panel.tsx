@@ -420,7 +420,7 @@ export default function SettingsPanel({ novelId }: Props) {
         <div className="flex min-h-0 flex-col gap-4 lg:w-[400px] lg:shrink-0 lg:overflow-y-auto lg:pr-1">
         {/* 世界背景类型与题材：创建时可留空，导入蓝图时 AI 按素材推断、弹窗引导作者确认；这里可直接修改 */}
         <section className="panel flex shrink-0 flex-col gap-2.5">
-          <div className="panel-head !mb-0">
+          <div className="panel-head mb-0">
             <div className="flex items-center gap-1.5">
               <h3 className="panel-title">世界背景类型与题材</h3>
               <InfoTip width="w-80" side="bottom">
@@ -457,7 +457,7 @@ export default function SettingsPanel({ novelId }: Props) {
         {/* 时代行业研究：仅「现实年代 / 半架空」展示（选中后才出现，默认隐藏）；蓝图生成时自动研究，作者可查看/修改 */}
         {showEraResearch && (
         <section className="panel flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
-          <div className="panel-head !mb-0">
+          <div className="panel-head mb-0">
             <div className="flex items-center gap-1.5">
               <h3 className="panel-title">时代行业研究</h3>
               <InfoTip width="w-80" side="bottom">
@@ -540,7 +540,7 @@ export default function SettingsPanel({ novelId }: Props) {
 
         {/* 设定列表：主工作区，占满剩余高度与宽度，内容多时仅此区滚动 */}
       <section className="panel flex min-h-0 flex-1 flex-col gap-3.5">
-        <div className="panel-head !mb-0">
+        <div className="panel-head mb-0">
           <div className="flex items-center gap-1.5">
             <h3 className="panel-title">设定列表</h3>
             <InfoTip width="w-80" side="bottom">
