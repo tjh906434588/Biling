@@ -92,6 +92,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 ## 7. 提交规范
 
 - **完成即自动提交**：每次功能/优化/修复改动验证通过后，直接提交并推送到 `main` 分支，按逻辑拆分多个 commit，**无需再询问用户**；提交信息遵循下方格式约定。
+- **README 随改动同步**：改动若涉及 README 描述的内容（功能增删、页面/入口变化、目录结构、技术栈、发版流程、使用说明等），必须**在本次改动中同步更新 README 再一起提交**，不要等用户提醒；提交前自查 README 是否还有过时描述。
 - Conventional Commits + 中文描述：`feat:` / `fix:` / `refactor:` / `chore:` / `docs:`（如 `feat: 桌面版打包落地`）。
 - **禁止提交**：`data\`、`.env`、`*.db`、构建产物（`build/ dist-desktop/ backend/dist/`）、`.workbuddy/`、`tools/fanqie_crawler/corpus/`、`desktop/node_modules/`、图标中间产物 `desktop/build/icon-*.png`。
 - 提交前用 `git status --short` 确认无敏感/冗余文件混入；大改动分逻辑提交。
@@ -104,7 +105,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 
 ## 9. 文档与 Skill
 
-- 涉及架构、流程、目录变化 → 同步更新 `README.md`。
+- **README 随改动同步**：任何改动若涉及 README 描述的内容（功能增删、页面/入口变化、目录结构、技术栈、发版流程、使用说明等），必须**同批修改 README 并一起提交**，不要等用户提醒；改完自查一遍 README 是否还有过时描述（与"完成即自动提交"配合，README 和功能改动进同一批 commit）。
 - 番茄题材提取 → 走 `fanqie-extract` skill 的统一流程，不要另起做法。
 - 本规范需要调整 → 先说明改动点再改本文件。
 
