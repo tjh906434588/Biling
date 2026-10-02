@@ -236,7 +236,7 @@ class NovelistAgent(Agent[NovelChapter]):
             except Exception:  # 统计失败不影响写作主流程
                 pass
 
-        # L3 信息控制（§5.3 info_control，M1 补强）：读者/主角知道什么、必须隐瞒什么
+        # L3 信息控制（§5.3 info_control）：读者/主角知道什么、必须隐瞒什么
         info = params.get("info_control") or {}
         if info:
             l3 += (

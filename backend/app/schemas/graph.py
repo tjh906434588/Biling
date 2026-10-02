@@ -1,4 +1,4 @@
-"""实体图谱（M4）Schema：图谱视图 / 关系查询 / 标记失效。"""
+"""实体图谱 Schema：图谱视图 / 关系查询 / 标记失效。"""
 import uuid
 from datetime import datetime
 from typing import Optional

@@ -118,7 +118,7 @@ class Setting(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    aliases: Mapped[Optional[list]] = mapped_column(JSON)  # M2 增强：别名表（检索/抽取按别名归一）
+    aliases: Mapped[Optional[list]] = mapped_column(JSON)  # 别名表（检索/抽取按别名归一）
     merged_into_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, nullable=True)  # 分身合并：指向主条目
 
 
@@ -203,7 +203,7 @@ class PlotLedger(Base):
     # 永远进窗口（防止早期重要伏笔被挤出——账本超上限时最先被丢掉的就是最老的一批）
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    since_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # M2 增强：本条状态生效起始章
+    since_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 本条状态生效起始章
     invalidated_at_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 失效章（as-of 查询用）
     # 数据来源（隐形字段，不展示界面）：outline（大纲批准时注入，按来源版本切换显示/隐藏）| extractor（提取师）| manual（手动登记）
     source: Mapped[str] = mapped_column(String(16), default="outline", server_default="outline")
@@ -274,7 +274,7 @@ class StoryState(Base):
     resolved_foreshadowing: Mapped[Optional[list]] = mapped_column(JSON)
     unresolved_hooks: Mapped[Optional[list]] = mapped_column(JSON)
     next_chapter_implications: Mapped[Optional[list]] = mapped_column(JSON)
-    since_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # M2 增强：快照生效起始章
+    since_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 快照生效起始章
     invalidated_at_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 失效章（as-of 查询用，不删除）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -302,7 +302,7 @@ class NovelMemory(Base):
 
 
 class EntityRelation(Base):
-    """实体图谱（M4）：实体之间的关系（dynamic=剧情层，由提取师自动抽取）。"""
+    """实体图谱：实体之间的关系（dynamic=剧情层，由提取师自动抽取）。"""
 
     __tablename__ = "entity_relations"
 
@@ -406,7 +406,7 @@ class DetectorConfig(Base):
 
 
 class PromptTemplate(Base):
-    """提示词模板（存库可配置，M4 提供后台编辑接口）。"""
+    """提示词模板（存库可配置，后台可编辑）。"""
     __tablename__ = "prompts"
     __table_args__ = (UniqueConstraint("key", "scope", name="uq_prompts_key_scope"),)
 

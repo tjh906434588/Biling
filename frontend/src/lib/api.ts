@@ -106,7 +106,7 @@ export async function createNovel(data: {
   return res.json();
 }
 
-// ---------- 设定库（settings CRUD，M1） ----------
+// ---------- 设定库（settings CRUD） ----------
 
 export async function listSettings(novelId: string, type?: string, q?: string): Promise<Setting[]> {
   const p = new URLSearchParams();
@@ -224,7 +224,7 @@ export async function listReviews(novelId: string, chapterNo?: number): Promise<
   return res.json();
 }
 
-// ---------- 章节大纲（M2：大纲师产出，draft → approved） ----------
+// ---------- 章节大纲（大纲师产出，draft → approved） ----------
 
 export async function listOutlines(novelId: string, status?: string): Promise<Outline[]> {
   const url = status ? `${BASE}/novels/${novelId}/outlines?status=${status}` : `${BASE}/novels/${novelId}/outlines`;
@@ -269,7 +269,7 @@ export async function getOutlineApprovalStatus(novelId: string): Promise<Outline
   return res.json();
 }
 
-// ---------- 伏笔账本（M2：大纲师登记 + 手动维护 + 超期视图） ----------
+// ---------- 伏笔账本（大纲师登记 + 手动维护 + 超期视图） ----------
 
 export async function listLedger(
   novelId: string,
@@ -313,7 +313,7 @@ export async function deleteLedger(novelId: string, itemId: string): Promise<voi
   if (!res.ok) throw new Error("删除伏笔失败");
 }
 
-// ---------- 蓝图（M3：blueprint_architect 落库 + 激活归档） ----------
+// ---------- 蓝图（blueprint_architect 落库 + 激活归档） ----------
 
 export async function listBlueprints(novelId: string, status?: string): Promise<Blueprint[]> {
   const url = status
@@ -431,7 +431,7 @@ export async function checkOutlineSkeleton(
   return res.json();
 }
 
-// ---------- 风格画像（M3：学习 + 版本列表） ----------
+// ---------- 风格画像（学习 + 版本列表） ----------
 
 export async function listStyleProfiles(novelId: string): Promise<StyleProfile[]> {
   const res = await fetch(`${BASE}/novels/${novelId}/style`);
@@ -455,7 +455,7 @@ export async function learnStyle(
   return res.json();
 }
 
-// ---------- AI 检测（M4：体检，不阻断） ----------
+// ---------- AI 检测（体检，不阻断） ----------
 
 export async function detectText(novelId: string, text: string): Promise<DetectResult> {
   const res = await fetch(`${BASE}/novels/${novelId}/detect`, {
@@ -470,7 +470,7 @@ export async function detectText(novelId: string, text: string): Promise<DetectR
   return res.json();
 }
 
-// ---------- 实体图谱 + 记忆审查（M4） ----------
+// ---------- 实体图谱 + 记忆审查 ----------
 
 export async function getGraph(novelId: string): Promise<GraphView> {
   const res = await fetch(`${BASE}/novels/${novelId}/graph`);
@@ -484,7 +484,7 @@ export async function getMemoryReview(novelId: string): Promise<MemoryReview> {
   return res.json();
 }
 
-// ---------- 模型路由管理（M4） ----------
+// ---------- 模型路由管理 ----------
 
 export async function listRoutes(): Promise<ModelRoute[]> {
   const res = await fetch(`${BASE}/models/routes`);

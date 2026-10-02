@@ -1,4 +1,4 @@
-"""章节路由：列表 / 详情 / 版本选定合并（M1：双版本生成后对比选择）。"""
+"""章节路由：列表 / 详情 / 版本选定回滚。"""
 import uuid
 from typing import Optional
 

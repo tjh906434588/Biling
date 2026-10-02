@@ -208,7 +208,7 @@ class CriticAgent(Agent[ReviewOutput]):
             if c.chapter_no != params.get("chapter_no")
         ) or "（无前文）"
 
-        # 伏笔账本 open 项（M2：foreshadowing_accountability 对照依据；只注入来源版本仍批准的）
+        # 伏笔账本 open 项（foreshadowing_accountability 对照依据；只注入来源版本仍批准的）
         ledger_rows = get_visible_open_ledger(self.db, novel_id)
         # 关键信息固化（C）：固化项永远排在前面（账本超 20 条也不被挤出）
         ledger_rows.sort(key=lambda r: (not r.is_pinned, -(r.urgency or 0), r.chapter_introduced or 0))

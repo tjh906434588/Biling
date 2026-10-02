@@ -1,4 +1,4 @@
-"""记忆审查 API（M4）：体检记忆层一致性（伏笔超期/悬置、角色状态链、设定别名合并状况）。
+"""记忆审查 API：体检记忆层一致性（伏笔超期/悬置、角色状态链、设定别名合并状况）。
 
 仅体检展示，不阻断写作；对照 §6 记忆层 as-of 语义。
 """
@@ -66,7 +66,7 @@ def memory_review(novel_id: uuid.UUID, db: Session = Depends(get_db)):
     latest = states[0] if states else None
     unresolved_hooks = latest.unresolved_hooks if latest else []
 
-    # 5. 设定别名/合并状况（M2 别名合并）
+    # 5. 设定别名/合并状况（别名合并）
     alias_count = db.execute(
         select(func.count(Setting.id)).where(
             Setting.novel_id == novel_id, Setting.aliases.is_not(None)

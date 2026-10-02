@@ -44,7 +44,7 @@ _PROVIDER_KEY_ENV: dict[str, str] = {
     "groq": "GROQ_API_KEY",
     "moonshot": "MOONSHOT_API_KEY",
     "zhipu": "ZHIPU_API_KEY",
-    "ollama": "OLLAMA_API_KEY",  # Ollama 本地无 Key，M4 支持
+    "ollama": "OLLAMA_API_KEY",  # Ollama 本地无 Key
     "lmstudio": "LMSTUDIO_API_KEY",
     "azure": "AZURE_API_KEY",
     "volcengine": "VOLCENGINE_API_KEY",  # 火山方舟（按量计费）

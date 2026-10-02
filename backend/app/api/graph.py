@@ -1,4 +1,4 @@
-"""实体图谱 API（M4 §4.1 entity_relations）：图谱视图 / 关系查询。
+"""实体图谱 API（entity_relations）：图谱视图 / 关系查询。
 
 节点来源：settings 实体（character/location/faction/...）+ entity_relations 中出现的实体名。
 边来源：entity_relations 表（dynamic=剧情层，提取师自动抽取）。

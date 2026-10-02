@@ -46,13 +46,13 @@ from app.db.session import engine
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用启动/关闭钩子：启动建表迁移、litellm 预导入、清理僵尸生成任务。"""
-    # M0 开发便利：启动时建表；正式迁移走 alembic upgrade head
+    # 开发便利：启动时建表；正式迁移走 alembic upgrade head
     Base.metadata.create_all(bind=engine)
-    # M2 尾巴：为既有 SQLite 表幂等补列（aliases/merged_into_id、since_chapter 等）
+    # 兼容旧库：为既有 SQLite 表幂等补列（aliases/merged_into_id、since_chapter 等）
     ensure_columns(engine)
-    # M4 尾巴：prompts 表 key 单列唯一 -> key+scope 联合唯一（写作指令按小说独立）
+    # 兼容旧库：prompts 表 key 单列唯一 -> key+scope 联合唯一（写作指令按小说独立）
     ensure_prompts_schema(engine)
-    # M5 尾巴：novels.background_type 改可空（旧库 NOT NULL 无法表示「未选择」）——重建该表
+    # 兼容旧库：novels.background_type 改可空（旧库 NOT NULL 无法表示「未选择」）——重建该表
     ensure_novel_background_type_nullable(engine)
     # 启动时预导入 litellm：把其首次 import 的开销（本地模型成本表加载等）放到启动阶段，
     # 避免第一个流式请求被 import 阻塞。

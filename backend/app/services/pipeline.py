@@ -3,7 +3,7 @@
 事件流（单版本）：context_ready → stream_delta* → stream_end → schema_validate → stored
 
 - 产出 schema 校验失败 → 携带错误自纠错重试 1 次 → 仍失败 → 落 quality_reviews 告警 + 事件标记。
-- 结构化入库由各角色 _persist 钩子完成（M0 extractor 入库 story_state；M1 novelist 入库 chapters + chapter_versions）。
+- 结构化入库由各角色 _persist 钩子完成（extractor 入库 story_state；novelist 入库 chapters + chapter_versions）。
 - 说明：生成路径固定为单版本（前端只请求单版本生成）；章节的「版本历史」来自每次生成/编辑新增的
   chapter_version 行，与多版本并行生成无关。
 """
@@ -932,7 +932,7 @@ async def _persist(
     parsed: BaseModel,
     source: Optional[str] = None,
 ) -> dict:
-    """结构化产出入库（M1：extractor→story_state，novelist→chapters+versions；M2：outliner→outlines+ledger，critic→quality_reviews；M3：blueprint_architect→blueprints，setting_extractor→concept_cards）。"""
+    """结构化产出入库（extractor→story_state，novelist→chapters+versions；outliner→outlines+ledger，critic→quality_reviews；blueprint_architect→blueprints，setting_extractor→concept_cards）。"""
     if agent_name == "extractor":
         return await _persist_extractor(db, novel_id, params, parsed)
     if agent_name == "novelist":
@@ -1215,7 +1215,7 @@ async def _persist_extractor(db: Session, novel_id: uuid.UUID, params: dict, par
         r.status = "progressing"
     db.commit()
 
-    # 实体关系回填（M4：dynamic 剧情层）
+    # 实体关系回填（dynamic 剧情层）
     # 重提取时：先清理本章此前产生的动态关系，再写入新关系，
     # 避免切换版本/修订后旧版本遗留的过期关系残留。
     # 跨章不做去重：相同 (source, relation, target) 每章独立入库，

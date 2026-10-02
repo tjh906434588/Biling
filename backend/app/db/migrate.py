@@ -1,7 +1,7 @@
 """开发期轻量迁移：SQLite 旧库补列（生产走 Alembic 正式迁移）。
 
 Base.metadata.create_all 只会新建缺失的【表】，不会为已存在的表补列。
-此处对 M2/M3/M4 新增的 nullable 列做幂等 ALTER TABLE ADD COLUMN。
+此处对历次新增的 nullable 列做幂等 ALTER TABLE ADD COLUMN。
 """
 import logging
 
