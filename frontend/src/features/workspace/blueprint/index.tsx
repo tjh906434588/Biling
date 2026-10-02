@@ -533,7 +533,7 @@ export default function BlueprintPanel({ novelId }: Props) {
 
   return (
     <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
-      <div className="grid min-h-0 flex-1 items-stretch gap-6 lg:grid-cols-[300px_1fr] [grid-template-rows:minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 items-stretch gap-4 lg:grid-cols-[300px_1fr] [grid-template-rows:minmax(0,1fr)]">
         <BlueprintVersionList
           items={items}
           selectedId={selected?.id ?? null}

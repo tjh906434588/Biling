@@ -522,7 +522,7 @@ export default function OutlinePanel({ novelId }: Props) {
 
   return (
     <Loading loading={loading}>
-      <div className="grid items-start gap-6 lg:grid-cols-[340px_minmax(0,1fr)] xl:gap-8">
+      <div className="grid items-start gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
       {/* 左侧：章节大纲（与写作页「章节目录」模块统一：按卷分组、可展开、可搜索）。
           模块高度跟随内容，最多与页面底部对齐；内容多时在列表内滚动，互不影响其他模块。 */}
       <OutlineList

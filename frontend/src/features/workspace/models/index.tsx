@@ -171,7 +171,7 @@ export default function ModelsPanel() {
 
   return (
     <Loading loading={loading || loadingModels}>
-      <div className="grid w-full gap-6">
+      <div className="grid w-full gap-4">
       {/* ---------- 模型接入：当前使用 + 服务商状态 + 添加/切换模型（弹窗） ---------- */}
       <section className="panel flex flex-col gap-4">
         <div>

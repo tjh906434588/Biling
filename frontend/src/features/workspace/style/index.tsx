@@ -95,7 +95,7 @@ export default function StylePanel({ novelId }: Props) {
 
   return (
     <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
-      <div className="grid min-h-0 flex-1 gap-6 [grid-template-rows:minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 gap-4 [grid-template-rows:minmax(0,1fr)]">
         <section className="flex min-h-0 min-w-0 flex-col gap-5 sm:gap-7">
         <div className="panel flex min-h-0 flex-col">
           <div className="panel-head">
