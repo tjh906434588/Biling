@@ -73,7 +73,7 @@ biling/
 ├─ backend/             # FastAPI 后端（端口 8000）
 │  └─ app/
 │     ├─ agents/        # AI 角色（蓝图师/大纲师/小说家/评价师/提取师…）
-│     ├─ api/           # REST + SSE 路由（含 diagnostics：日志收集与导出）
+│     ├─ api/           # REST + SSE 路由，按业务模块分文件（novels/chapters/outlines/blueprints/…，与 schemas/ 同名对齐）
 │     ├─ services/      # 编排与落库逻辑（pipeline.py 等）
 │     ├─ llm/           # LiteLLM 网关
 │     └─ db/            # 模型 / 会话 / 迁移

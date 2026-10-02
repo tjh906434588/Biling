@@ -38,6 +38,26 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 | 后端网关 | `backend/app/llm/` | LiteLLM 网关与路由 |
 | 桌面壳 | `desktop/` | Electron 主进程（拉起前后端、托盘、导出日志） |
 
+**后端业务模块 → 文件映射（一眼定位模块）**：
+
+| 业务模块 | 路由 `api/` | 契约 `schemas/` | 主要逻辑 `services/` |
+|---|---|---|---|
+| 小说项目 | novels.py | novel.py | — |
+| 设定库（含概念转正） | novels.py + concepts.py | concept.py | setting_checker.py |
+| 章节与版本 | chapters.py | chapter.py | — |
+| 章节大纲 | outlines.py | （在 agents.py 大纲师段） | outline_checker.py |
+| 蓝图 | blueprints.py | blueprint.py | blueprint_checker.py / blueprint_outline_template.py / file_import.py |
+| 伏笔账本 | ledger.py | ledger.py | — |
+| 实体图谱 | graph.py | graph.py | entity_checker.py / detector.py |
+| 风格画像 | style.py | style.py | — |
+| 记忆审查 | memory.py | （内联/通用类型） | — |
+| 写作指令 | prompts.py | prompts.py | — |
+| 模型接入/路由 | models.py | （内联） | llm/（gateway.py + routes.py） |
+| AI 角色（SSE 流式） | stream.py | agents.py | pipeline.py + agents/*.py |
+| 诊断/日志 | diagnostics.py | — | — |
+
+命名对齐约定（新增代码遵守，不强制搬动既有文件）：`api/<业务模块>.py` 与 `schemas/<业务模块>.py` 同名对齐；某业务契约目前散落在别处（如大纲在 agents.py）属既有现状，新增该模块的 schema 时优先补独立 `<模块>.py` 归拢。
+
 ## 2. 数据目录与配置约定
 
 - 所有用户数据（数据库、日志、导入文件）放**数据目录**：开发默认 `backend/data\`，桌面版为程序旁 `data\`（由 `BILING_DATA_DIR` 指定）。**不得把数据写进源码目录**。
@@ -52,6 +72,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - 类型注解齐全（含 `Optional` / `list[dict]` 等）；方法级 docstring 说明行为与边界。
 - 日志用 `logger = logging.getLogger(__name__)`，禁止 `print`；异常捕获后必须 `logger.exception(...)` 或至少 `logger.warning`，**禁止空 except 吞异常**。
 - 分层调用：api → services → db，避免路由里写复杂业务；跨角色复用放 services。
+- **命名对齐（自动执行）**：新增路由/契约文件时 `api/<业务模块>.py` 与 `schemas/<业务模块>.py` 同名对齐（见 §1 业务模块映射表），同一业务模块在 api/schema/service 各层的文件命名保持一致，便于一眼对应。
 - 不改动全局关键配置：`next.config.ts` 的 `compress: false`（SSE 反缓冲）、`proxyTimeout`、rewrite 代理，`main.py` 的启动迁移/全局异常处理器。
 
 ## 4. 前端代码风格
