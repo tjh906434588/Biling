@@ -86,6 +86,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - 任何改动若影响前后端启动、端口、数据目录、日志，必须同步检查 `desktop/main.js`（拉起/退出/托盘/导出日志）与 `build-desktop.ps1`。
 - 数据目录用 `BILING_DATA_DIR` 传给后端；zip 不含 `data\`，升级覆盖不丢数据。
 - 发版：改 `desktop/package.json` 的 version → main 打 `v*` tag → Actions 自动打包上传 Releases（普通 push / 非 main tag 不打包）。
+- **版本号约定**：`desktop/package.json` 的 version 是唯一发版号，会自动体现在三处——窗口标题与托盘提示（`vX.Y.Z`）、压缩包名（`Biling-X.Y.Z-win.zip`）、GitHub Release tag。发版只改这一处即可，勿在多处手写版本号。
 - 图标改动：改 `desktop/build/icon.svg` → `cd desktop && npm run make:icon` 重新生成。
 
 ## 7. 提交规范

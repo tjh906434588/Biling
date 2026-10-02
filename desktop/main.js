@@ -108,11 +108,19 @@ async function createMainWindow() {
     height: 900,
     minWidth: 1000,
     minHeight: 660,
-    title: "笔灵 Biling",
+    title: `笔灵 Biling v${app.getVersion()}`,
     autoHideMenuBar: true,
     backgroundColor: "#f6f1e6",
     icon: makeIcon(),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  // 页面加载后标题会被 document.title 覆盖，这里在标题末尾恒定附加版本号
+  // （SPA 切页改标题时也不丢，且不会重复叠加），让用户一眼看到当前版本
+  mainWindow.on("page-title-updated", (e, title) => {
+    e.preventDefault();
+    const ver = `v${app.getVersion()}`;
+    const base = title.replace(new RegExp(`\\s*${ver}$`), "");
+    mainWindow.setTitle(`${base} ${ver}`);
   });
   mainWindow.on("closed", () => { mainWindow = null; });
   await mainWindow.loadURL(FRONTEND_URL);
@@ -121,7 +129,7 @@ async function createMainWindow() {
 // ---------- 托盘 ----------
 function createTray() {
   tray = new Tray(makeIcon());
-  tray.setToolTip("笔灵 Biling");
+  tray.setToolTip(`笔灵 Biling v${app.getVersion()}`);
   const menu = Menu.buildFromTemplate([
     { label: "打开主界面", click: () => showMainWindow() },
     { label: "导出日志…", click: () => exportLogs() },

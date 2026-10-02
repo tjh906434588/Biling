@@ -26,7 +26,8 @@
     "asar": true,
     "win": {
       "icon": "build/icon.png",
-      "target": [{ "target": "zip", "arch": ["x64"] }]
+      "target": [{ "target": "zip", "arch": ["x64"] }],
+      "artifactName": "Biling-${version}-win.${ext}"
     },
     "extraResources": [
       { "from": "build/icon.png", "to": "icon.png" },
