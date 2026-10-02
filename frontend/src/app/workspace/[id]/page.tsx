@@ -525,11 +525,21 @@ export default function WorkspacePage({ params }: { params: Promise<{ id: string
             {FLAT_TABS.map(stripItem)}
           </nav>
 
-          <main className={`min-h-0 flex-1 ${tab === "settings" ? "overflow-hidden" : "overflow-y-auto"}`}>
+          <main
+            className={`min-h-0 flex-1 ${
+              tab === "settings" ? "overflow-hidden" : tab === "detect" ? "lg:overflow-hidden" : "overflow-y-auto"
+            }`}
+          >
             <div
               className={`mx-auto w-full px-4 py-6 sm:px-6 ${
                 tab === "write" || tab === "outline" ? "max-w-[1728px]" : "max-w-[1280px]"
-              } ${tab === "settings" ? "flex h-full flex-col" : ""}`}
+              } ${
+                tab === "settings"
+                  ? "flex h-full flex-col"
+                  : tab === "detect"
+                    ? "lg:flex lg:h-full lg:flex-col"
+                    : ""
+              }`}
             >
               {AI_TABS.has(tab) && <AiNotReadyBanner onConfigure={() => setTab("models")} />}
               <FirstRunGuide novelId={id} onGo={setTab} />

@@ -478,19 +478,6 @@
     color: var(--ink-strong);
     letter-spacing: 0.01em;
   }
-  /* 标题前的序号徽标：①②③，让"第几步"一眼可见 */
-  .panel-step {
-    display: grid;
-    place-items: center;
-    width: 1.25rem;
-    height: 1.25rem;
-    flex-shrink: 0;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--seal) 12%, transparent);
-    color: var(--seal);
-    font-size: 0.6875rem;
-    font-weight: 600;
-  }
   .panel-hint {
     font-size: 0.75rem;
     line-height: 1.6;
