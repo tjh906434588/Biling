@@ -9,14 +9,14 @@
 
 import { useEffect, useRef } from "react";
 import { friendlyTaskError, getStreamStatus, type StreamStatusResult, type StreamTaskInfo } from "@/lib/api";
-import { AGENT_LABELS } from "@/constants";
+import { getAgentLabel } from "@/constants";
 import { notification } from "@/components/notification";
 import { message } from "@/components/message";
 import { setRunningTask } from "@/lib/task-status";
 
-/** 后台任务展示名：如「蓝图师·第 3 章」（通知标题用）。 */
+/** 后台任务展示名：如「小说家·第 3 章」（通知标题用）。 */
 function taskLabel(t: StreamTaskInfo): string {
-  return `${AGENT_LABELS[t.agent] ?? t.agent}${t.chapter_no != null ? `·第 ${t.chapter_no} 章` : ""}`;
+  return `${getAgentLabel(t.agent)}${t.chapter_no != null ? `·第 ${t.chapter_no} 章` : ""}`;
 }
 
 /**

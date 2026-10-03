@@ -1,28 +1,52 @@
 /**
  * @file constants/agents.ts
- * AI 角色相关共享常量：角色中文标签 AGENT_LABELS（合并自 agent-task-toasts.tsx 与 author-confirm.tsx
- * 两份定义，取其并集，各调用方按需取 key）、作者确认轮询间隔 CONFIRM_POLL_INTERVAL，
- * 以及工作台 tools 调试页的角色注册表 AGENTS（含其局部类型 ParamType/ParamSpec）。
+ * AI 角色相关共享常量。角色中文名以「后端唯一权威源」为主（app/agents/roles.py，经 /api/agents/meta
+ * 下发，见 lib/api/agents.ts 的 getAgentMeta），本文件只保留一份「本地兜底」FALLBACK_ROLE_NAMES
+ * （首屏/离线时先用），并暴露 loadAgentLabels / getAgentLabel 供全局读取——全项目一律通过
+ * getAgentLabel 取角色名，不再各自维护中文名。
+ * 另含：作者确认轮询间隔 CONFIRM_POLL_INTERVAL、工作台 tools 调试页的角色注册表 AGENTS。
  */
 
-/** AI 角色 → 中文标签（后台任务悬浮框/确认弹窗标题用，与各面板的叫法保持一致）。
- *  注意：author-confirm.tsx 另有仅用于「规划详情展示」的 FUNCTION_LABELS（节奏功能标签），
- *  与本文件的 AGENT_LABELS 无关；且其值与大纲页派生版本存在差异（如 buildup 蓄势/铺垫），
- *  为避免改变展示文案，FUNCTION_LABELS 保持在各组件内，不在此合并。 */
-export const AGENT_LABELS: Record<string, string> = {
-  blueprint_architect: "蓝图师",
+import { getAgentMeta } from "@/lib/api";
+
+/** 本地兜底角色名（首屏/接口不可用时先用；接口拉取成功后覆盖，见 loadAgentLabels）。
+ *  命名与后端 roles.py 保持一致，改动务必同步两处并以后端为准。 */
+const FALLBACK_ROLE_NAMES: Record<string, string> = {
+  blueprint_architect: "蓝图架构师",
   blueprint_activation: "蓝图激活",
+  blueprint_prechecker: "蓝图导入质检师",
+  import_checker: "导入质检师",
   outliner: "大纲师",
-  novelist: "AI 写作",
-  reviser: "AI 优化",
-  critic: "AI 评审",
-  extractor: "AI 记忆整理",
-  setting_extractor: "设定整理",
-  era_researcher: "时代·行业研究员",
-  blueprint_prechecker: "蓝图质检师",
+  outline_checker: "大纲质检师",
+  direction_proposer: "提案师",
+  era_researcher: "研究员",
   chapter_planner: "章节规划师",
   scene_planner: "场景规划师",
+  novelist: "小说家",
+  reviser: "修订师",
+  critic: "评价师",
+  extractor: "状态提取师",
+  setting_extractor: "设定提取师",
+  style_extractor: "文风提取师",
+  memory_keeper: "作品编年师",
 };
+
+/** 远程角色名缓存（getAgentMeta 拉取后写入；null = 未拉取/失败，回退本地兜底）。 */
+let remoteRoleNames: Record<string, string> | null = null;
+
+/** 应用启动时调用一次：拉取后端权威角色名，失败静默保持本地兜底。 */
+export async function loadAgentLabels(): Promise<void> {
+  try {
+    remoteRoleNames = await getAgentMeta();
+  } catch {
+    remoteRoleNames = null; // 拉取失败：继续用本地兜底，不影响功能
+  }
+}
+
+/** 取角色中文名：远程优先，本地兜底，未知角色回退英文 key。 */
+export function getAgentLabel(key: string): string {
+  return (remoteRoleNames ?? FALLBACK_ROLE_NAMES)[key] ?? key;
+}
 
 /** 作者确认轮询间隔（ms）：刷新/断线后靠 GET /confirm 轮询恢复未答复确认。 */
 export const CONFIRM_POLL_INTERVAL = 3000;
@@ -42,10 +66,11 @@ export interface ParamSpec {
   options?: { value: string; label: string }[];
 }
 
-/** 六角色注册表：角色名 / 描述 / 参数表单规格（tools 页选择角色后据此渲染表单） */
+/** 六角色注册表：角色名 / 描述 / 参数表单规格（tools 页选择角色后据此渲染表单）。
+ *  角色名统一走 getAgentLabel（单一源），desc 仅调试页展示用。 */
 export const AGENTS: Record<string, { name: string; desc: string; params: ParamSpec[] }> = {
   blueprint_architect: {
-    name: "蓝图师",
+    name: getAgentLabel("blueprint_architect"),
     desc: "搭建整部作品的世界蓝图（规则/人物弧光/分卷/伏笔计划）",
     params: [
       {
@@ -58,7 +83,7 @@ export const AGENTS: Record<string, { name: string; desc: string; params: ParamS
     ],
   },
   outliner: {
-    name: "大纲师",
+    name: getAgentLabel("outliner"),
     desc: "为某一章产出细化大纲（节拍/冲突/伏笔处理）",
     params: [
       { key: "chapter_no", label: "章节号", placeholder: "如 1（留空则排下一章）", type: "number" },
@@ -72,7 +97,7 @@ export const AGENTS: Record<string, { name: string; desc: string; params: ParamS
     ],
   },
   novelist: {
-    name: "小说家",
+    name: getAgentLabel("novelist"),
     desc: "按大纲生成章节正文（单版本，生成即定稿，见「写作」页）",
     params: [
       { key: "chapter_no", label: "章节号", placeholder: "如 1（留空则排下一章）", type: "number" },
@@ -117,7 +142,7 @@ export const AGENTS: Record<string, { name: string; desc: string; params: ParamS
     ],
   },
   extractor: {
-    name: "提取师",
+    name: getAgentLabel("extractor"),
     desc: "从章节正文提取故事状态，写入记忆层（真实入库 story_state）",
     params: [
       { key: "chapter_no", label: "章节号", placeholder: "如 1", type: "number" },
@@ -138,7 +163,7 @@ export const AGENTS: Record<string, { name: string; desc: string; params: ParamS
     ],
   },
   critic: {
-    name: "评价师",
+    name: getAgentLabel("critic"),
     desc: "对照蓝图/伏笔账本评价章节质量，反哺小说家",
     params: [
       {

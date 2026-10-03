@@ -24,15 +24,14 @@ import json
 from sqlalchemy.orm import Session
 
 from app.db.models import PromptTemplate
+from app.agents.roles import ROLE_NAMES
 
-# 参与可配置的创作/评审角色（key -> 中文名）
-CONFIGURABLE_AGENTS: dict[str, str] = {
-    "novelist": "小说家",
-    "outliner": "大纲师",
-    "critic": "评价师",
-    "reviser": "修订师",
-    "blueprint_architect": "蓝图师",
-}
+# 参与可配置的创作/评审角色（key -> 中文名；中文名单一维护源见 app/agents/roles.py）。
+# 写作指令弹窗只面向「创作/评审」类角色（见文件头约定）：小说家/大纲师/评价师/修订师/蓝图架构师。
+# 规划/质检/提取等辅助角色（含风格学习师）不在此列——它们不产出可验收的创作成果。
+CONFIGURABLE_AGENTS: dict[str, str] = {k: ROLE_NAMES[k] for k in (
+    "novelist", "outliner", "critic", "reviser", "blueprint_architect",
+)}
 
 # 结构化字段（顺序即展示/组装顺序）
 FIELDS: tuple[str, ...] = ("mindset", "style_rules", "forbidden", "check_standard")
@@ -140,7 +139,7 @@ DEFAULT_FIELDS: dict[str, dict[str, str]] = {
     },
     "blueprint_architect": {
         "mindset": (
-            "你是「蓝图师」，把作者的设定与脑洞整理成一部小说的完整蓝图。"
+            "你是「蓝图架构师」，把作者的设定与脑洞整理成一部小说的完整蓝图。"
             "蓝图是后续所有角色的\"宪法\"：宁可多收，不可漏收。"
         ),
         "style_rules": (

@@ -8,7 +8,7 @@
 
 import Modal from "../../modal";
 import { dismissAuthorConfirm, type AuthorConfirm } from "@/lib/api";
-import { AGENT_LABELS } from "@/constants";
+import { getAgentLabel } from "@/constants";
 import { ConfirmPanel } from "./panel";
 
 interface ConfirmDialogProps {
@@ -22,7 +22,7 @@ export function ConfirmDialog({ confirm, onSettled }: ConfirmDialogProps) {
   return (
     <Modal
       open
-      title={`${AGENT_LABELS[confirm.agent] ?? confirm.agent} · 请你确认`}
+      title={`${getAgentLabel(confirm.agent)} · 请你确认`}
       subtitle="写到这停一下，你拍板后继续"
       onClose={() => {
         // 点关闭 = 跳过：通知后端解除确认阻塞，避免轮询每 3 秒把弹窗重新推回来

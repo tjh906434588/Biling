@@ -16,7 +16,7 @@ import {
   fetchPendingConfirms,
   type AuthorConfirm,
 } from "@/lib/api";
-import { AGENT_LABELS, CONFIRM_POLL_INTERVAL } from "@/constants";
+import { getAgentLabel, CONFIRM_POLL_INTERVAL } from "@/constants";
 import { pushAuthorConfirm } from "./store";
 
 /**
@@ -80,7 +80,7 @@ export function ConfirmNotifier() {
           }
         } else if (!notifiedRef.current.has(it.id)) {
           // 其他小说：右上角常驻提醒，写明书名 + 哪个功能，点击跳转确认
-          const label = AGENT_LABELS[it.agent] ?? it.agent;
+          const label = getAgentLabel(it.agent);
           const nid = notification.warning({
             title: `《${it.novel_title ?? "未命名小说"}》需要你确认`,
             message: `${label}生成到这里，需要你拿主意：\n${it.question}`,

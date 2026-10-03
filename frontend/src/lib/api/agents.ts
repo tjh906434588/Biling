@@ -14,6 +14,13 @@ import type {
 } from "@/types/api";
 import { httpError } from "./errors";
 
+/** 拉取角色中文名映射（唯一权威源：后端 app/agents/roles.py；前端兜底见 @/constants/agents）。 */
+export async function getAgentMeta(): Promise<Record<string, string>> {
+  const res = await fetch(`${BASE}/agents/meta`);
+  if (!res.ok) throw new Error("加载角色名失败");
+  return res.json();
+}
+
 /** 查询该小说该角色是否有进行中的生成任务（刷新后恢复生成中状态用）。 */
 export async function getAgentRunningTask(
   agent: string,

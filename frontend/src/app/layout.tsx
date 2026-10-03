@@ -13,6 +13,7 @@ import { NotificationHost } from "@/components/notification";
 import { ConfirmNotifier } from "@/components/author-confirm";
 import GlobalLogging from "@/components/global-logging";
 import TitleBar from "@/components/title-bar";
+import AgentLabelsLoader from "@/components/agent-labels-loader";
 
 /** 全局 SEO / 浏览器标签页元信息：标题模板、描述、应用名 */
 export const metadata: Metadata = {
@@ -43,6 +44,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex h-dvh flex-col overflow-hidden">
         {/* 桌面版自绘窗口标题栏（Electron 隐藏系统标题栏后的拖拽区；浏览器里仅一条装饰条） */}
         <TitleBar />
+        {/* 启动即拉取角色中文名权威映射（后端 roles.py 单一源），全项目显示一致 */}
+        <AgentLabelsLoader />
         <AiStatusProvider>{children}</AiStatusProvider>
         {/* 全局前端日志：捕获未处理错误并上报后端落盘（导出日志排查问题用） */}
         <GlobalLogging />

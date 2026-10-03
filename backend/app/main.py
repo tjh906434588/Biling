@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import (
+    agents,
     blueprints,
     chapters,
     concepts,
@@ -20,7 +21,6 @@ from app.api import (
     outlines,
     prompts,
     stream,
-    style,
 )
 from app.config import get_settings
 from app.logging_config import setup_logging
@@ -120,12 +120,12 @@ app.include_router(outlines.router)
 app.include_router(ledger.router)
 app.include_router(blueprints.router)
 app.include_router(concepts.router)
-app.include_router(style.router)
 app.include_router(graph.router)
 app.include_router(memory.router)
 app.include_router(stream.router)
 app.include_router(models.router)
 app.include_router(prompts.router)
+app.include_router(agents.router)
 app.include_router(diagnostics.router)
 
 
