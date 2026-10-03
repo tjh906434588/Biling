@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.meta import TASK_TYPES as META_TASK_TYPES
 from app.db.models import AppPreference, ModelRoute, ProviderKey
 from app.db.session import get_db
 from app.llm.gateway import _PROVIDER_KEY_ENV
@@ -17,18 +18,8 @@ from app.llm.routes import get_user_default_model, list_routes
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
-# 全部任务类型（key + 中文 label/hint，文案单一源）。
-# 前端任务类型文案一律经 GET /api/models/task-types 拉取，不各自维护，避免新增类型时漏写文案。
-# 排序按创作流水线：设定（地基）→ 质检（把关）→ 规划（正文前置细化）→ 创作（正文）→ 提取（每章记忆）→ 评价（审稿收尾）→ 编年（跨章压缩）
-TASK_TYPES: list[dict[str, str]] = [
-    {"key": "setting", "label": "设定", "hint": "规划世界观、人物与大章节大纲，定下故事骨架"},
-    {"key": "check", "label": "质检", "hint": "校验大纲、蓝图与导入内容是否达标合规"},
-    {"key": "planning", "label": "规划", "hint": "写正文前细化本章规划（章节/场景），作者确认后开写"},
-    {"key": "creation", "label": "创作", "hint": "写每一章的正文内容"},
-    {"key": "extract", "label": "提取", "hint": "把已写的章节自动整理成剧情要点和人物信息，供后续写作参考"},
-    {"key": "review", "label": "评价", "hint": "审读章节质量，发现问题并给出修改建议"},
-    {"key": "chronicle", "label": "编年", "hint": "定期把前文浓缩成故事脉络，防止写久了忘掉早期伏笔"},
-]
+# 任务类型清单的单一事实源在 app/api/meta.py（TASK_TYPES，经 GET /api/meta 下发），
+# 本文件仅消费（如 RouteUpsert 白名单由它派生，避免新增类型时漏更白名单）。
 
 # 页面「添加模型」弹窗的预置服务商目录（参考 TRAE：自定义模型置顶 + 预设服务商 + 选模型填 Key）
 # provider 命名尽量用 litellm 原生 provider 名；未知的由 gateway 统一走 OpenAI 兼容
@@ -298,8 +289,8 @@ class ProbeResponse(BaseModel):
 
 
 class RouteUpsert(BaseModel):
-    """新增/更新路由：task_type 唯一（upsert 语义）。"""
-    task_type: str = Field(..., pattern="^(setting|creation|review|extract|chronicle)$")
+    """新增/更新路由：task_type 唯一（upsert 语义）。task_type 白名单由 meta.TASK_TYPES 派生，与元数据接口保持一致。"""
+    task_type: str = Field(..., pattern="^(" + "|".join(t["key"] for t in META_TASK_TYPES) + ")$")
     provider: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
     temperature: Optional[float] = Field(default=None, ge=0, le=2)
@@ -740,30 +731,6 @@ def delete_custom_model(provider: str, db: Session = Depends(get_db)):
 def get_routes(db: Session = Depends(get_db)):
     """前端下拉读此表：可用模型列表 = model_routes 已配置的行。"""
     return list_routes(db)
-
-
-@router.get("/task-types")
-def list_task_types() -> list[dict[str, object]]:
-    """任务类型清单（key + label + hint + 该类型下的角色中文名）。
-
-    前端任务类型名称/角色一律经此接口获取（单一源），不各自维护枚举文案；
-    角色列表由角色注册表（registry.task_type）+ 角色中文名（roles.ROLE_NAMES）动态聚合，
-    新增角色/调整归属时自动反映，无需再改文案。
-    """
-    roles = _roles_by_task_type()
-    return [{**t, "roles": roles.get(t["key"], [])} for t in TASK_TYPES]
-
-
-def _roles_by_task_type() -> dict[str, list[str]]:
-    """按 task_type 聚合角色中文名：遍历角色注册表，取其 task_type 与中文名分组。"""
-    from app.agents.registry import REGISTRY
-    from app.agents.roles import ROLE_NAMES
-
-    groups: dict[str, list[str]] = {}
-    for agent_key, agent_cls in REGISTRY.items():
-        tt = getattr(agent_cls, "task_type", "setting")
-        groups.setdefault(tt, []).append(ROLE_NAMES.get(agent_key, agent_key))
-    return groups
 
 
 @router.post("/routes", response_model=RouteRead)

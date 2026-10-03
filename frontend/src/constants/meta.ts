@@ -6,7 +6,7 @@
  */
 import type { Novel } from "@/types/api";
 import type { Tab } from "@/types/workspace";
-import { getGenreAliases } from "@/lib/api";
+import { loadMetaDict } from "@/lib/meta-dict";
 
 // 世界背景类型：决定签约核查口径（realistic 对照真实时代 / alternate 现实框架+虚构 / pure_fantasy 只查设定账本自洽）。
 // 默认不选；不确定可不选，导入蓝图时 AI 按素材推断、作者确认后落库。
@@ -41,20 +41,15 @@ export const GENRE_PRESETS = [
 ];
 
 // 题材同义标签 → 标准标签：单一事实源在后端 app/agents/platform_rules.py 的 GENRE_ALIASES，
-// 前端经 GET /api/novels/genre-aliases 拉取（见 loadGenreAliases），不在此再维护一份，避免改后端忘同步前端。
+// 前端经 /api/meta（统一字典接口 + 缓存）拉取（见 loadGenreAliases），不在此再维护一份，避免改后端忘同步前端。
 
-/** 题材同义标签模块级缓存（接口拉取一次；失败回退空映射，不阻塞输入）。 */
-let genreAliasesCache: Record<string, string> | null = null;
-
-/** 拉取题材同义标签（后端单一源）：设定页自定义题材输入命中同义标签时提示改用标准标签。 */
+/** 拉取题材同义标签（后端单一源，统一缓存命中不再请求）；失败回退空映射，不阻塞输入。 */
 export async function loadGenreAliases(): Promise<Record<string, string>> {
-  if (genreAliasesCache) return genreAliasesCache;
   try {
-    genreAliasesCache = await getGenreAliases();
+    return await loadMetaDict<Record<string, string>>("genre_aliases");
   } catch {
-    genreAliasesCache = {};
+    return {};
   }
-  return genreAliasesCache;
 }
 
 /** 新手引导步骤的字段结构。 */

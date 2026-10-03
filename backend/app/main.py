@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import (
-    agents,
     blueprints,
     chapters,
     concepts,
@@ -16,6 +15,7 @@ from app.api import (
     graph,
     ledger,
     memory,
+    meta,
     models,
     novels,
     outlines,
@@ -125,7 +125,7 @@ app.include_router(memory.router)
 app.include_router(stream.router)
 app.include_router(models.router)
 app.include_router(prompts.router)
-app.include_router(agents.router)
+app.include_router(meta.router)
 app.include_router(diagnostics.router)
 
 

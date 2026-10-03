@@ -7,7 +7,7 @@
  * 另含：作者确认轮询间隔 CONFIRM_POLL_INTERVAL、工作台 tools 调试页的角色注册表 AGENTS。
  */
 
-import { getAgentMeta } from "@/lib/api";
+import { loadMetaDict } from "@/lib/meta-dict";
 
 /** 本地兜底角色名（首屏/接口不可用时先用；接口拉取成功后覆盖，见 loadAgentLabels）。
  *  命名与后端 roles.py 保持一致，改动务必同步两处并以后端为准。 */
@@ -37,7 +37,7 @@ let remoteRoleNames: Record<string, string> | null = null;
 /** 应用启动时调用一次：拉取后端权威角色名，失败静默保持本地兜底。 */
 export async function loadAgentLabels(): Promise<void> {
   try {
-    remoteRoleNames = await getAgentMeta();
+    remoteRoleNames = await loadMetaDict<Record<string, string>>("agents");
   } catch {
     remoteRoleNames = null; // 拉取失败：继续用本地兜底，不影响功能
   }

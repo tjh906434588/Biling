@@ -92,7 +92,7 @@ export default function ModelsPanel() {
   useEffect(() => {
     load();
     loadModels();
-    loadTaskTypes().then(setTaskMetas); // 任务类型文案（后端单一源）；失败内部回落 key 兜底
+    loadTaskTypes().then(setTaskMetas).catch(() => {}); // 文案拉取失败保持 key 兜底，不阻塞
   }, [load, loadModels]);
 
   /** 打开添加模型弹窗；传入 provider 时定位到该服务商详情；custom=true 直接进自定义配置表单。 */
@@ -332,13 +332,13 @@ export default function ModelsPanel() {
               <div key={t.key} className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{t.label}</span>
-                    <p className="text-[11px] text-zinc-400">
-                      {t.hint}
+                    <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                      {t.label}
                       {t.roles.length > 0 && (
-                        <span className="ml-1.5 text-zinc-400/80">（{t.roles.join("、")}）</span>
+                        <span className="ml-1.5 text-[10px] font-normal text-zinc-400">（{t.roles.join("、")}）</span>
                       )}
-                    </p>
+                    </span>
+                    <p className="text-[11px] text-zinc-400">{t.hint}</p>
                   </div>
                   <span className="shrink-0 rounded bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                     {f.provider && f.model
