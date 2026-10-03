@@ -41,7 +41,6 @@ EXPORT_TABLES: list[str] = [
     "quality_reviews",
     "blueprint_styles",
     "novel_memories",
-    "style_profiles",
     "prompts",
 ]
 

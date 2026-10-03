@@ -16,7 +16,6 @@ from app.agents.base import (
 from app.agents.context import (
     compute_ledger_debt,
     format_ledger_debt_report,
-    get_latest_style_profile,
     get_novel,
     get_recent_chapters,
     get_recent_story_states,
@@ -92,7 +91,6 @@ class NovelistAgent(Agent[NovelChapter]):
         """装配写作上下文：按优先级组件化注入蓝图/大纲/设定/记忆/前文/风格/必现清单等，
         交由 token 预算器按 context_window 裁剪（硬约束组件永不剔除）。"""
         novel = get_novel(self.db, novel_id)
-        style = get_latest_style_profile(self.db, novel_id)
 
         # 题材特化规则（条件注入）：仅已校准题材族（现实事业流/悬疑推理流）生效；
         # 架空/玄幻/全民神祗等其它类型返回空串，不注入任何特化规则，避免跨题材冲突。
@@ -180,17 +178,14 @@ class NovelistAgent(Agent[NovelChapter]):
             cur_no = 0
         debt_report = format_ledger_debt_report(compute_ledger_debt(self.db, novel_id, cur_no))
 
-        # L2 风格画像（存在则注入）
+        # L2 全局文风：蓝图识别（导入蓝图自动更新）+ 手动添加（作者手写，冲突时以手动为准）
         style_text = "（暂无风格画像）"
-        if style:
-            style_text = f"traits: {style.traits}\navoid_list: {style.avoid_list}"
-        # 全局文风：两部分——蓝图识别（导入蓝图自动更新，冲突时优先）+ 手动添加（不可被覆盖，不冲突也必须遵守）
         blueprint_style = (getattr(novel, "style_directive", None) or "").strip()
         manual_style = (getattr(novel, "style_directive_manual", None) or "").strip()
         if blueprint_style:
-            style_text += f"\n【蓝图识别文风（每次导入蓝图自动更新；与手动文风冲突时以本部分为准）】\n{blueprint_style}"
+            style_text += f"\n【蓝图识别文风（每次导入蓝图自动更新）】\n{blueprint_style}"
         if manual_style:
-            style_text += f"\n【手动文风指示（作者手动设定，不可被覆盖；与蓝图识别文风不冲突时必须严格遵守）】\n{manual_style}"
+            style_text += f"\n【手动文风指示（作者手动设定，最高优先级；与蓝图识别文风冲突时以本部分为准）】\n{manual_style}"
 
         # L3 节奏/心态指令：由 chapter_function 与写作模式运行时派生
         chapter_function = params.get("chapter_function", "progression")

@@ -135,7 +135,7 @@ npm run dev
 - **模型 Key**：推荐直接在应用「AI 设置」页填写（写入本地数据库，运行时不需要 `.env`）；也可在 `backend/.env` 配置（如 `DEEPSEEK_API_KEY=sk-xxx`）。未配置 Key 时 AI 功能会报错并引导去「模型」页配置（默认不输出演示内容）；仅开发调试想无 Key 看链路时，设置 `BILING_ALLOW_MOCK_WITHOUT_KEY=true`。
 - **数据目录**：所有用户数据（数据库 / 日志 / 导入文件）统一放数据目录。开发默认 `backend/data\`（首次启动自动建目录，并自动迁移旧库 `backend/biling.db`）；桌面版为程序旁的 `data\` 子文件夹，由壳层通过 `BILING_DATA_DIR` 指定。
 - **数据库**：默认 SQLite 位于数据目录下（`backend/data/biling.db`），首次启动自动建表；生产迁移用 `alembic upgrade head`。
-- **文风**：手动文风（`style_directive_manual`）与蓝图文风互不覆盖；蓝图切换生效时全局文风跟随生效蓝图。
+- **文风**：手动文风（`style_directive_manual`）与蓝图文风互不覆盖；蓝图切换生效时全局文风跟随生效蓝图；两者冲突时以手动文风为准。
 
 ---
 

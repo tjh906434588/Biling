@@ -22,7 +22,7 @@ class Novel(Base):
     premise: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 蓝图识别文风：从导入蓝图/大纲文档自动提炼，每次导入蓝图时覆盖（前端只读）
     style_directive: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # 手动添加文风：作者手动维护，导入蓝图不会覆盖；与蓝图识别文风冲突时以蓝图识别为准
+    # 手动添加文风：作者手动维护，导入蓝图不会覆盖；与蓝图识别文风冲突时以手动为准
     style_directive_manual: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 世界背景类型（可留空不选，导入蓝图时由 AI 按素材推断、作者确认后落库）：
     # realistic=现实年代（有真实世界参照，签约核查需对照真实时代细节）
@@ -333,19 +333,6 @@ class EntityRelation(Base):
         Uuid, ForeignKey("chapter_versions.id"), nullable=True
     )  # 取代者提取时所在的正文版本（切回旧版本时据此「复活」被取代的旧关系，消除取代链跨版本空档）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
-class StyleProfile(Base):
-    """风格画像（版本化，随用户编辑迭代）。"""
-    __tablename__ = "style_profiles"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    novel_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("novels.id"), index=True)
-    version: Mapped[int] = mapped_column(Integer, default=1)
-    traits: Mapped[Optional[dict]] = mapped_column(JSON)  # 句式/词汇/视角/节奏偏好 + 示例片段
-    avoid_list: Mapped[Optional[list]] = mapped_column(JSON)  # 用户多次拒绝的写法
-    source_diff_ids: Mapped[Optional[list]] = mapped_column(JSON)  # 引用产生本次学习的编辑 diff
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class QualityReview(Base):

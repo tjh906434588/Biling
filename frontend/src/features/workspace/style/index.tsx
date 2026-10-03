@@ -7,7 +7,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getNovel, listStyleProfiles, updateNovel, type StyleProfile } from "@/lib/api";
+import { getNovel, updateNovel } from "@/lib/api";
 import { useAiStatus } from "@/lib/ai-status";
 import InfoTip from "@/components/info-tip";
 import { message } from "@/components/message";
@@ -17,21 +17,11 @@ interface Props {
   novelId: string;
 }
 
-/** 风格画像中展示的五项特质（key → 中文标签），按此顺序渲染。 */
-const TRAIT_FIELDS: Array<[keyof NonNullable<StyleProfile["traits"]>, string]> = [
-  ["sentence_length", "句式长短"],
-  ["vocabulary", "用词倾向"],
-  ["perspective", "视角叙述"],
-  ["dialogue_ratio", "对话比例"],
-  ["rhythm", "节奏结构"],
-];
-
 /**
  * 风格/文风面板主组件。
  * @param novelId 当前小说 id。
  */
 export default function StylePanel({ novelId }: Props) {
-  const [profiles, setProfiles] = useState<StyleProfile[]>([]);
   // 数据加载中：遮罩过渡，加载完成后解除
   const [loading, setLoading] = useState(true);
   // 手动添加文风：作者手动维护，导入蓝图不会覆盖
@@ -43,22 +33,15 @@ export default function StylePanel({ novelId }: Props) {
   const [draftManual, setDraftManual] = useState("");
   const { ensureReady } = useAiStatus();
 
-  /** 加载文风描述（蓝图/手动）与风格画像；文风描述读取失败不阻塞画像加载。 */
+  /** 加载文风描述（蓝图识别 + 手动添加）。 */
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      try {
-        const novel = await getNovel(novelId);
-        setBlueprintDirective(novel.style_directive ?? "");
-        setManualDirective(novel.style_directive_manual ?? "");
-      } catch {
-        // 风格画像仍可加载，文风描述读取失败不阻塞
-      }
-      try {
-        setProfiles(await listStyleProfiles(novelId));
-      } catch (e) {
-        message.error((e as Error).message);
-      }
+      const novel = await getNovel(novelId);
+      setBlueprintDirective(novel.style_directive ?? "");
+      setManualDirective(novel.style_directive_manual ?? "");
+    } catch (e) {
+      message.error((e as Error).message);
     } finally {
       setLoading(false);
     }
@@ -90,9 +73,6 @@ export default function StylePanel({ novelId }: Props) {
     }
   }
 
-  /** 最新一版风格画像（后端按版本倒序返回，第 0 个即最新），用于标记「当前生效」。 */
-  const latest = profiles[0] ?? null;
-
   return (
     <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
       <div className="grid min-h-0 flex-1 gap-4 [grid-template-rows:minmax(0,1fr)]">
@@ -105,7 +85,7 @@ export default function StylePanel({ novelId }: Props) {
                 <ul className="list-disc space-y-1 pl-4">
                   <li>蓝图识别文风：导入蓝图时从大纲文档提炼的文风。</li>
                   <li>手动添加文风：作者手动维护，导入蓝图不会覆盖。</li>
-                  <li>两者冲突时以蓝图识别为准；手动部分与蓝图不冲突时也必须严格遵守。</li>
+                  <li>两者冲突时以手动添加为准（你的手写文风优先级最高）。</li>
                   <li>AI 每次写正文时都会参考这两部分。</li>
                 </ul>
               </InfoTip>
@@ -194,54 +174,6 @@ export default function StylePanel({ novelId }: Props) {
             注意：这里只能写「描述」，<strong>不要直接粘贴他人作品原文</strong>。别人的作品原文会被当成你的风格样例灌给 AI，既不准确还可能侵权。
           </p>
         </div>
-
-        {profiles.length > 0 && (
-          <div className="panel">
-            <div className="panel-head">
-              <h3 className="panel-title">文风分析记录</h3>
-              <span className="panel-hint">共 {profiles.length} 版 · 最新一版在使用</span>
-            </div>
-            <div className="flex flex-col gap-2.5">
-              {profiles.map((p) => (
-                <div key={p.id} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-                  <div className="mb-2 flex items-center gap-2">
-                    <span className="text-sm font-medium">v{p.version}</span>
-                    {p.version === (latest?.version ?? 0) && (
-                      <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">
-                        正在使用
-                      </span>
-                    )}
-                    {p.source_diff_ids?.length ? (
-                      <span className="text-[11px] text-zinc-500">基于 {p.source_diff_ids.length} 处修改生成</span>
-                    ) : null}
-                  </div>
-                  <dl className="grid gap-1 text-xs sm:grid-cols-2">
-                    {TRAIT_FIELDS.map(([key, label]) => (
-                      <div key={key} className="rounded bg-zinc-50 p-2 dark:bg-zinc-900">
-                        <dt className="font-medium text-zinc-500">{label}</dt>
-                        <dd className="mt-0.5 text-zinc-700 dark:text-zinc-300">{p.traits?.[key] || "（未标注）"}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                  {p.traits?.example_fragment && (
-                    <p className="mt-2 rounded-lg bg-zinc-50 p-2 text-xs italic text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
-                      {p.traits.example_fragment}
-                    </p>
-                  )}
-                  {p.avoid_list && p.avoid_list.length > 0 && (
-                    <ul className="mt-2 flex flex-wrap gap-1">
-                      {p.avoid_list.map((a, i) => (
-                        <li key={i} className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700 dark:bg-red-900 dark:text-red-300">
-                          忌：{a}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </section>
       </div>
     </Loading>

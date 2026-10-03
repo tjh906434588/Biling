@@ -20,7 +20,6 @@ from app.db.models import (
     PlotLedger,
     Setting,
     StoryState,
-    StyleProfile,
 )
 
 # 默认输出预留：输入上下文预算 = context_window - 输出预留（给 max_tokens 兜底，防输出占不满被裁输入）。
@@ -453,16 +452,6 @@ def format_memory_prompt(content: dict | None) -> str:
     if nd:
         lines.append(f"后续走向：{nd}")
     return "【作品编年（长期记忆，跨窗口，写作/评价时须与此一致）】\n" + "\n".join(lines)
-
-
-def get_latest_style_profile(db: Session, novel_id: uuid.UUID) -> Optional[StyleProfile]:
-    """取最新一版风格画像（无则 None）。"""
-    return db.execute(
-        select(StyleProfile)
-        .where(StyleProfile.novel_id == novel_id)
-        .order_by(StyleProfile.version.desc())
-        .limit(1)
-    ).scalar_one_or_none()
 
 
 def get_active_blueprint(db: Session, novel_id: uuid.UUID) -> Optional[dict]:

@@ -96,7 +96,6 @@ def delete_novel(novel_id: uuid.UUID, db: Session = Depends(get_db)):
         QualityReview,
         Setting,
         StoryState,
-        StyleProfile,
     )
 
     novel = db.get(Novel, novel_id)
@@ -112,7 +111,6 @@ def delete_novel(novel_id: uuid.UUID, db: Session = Depends(get_db)):
     db.execute(sa_delete(StoryState).where(StoryState.novel_id == novel_id))
     db.execute(sa_delete(EntityRelation).where(EntityRelation.novel_id == novel_id))
     db.execute(sa_delete(ConceptCard).where(ConceptCard.novel_id == novel_id))
-    db.execute(sa_delete(StyleProfile).where(StyleProfile.novel_id == novel_id))
     db.execute(sa_delete(Setting).where(Setting.novel_id == novel_id))
     db.execute(sa_delete(PlotLedger).where(PlotLedger.novel_id == novel_id))
     # 章节版本（无 novel_id，经章节关联）

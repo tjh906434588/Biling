@@ -26,7 +26,6 @@ from app.agents.context import (
     get_graph_relations_text,
     get_latest_memory,
     format_memory_prompt,
-    get_latest_style_profile,
     get_novel,
     get_recent_chapters,
     get_recent_story_states,
@@ -110,7 +109,6 @@ class ReviserAgent(Agent[NovelChapter]):
         """装配修订上下文：注入当前正文/评价报告/作者否决与批注/AI 检测体检等组件，
         保留原情节走向，只修评价指出的问题。"""
         novel = get_novel(self.db, novel_id)
-        style = get_latest_style_profile(self.db, novel_id)
 
         chapter_no = 0
         try:
@@ -153,15 +151,13 @@ class ReviserAgent(Agent[NovelChapter]):
         ) or "（无前文）"
 
         style_text = "（暂无风格画像）"
-        if style:
-            style_text = f"traits: {style.traits}\navoid_list: {style.avoid_list}"
-        # 全局文风：两部分——蓝图识别（导入蓝图自动更新，冲突时优先）+ 手动添加（不可被覆盖，不冲突也必须遵守）
+        # 全局文风：两部分——蓝图识别（导入蓝图自动更新）+ 手动添加（作者手写，冲突时以手动为准）
         blueprint_style = (getattr(novel, "style_directive", None) or "").strip()
         manual_style = (getattr(novel, "style_directive_manual", None) or "").strip()
         if blueprint_style:
-            style_text += f"\n【蓝图识别文风（每次导入蓝图自动更新；与手动文风冲突时以本部分为准）】\n{blueprint_style}"
+            style_text += f"\n【蓝图识别文风（每次导入蓝图自动更新）】\n{blueprint_style}"
         if manual_style:
-            style_text += f"\n【手动文风指示（作者手动设定，不可被覆盖；与蓝图识别文风不冲突时必须严格遵守）】\n{manual_style}"
+            style_text += f"\n【手动文风指示（作者手动设定，最高优先级；与蓝图识别文风冲突时以本部分为准）】\n{manual_style}"
 
         current_text = params.get("chapter_text", "")
 

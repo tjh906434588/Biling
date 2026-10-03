@@ -288,23 +288,6 @@ export interface OutlineSkeletonResult {
   modules: OutlineSkeletonModule[];
 }
 
-export interface StyleProfile {
-  id: string;
-  novel_id: string;
-  version: number;
-  traits: {
-    sentence_length?: string;
-    vocabulary?: string;
-    perspective?: string;
-    dialogue_ratio?: string;
-    rhythm?: string;
-    example_fragment?: string;
-  } | null;
-  avoid_list: string[] | null;
-  source_diff_ids: string[] | null;
-  updated_at: string;
-}
-
 export interface GraphNode {
   id: string;
   label: string;
