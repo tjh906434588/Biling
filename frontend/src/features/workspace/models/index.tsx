@@ -25,13 +25,15 @@ import { useAiStatus } from "@/lib/ai-status";
 import { message } from "@/components/message";
 import { TASK_TYPES, type TaskType } from "@/constants/task-types";
 
-/** 五类任务各自的配置表单（provider/model/temperature；留空 = 用默认模型） */
+/** 各任务类型各自的配置表单（provider/model/temperature；留空 = 用默认模型） */
 type TaskForm = Record<TaskType, { provider: string; model: string; temperature: string }>;
 const EMPTY_TASK_FORMS: TaskForm = {
   setting: { provider: "", model: "", temperature: "" },
+  check: { provider: "", model: "", temperature: "" },
+  planning: { provider: "", model: "", temperature: "" },
   creation: { provider: "", model: "", temperature: "" },
-  review: { provider: "", model: "", temperature: "" },
   extract: { provider: "", model: "", temperature: "" },
+  review: { provider: "", model: "", temperature: "" },
   chronicle: { provider: "", model: "", temperature: "" },
 };
 

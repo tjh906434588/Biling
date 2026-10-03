@@ -79,7 +79,7 @@ suggestion 铁律（最重要）：作者选「按建议处理」时，这条建
 
 
 class BlueprintPrecheckerAgent(Agent[BlueprintPrecheck]):
-    task_type = "setting"
+    task_type = "check"
     temperature = 0.2
     mock_output = {
         "issues": [

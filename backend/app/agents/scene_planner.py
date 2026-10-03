@@ -75,7 +75,7 @@ SCENE_PROPOSAL_PROMPT = """你是「场景规划师」（提案模式）。作�
 
 
 class ScenePlannerAgent(Agent[ScenePlanProposal]):
-    task_type = "setting"
+    task_type = "planning"
     temperature = 0.4
     mock_output = {
         "scenes": [

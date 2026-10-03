@@ -613,7 +613,7 @@ def _normalize_chars(text: str) -> list[str]:
 
 
 class ChapterPlannerAgent(Agent[ChapterPlanDimensionProposal]):
-    task_type = "setting"
+    task_type = "planning"
     temperature = 0.4
     mock_output = {
         "dimension": {

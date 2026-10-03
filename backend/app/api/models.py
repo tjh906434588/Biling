@@ -17,9 +17,9 @@ from app.llm.routes import get_user_default_model, list_routes
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
-# 全部任务类型：设定 / 创作 / 提取 / 编年 / 评价（高级设置路由按 task_type 唯一）
-# 排序按创作流水线：设定（地基）→ 创作（正文）→ 提取（每章记忆）→ 编年（跨章压缩）→ 评价（审稿收尾）
-TASK_TYPES = ["setting", "creation", "extract", "chronicle", "review"]
+# 全部任务类型：设定 / 质检 / 规划 / 创作 / 提取 / 评价 / 编年（高级设置路由按 task_type 唯一）
+# 排序按创作流水线：设定（地基）→ 质检（把关）→ 规划（正文前置细化）→ 创作（正文）→ 提取（每章记忆）→ 评价（审稿收尾）→ 编年（跨章压缩）
+TASK_TYPES = ["setting", "check", "planning", "creation", "extract", "review", "chronicle"]
 
 # 页面「添加模型」弹窗的预置服务商目录（参考 TRAE：自定义模型置顶 + 预设服务商 + 选模型填 Key）
 # provider 命名尽量用 litellm 原生 provider 名；未知的由 gateway 统一走 OpenAI 兼容

@@ -11,10 +11,12 @@
  */
 export const TASK_TYPES = [
   { key: "setting", label: "设定", hint: "规划世界观、人物与大章节大纲，定下故事骨架" },
+  { key: "check", label: "质检", hint: "校验大纲、蓝图与导入内容是否达标合规" },
+  { key: "planning", label: "规划", hint: "写正文前细化本章规划（章节/场景），作者确认后开写" },
   { key: "creation", label: "创作", hint: "写每一章的正文内容" },
   { key: "extract", label: "提取", hint: "把已写的章节自动整理成剧情要点和人物信息，供后续写作参考" },
-  { key: "chronicle", label: "编年", hint: "定期把前文浓缩成故事脉络，防止写久了忘掉早期伏笔" },
   { key: "review", label: "评价", hint: "审读章节质量，发现问题并给出修改建议" },
+  { key: "chronicle", label: "编年", hint: "定期把前文浓缩成故事脉络，防止写久了忘掉早期伏笔" },
 ] as const;
 
 /** 任务类型 key 联合类型（由 TASK_TYPES 推导，不重复定义）。 */
