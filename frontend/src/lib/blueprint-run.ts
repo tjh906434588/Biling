@@ -8,7 +8,16 @@
  */
 "use client";
 
-import { friendlyRunError, friendlyTaskError, getAgentRunningTask, getStreamStatus, runAgent, type AgentRunningTaskResult, type AuthorConfirm } from "./api";
+import {
+  friendlyRunError,
+  friendlyTaskError,
+  getAgentRunningTask,
+  getStreamStatus,
+  runAgent,
+  type AgentRunningTaskResult,
+  type AgentTaskStatus,
+  type AuthorConfirm,
+} from "./api";
 import { pushAuthorConfirm } from "@/components/author-confirm";
 
 /** 生成任务的四态：idle 空闲 / running 生成中 / done 完成 / error 失败 */
@@ -62,6 +71,33 @@ export function subscribeBlueprintRun(listener: () => void): () => void {
 /** 读取当前模块级状态快照（供 useSyncExternalStore 取当前值） */
 export function getBlueprintRun(): BlueprintRunState {
   return state;
+}
+
+/** 从工作台统一任务快照恢复蓝图页的运行展示，任务事实由工作台协调器维护。 */
+export function restoreBlueprintRun(task: AgentTaskStatus, novelId: string): void {
+  if (state.novelId === novelId && state.status === "running" && state.startedAt != null) {
+    setState({
+      draftText: task.progress?.draft ?? "",
+      thinkingText: task.progress?.thinking ?? "",
+    });
+    return;
+  }
+  setState({
+    novelId,
+    status: "running",
+    draftText: task.progress?.draft ?? "",
+    thinkingText: task.progress?.thinking ?? "",
+    msg: null,
+    errMsg: null,
+    startedAt: task.started_at ? new Date(task.started_at).getTime() : Date.now(),
+  });
+}
+
+/** 统一任务快照不再包含该任务时，收尾蓝图运行展示。 */
+export function finishRestoredBlueprintRun(novelId: string): void {
+  if (state.novelId === novelId && state.status === "running") {
+    setState({ status: "done", msg: "生成完成。" });
+  }
 }
 
 /** 通用延时工具（毫秒），用于轮询节奏控制 */

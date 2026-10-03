@@ -27,9 +27,11 @@ import {
   getBlueprintRun,
   startBlueprintRun,
   subscribeBlueprintRun,
-  tryResumeBlueprintRun,
+  restoreBlueprintRun,
+  finishRestoredBlueprintRun,
   type BlueprintRunStatus,
 } from "@/lib/blueprint-run";
+import { getAgentTaskRecoverySnapshot, getRecoveryTask, subscribeAgentTaskRecovery } from "../components/agent-task-recovery";
 import { useElapsed } from "@/lib/use-elapsed";
 import { copyText } from "@/utils/clipboard";
 import AgentStreamModal from "../components/agent-stream-modal";
@@ -256,10 +258,24 @@ export default function BlueprintPanel({ novelId }: Props) {
     };
   }, []);
 
-  // 页面刷新后：若后端有该小说的进行中蓝图任务（agent_tasks），恢复"生成中"状态并轮询到完成。
-  // 完成后 justFinished effect 会触发 load()，刷新版本列表。
+  // 工作台级任务恢复协调器的蓝图订阅：不在蓝图页重复查询 running 状态。
   useEffect(() => {
-    void tryResumeBlueprintRun(novelId);
+    let hadTask = false;
+    const sync = () => {
+      const snapshot = getAgentTaskRecoverySnapshot();
+      const task = getRecoveryTask("blueprint_architect", novelId);
+      if (!snapshot.initialized) return;
+      if (task) {
+        hadTask = true;
+        restoreBlueprintRun(task, novelId);
+      } else if (hadTask) {
+        finishRestoredBlueprintRun(novelId);
+        hadTask = false;
+      }
+    };
+    const unsubscribe = subscribeAgentTaskRecovery(sync);
+    sync();
+    return unsubscribe;
   }, [novelId]);
 
   // 生成启动（本页发起或刷新恢复）：自动弹出生成过程弹窗（生成中会出现需要作者确认的选择）

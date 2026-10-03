@@ -13,15 +13,12 @@ import {
   friendlyRunError,
   friendlyTaskError,
   getActiveBlueprint,
-  getAgentRunningTask,
   getOutlineApprovalStatus,
-  getStreamStatus,
   listOutlines,
   listOutlineVersions,
   listSettings,
   outlineHasChapter,
   runAgent,
-  type AgentRunningTaskResult,
   type AuthorConfirm,
   type Outline,
   type OutlineApprovalStatusResult,
@@ -38,6 +35,7 @@ import { type VolumeInfo } from "@/constants";
 import OutlineList from "./components/outline-list";
 import OutlineDetail from "./components/outline-detail";
 import GenOutlineModal from "./components/gen-outline-modal";
+import { getRecoveryTask, subscribeAgentTaskRecovery, getAgentTaskRecoverySnapshot } from "../components/agent-task-recovery";
 import {
   deriveStage,
   groupByVolume,
@@ -162,68 +160,45 @@ export default function OutlinePanel({ novelId }: Props) {
     void load();
   }, [load]);
 
-  /** 页面刷新 / 切页重挂载后：若后端有该小说进行中的 outliner 任务（agent_tasks），恢复「生成中」状态并轮询到完成。
-   *  避免刷新后章节号重新推导、用户误以为可以再次生成同一章（与蓝图页 tryResumeBlueprintRun 同机制）。 */
+  /** 工作台级任务恢复协调器的 outliner 订阅：恢复参数和流式文字，不在页面内重复轮询。 */
   useEffect(() => {
-    let stopped = false;
-    void (async () => {
-      let r: AgentRunningTaskResult;
-      try {
-        r = await getAgentRunningTask("outliner", novelId);
-      } catch {
+    let activeTaskId: string | null = null;
+    let ended = false;
+    const sync = () => {
+      const snapshot = getAgentTaskRecoverySnapshot();
+      const task = getRecoveryTask("outliner", novelId);
+      if (!snapshot.initialized) return;
+      if (task) {
+        const p = task.progress ?? { thinking: "", draft: "" };
+        if (activeTaskId !== task.id) {
+          activeTaskId = task.id;
+          ended = false;
+          const chapterNo = Number(task.params.chapter_no);
+          if (Number.isFinite(chapterNo)) {
+            setForm((f) => ({ ...f, chapter_no: chapterNo }));
+            setRewriteChapterNo(task.params.rewrite === true ? chapterNo : null);
+          }
+          setStartAt(task.started_at ? new Date(task.started_at).getTime() : Date.now());
+          setThinkingText(p.thinking);
+          setDraftText(p.draft);
+          setGenerating(true);
+        } else {
+          setThinkingText(p.thinking);
+          setDraftText(p.draft);
+        }
         return;
       }
-      if (stopped || !r.running || !r.task) return;
-      const task = r.task;
-      // 恢复生成中状态：用后端累积的流式文字与任务真实开始时间（刷新前已流出的内容不丢）
-      setStartAt(task.started_at ? new Date(task.started_at).getTime() : Date.now());
-      setGenerating(true);
-      setThinkingText(task.progress?.thinking ?? "");
-      setDraftText(task.progress?.draft ?? "");
-      // 轮询到任务结束
-      while (!stopped) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        let r2: AgentRunningTaskResult;
-        try {
-          r2 = await getAgentRunningTask("outliner", novelId);
-        } catch {
-          break; // 查询失败：停止轮询，不再强行维持「生成中」
-        }
-        if (r2.running && r2.task) {
-          const p = r2.task.progress;
-          if (p) {
-            setThinkingText(p.thinking);
-            setDraftText(p.draft);
-          }
-          continue;
-        }
-        // 任务已结束：/tasks 只返回 running 任务（结束后 task 为 null），
-        // 需借 /status 的 recent 判断本角色任务是否失败，避免失败被误报为成功
-        let outlineError: string | null = null;
-        try {
-          const st = await getStreamStatus(novelId);
-          if (st.recent && st.recent.agent === "outliner" && st.recent.status === "error") {
-            outlineError = st.recent.error;
-          }
-        } catch {
-          /* 查询失败按完成处理 */
-        }
-        if (outlineError) {
-          message.error(`大纲生成失败：${friendlyTaskError(outlineError, "后台任务失败")}`);
-        } else {
-          message.success("大纲已生成完毕");
-          // 与蓝图页一致：生成完成自动关闭「生成过程」与「新增大纲」弹窗
-          setShowStreamModal(false);
-          setShowAddModal(false);
-          await load();
-        }
-        break;
+      if (activeTaskId && !ended) {
+        ended = true;
+        setGenerating(false);
+        setShowStreamModal(false);
+        setShowAddModal(false);
+        void load();
       }
-      if (!stopped) setGenerating(false);
-    })();
-    return () => {
-      stopped = true;
     };
+    const unsubscribe = subscribeAgentTaskRecovery(sync);
+    sync();
+    return unsubscribe;
   }, [novelId, load]);
 
   // 批准轮询：后台批准注入（角色设定 + 账本同步）期间每 1.5s 查询一次批准状态，「批准中…」保持到成功或失败才退出。

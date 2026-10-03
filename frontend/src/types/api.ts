@@ -245,9 +245,11 @@ export interface AgentTaskStatus {
   id: string;
   agent: string;
   status: "running" | "done" | "error";
+  params: Record<string, unknown>;
   msg: string | null;
   error: string | null;
   started_at: string | null;
+  updated_at?: string | null;
   /** 刷新前已流出的文字进度（thinking/draft 累积），刷新后据此恢复流式显示 */
   progress?: { thinking: string; draft: string };
 }
@@ -255,6 +257,11 @@ export interface AgentTaskStatus {
 export interface AgentRunningTaskResult {
   running: boolean;
   task: AgentTaskStatus | null;
+}
+
+export interface RunningTasksResult {
+  tasks: AgentTaskStatus[];
+  pending_confirms: AuthorConfirm[];
 }
 
 export interface StreamTaskInfo {

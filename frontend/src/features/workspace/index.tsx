@@ -27,6 +27,7 @@ import ModelsPanel from "./models";
 import PromptsModal from "./components/prompts-modal";
 import AgentTaskToasts from "./components/agent-task-toasts";
 import AuthorConfirmHost from "@/components/author-confirm";
+import { startAgentTaskRecovery, stopAgentTaskRecovery } from "./components/agent-task-recovery";
 import { message } from "@/components/message";
 import {
   AI_TABS,
@@ -102,6 +103,12 @@ export default function Workspace({ novelId }: { novelId: string }) {
     return () => {
       hideWorkspaceNotifs(novelId);
     };
+  }, [novelId]);
+
+  // 工作台唯一入口查询所有 running AI 任务，Tab 切换不丢失任务事实与流式进度。
+  useEffect(() => {
+    startAgentTaskRecovery(novelId);
+    return () => stopAgentTaskRecovery();
   }, [novelId]);
 
   // tab 变化时同步到 URL（replaceState 不产生历史记录），刷新/复制链接均能保持

@@ -87,6 +87,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - 错误提示走全局 `message` / `notification`；**不吞异常**——catch 里至少 `log.errorFrom`（见 `@/lib/logging`）留痕，前端错误经 `POST /api/logs` 落盘供「导出日志」排查。
 - 交互类改动（弹窗/确认/流式）遵循既有组件模式（modal.tsx / confirm-dialog.tsx / auto-textarea.tsx）。
 - **AI 生成任务**：走 `stream/agents/*` 接口与 `AgentTask` 持久化 + SSE 事件流约定（`context_ready → stream_delta* → schema_validate → stored`），新增/改动生成流程必须沿用，不得绕过任务持久化与作者确认机制。
+- **AI 任务恢复协议**：所有会展示「生成中 / 思考过程 / 正文流式输出」的 AI 功能，必须把任务持久化到 `AgentTask`，并与 HTTP/SSE 客户端生命周期解耦。工作台进入时统一调用 `GET /api/stream/agents/tasks?novel_id=...` 获取全部 `running` 任务；返回必须包含可恢复业务上下文的完整 `params`、任务时间、`thinking/draft` 进度和待作者确认点。前端按 `agent + params` 恢复对应业务页面、表单和过程弹窗；关闭弹窗、切换 Tab、页面卸载或刷新都不得取消后台任务，重新进入后继续显示任务进度。任务结束或失败后停止恢复「生成中」弹窗并刷新业务数据。禁止仅依赖 `localStorage`、React state 或模块级缓存判断任务是否仍在生成；禁止在多个页面各自实现互相冲突的 running 轮询。跨后端重启仍需恢复完整思考/正文时，必须增加数据库快照或事件持久化，不能依赖进程内 `PROGRESS`。
 
 ## 4.5 大文件自动拆分
 

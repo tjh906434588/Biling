@@ -1167,15 +1167,46 @@ def stream_status(novel_id: uuid.UUID, db: Session = Depends(get_db)):
     }
 
 
+def _task_to_dict(task: AgentTask) -> dict:
+    """序列化任务恢复所需的完整上下文，params 是恢复业务弹窗的唯一依据。"""
+    return {
+        "id": str(task.id),
+        "agent": task.agent,
+        "status": task.status,
+        "params": task.params or {},
+        "msg": task.msg,
+        "error": task.error,
+        "started_at": _iso_utc(task.created_at),
+        "updated_at": _iso_utc(task.updated_at),
+        "progress": PROGRESS.get(str(task.id), {"thinking": "", "draft": ""}),
+    }
+
+
+@router.get("/tasks")
+def running_tasks(novel_id: uuid.UUID, db: Session = Depends(get_db)):
+    """查询该小说全部进行中的 AI 任务，供工作台进入时统一恢复。
+
+    页面不依赖前端缓存判断生成状态；任务上下文、思考过程和正文进度均以
+    AgentTask + 运行期进度为准。一个小说可同时存在多个不同角色任务。
+    """
+    _sweep_stale_tasks(db, novel_id)
+    tasks = db.execute(
+        select(AgentTask)
+        .where(AgentTask.novel_id == novel_id, AgentTask.status == "running")
+        .order_by(AgentTask.created_at.asc())
+    ).scalars().all()
+    return {
+        "tasks": [_task_to_dict(task) for task in tasks],
+        "pending_confirms": get_pending_confirms(db, novel_id),
+    }
+
+
 @router.get("/{agent}/tasks")
 def agent_running_tasks(agent: str, novel_id: uuid.UUID, db: Session = Depends(get_db)):
-    """查询该小说该角色是否有进行中的生成任务。
-
-    页面刷新后前端据此恢复"生成中"状态；progress 为刷新前已流出的文字
-    （thinking/draft 累积），前端用于恢复流式显示并随轮询增量更新。
-    """
+    """查询该小说该角色是否有进行中的生成任务，供兼容现有页面恢复逻辑。"""
     if agent not in AGENT_NAMES:
         raise HTTPException(404, f"未知角色：{agent}（可选：{', '.join(AGENT_NAMES)}）")
+    _sweep_stale_tasks(db, novel_id, agent)
     task = db.execute(
         select(AgentTask)
         .where(AgentTask.novel_id == novel_id, AgentTask.agent == agent, AgentTask.status == "running")
@@ -1184,17 +1215,7 @@ def agent_running_tasks(agent: str, novel_id: uuid.UUID, db: Session = Depends(g
     ).scalar_one_or_none()
     return {
         "running": task is not None,
-        "task": {
-            "id": str(task.id),
-            "agent": task.agent,
-            "status": task.status,
-            "msg": task.msg,
-            "error": task.error,
-            "started_at": _iso_utc(task.created_at),
-            "progress": PROGRESS.get(str(task.id), {"thinking": "", "draft": ""}),
-        }
-        if task
-        else None,
+        "task": _task_to_dict(task) if task else None,
         # 该角色待作者确认的请求（生成任务在确认点暂停等待）：刷新恢复弹窗用
         "pending_confirms": get_pending_confirms(db, novel_id, agent=agent),
     }

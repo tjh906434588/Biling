@@ -8,13 +8,24 @@ import { log } from "@/lib/logging";
 import type {
   AgentRunningTaskResult,
   AuthorConfirm,
+  RunningTasksResult,
   StreamEvent,
   StreamEventData,
   StreamStatusResult,
 } from "@/types/api";
 import { httpError } from "./errors";
 
-/** 查询该小说该角色是否有进行中的生成任务（刷新后恢复生成中状态用）。 */
+/** 查询该小说全部进行中的 AI 任务，页面进入时用于统一恢复。 */
+export async function getRunningTasks(novelId: string): Promise<RunningTasksResult> {
+  const res = await fetch(`${BASE}/stream/agents/tasks?novel_id=${novelId}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw httpError(err.detail, "查询生成任务失败");
+  }
+  return res.json();
+}
+
+/** 查询该小说该角色是否有进行中的生成任务（兼容旧页面恢复逻辑）。 */
 export async function getAgentRunningTask(
   agent: string,
   novelId: string,

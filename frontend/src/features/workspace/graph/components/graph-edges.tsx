@@ -14,12 +14,10 @@ import { relCanonical, relEquivalent, textWidth, type Rect } from "./graph-utils
 export function GraphEdges({
   pairMap,
   pos,
-  view,
   nodeRects,
 }: {
   pairMap: Map<string, GraphEdge[]>;
   pos: Record<string, { x: number; y: number }>;
-  view: { x: number; y: number; k: number };
   nodeRects: Rect[];
 }) {
   /* 已放置的边标签矩形，用于标签间防重叠（每次渲染重建） */

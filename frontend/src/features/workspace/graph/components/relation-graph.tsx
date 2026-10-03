@@ -169,7 +169,7 @@ export function RelationGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Gra
         </defs>
 
         <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
-          <GraphEdges pairMap={pairMap} pos={pos} view={view} nodeRects={nodeRects} />
+          <GraphEdges pairMap={pairMap} pos={pos} nodeRects={nodeRects} />
           <GraphNodes nodes={nodes} pos={pos} setHoverNode={setHoverNode} />
         </g>
       </svg>

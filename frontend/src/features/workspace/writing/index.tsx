@@ -452,7 +452,24 @@ export default function WritingPanel({ novelId }: Props) {
     agent: "novelist",
     novelId,
     onStart: (i) => {
+      const chapterNo = Number(i.params.chapter_no);
+      const isRegenerate = i.params.regenerate === true;
+      if (Number.isFinite(chapterNo)) {
+        setForm((f) => ({
+          ...f,
+          chapter_no: chapterNo,
+          title: typeof i.params.title === "string" ? i.params.title : f.title,
+          outline: typeof i.params.outline === "string" ? i.params.outline : f.outline,
+          chapter_function:
+            typeof i.params.chapter_function === "string" ? i.params.chapter_function : f.chapter_function,
+          goal: typeof i.params.goal === "string" ? i.params.goal : f.goal,
+        }));
+        setRegenerateNo(isRegenerate ? chapterNo : null);
+        void loadDetail(chapterNo);
+      }
+      setShowAddModal(true);
       setGenStartAt(i.startedAt);
+      setGenIsRegenerate(isRegenerate);
       setGenerating(true);
       setGenRun({ thinking: i.thinking, output: i.output, running: true });
     },
@@ -471,6 +488,8 @@ export default function WritingPanel({ novelId }: Props) {
     agent: "reviser",
     novelId,
     onStart: (i) => {
+      const chapterNo = Number(i.params.chapter_no);
+      if (Number.isFinite(chapterNo)) setActiveNo(chapterNo);
       setReviseStartAt(i.startedAt);
       setRevising(true);
       setReviseRun({ thinking: i.thinking, output: i.output, running: true });
@@ -486,6 +505,8 @@ export default function WritingPanel({ novelId }: Props) {
     agent: "critic",
     novelId,
     onStart: (i) => {
+      const chapterNo = Number(i.params.chapter_no);
+      if (Number.isFinite(chapterNo)) setActiveNo(chapterNo);
       setReviewStartAt(i.startedAt);
       setReviewing(true);
       setReviewRun({ thinking: i.thinking, output: i.output, running: true });
