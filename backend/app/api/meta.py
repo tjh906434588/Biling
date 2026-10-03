@@ -69,11 +69,88 @@ def _build_chapter_functions() -> list[dict[str, str]]:
     ]
 
 
+def _build_setting_types() -> list[dict[str, str]]:
+    """设定类型规格（key + label/hint/示例/判定标准/填写建议）：设定表单与类型栏的单一源。
+    key 集合与 schemas/agents.py / schemas/novel.py 的设定类型约束一致。"""
+    return [
+        {
+            "key": "character", "label": "角色", "hint": "谁在故事里",
+            "example": "岚：沉默的占卜师，左眼能看到死者的记忆",
+            "judge": "会说话、有自我意识的（活物/系统有嘴也算）",
+            "name_hint": "岚",
+            "desc_hint": "如：左眼能看到死者记忆的占卜师，沉默寡言",
+            "constitution_advice": "性别/身份/血统/异能来源填「不可变」；性格成长填「可变」，交给记忆层跟踪。",
+        },
+        {
+            "key": "location", "label": "地点", "hint": "故事发生在哪",
+            "example": "旧王城：雾都，占卜房藏在第七街尽头",
+            "judge": "在哪：故事发生的场所",
+            "name_hint": "旧王城",
+            "desc_hint": "如：常年起雾，占卜房藏在第七街尽头",
+            "constitution_advice": "本质（位置、特征）填「不可变」；当前状态（被毁、废弃、易主）填「可变」。",
+        },
+        {
+            "key": "faction", "label": "势力", "hint": "组织 / 家族 / 阵营",
+            "example": "灰袍议会：暗中篡改王城记忆的组织",
+            "judge": "组织：家族/帮派/阵营",
+            "name_hint": "灰袍议会",
+            "desc_hint": "如：暗中篡改王城记忆的组织，首领身份不明",
+            "constitution_advice": "宗旨、根基填「不可变」；当前强弱、首领、敌友关系填「可变」。",
+        },
+        {
+            "key": "world_rule", "label": "世界规则", "hint": "这个世界的法则",
+            "example": "魔法消耗寿命，且不可逆转",
+            "judge": "法则：所有角色都遵守（如人人都有系统）",
+            "name_hint": "魔法耗尽寿命",
+            "desc_hint": "如：用一次魔法就折损一段寿命，不可逆转",
+            "constitution_advice": "世界法则基本都填「不可变」——违背即崩，AI 必须死守。",
+        },
+        {
+            "key": "item", "label": "物品", "hint": "有来历的道具 / 宝物",
+            "example": "旧王徽铜币：遇险会发烫，认得主人",
+            "judge": "道具：实体的、拿得到的",
+            "name_hint": "旧王徽铜币",
+            "desc_hint": "如：遇险会发烫，只认主人",
+            "constitution_advice": "核心功能、限制填「不可变」；在谁手里、是否损坏填「可变」。",
+        },
+        {
+            "key": "concept", "label": "概念", "hint": "世界观里的特有名词",
+            "example": "记忆刻印：记忆可以被人为写入和抹除",
+            "judge": "特有名词/机制（如主角独有的系统）",
+            "name_hint": "记忆刻印",
+            "desc_hint": "如：记忆可以被人为写入和抹除",
+            "constitution_advice": "概念的定义是恒定名词，基本都填「不可变」。",
+        },
+    ]
+
+
+def _build_role_ranks() -> list[dict[str, str]]:
+    """视角角色按戏份分组（value + 中文 label，与设定库 role_rank 一致）。"""
+    return [
+        {"value": "protagonist", "label": "主角"},
+        {"value": "major", "label": "重要配角"},
+        {"value": "minor", "label": "次要配角"},
+        {"value": "extra", "label": "龙套 / 炮灰"},
+    ]
+
+
+def _build_stages() -> list[dict[str, str]]:
+    """章节所处阶段（early/middle/late，value + 中文 label；列表顺序即展示顺序）。"""
+    return [
+        {"value": "early", "label": "前期"},
+        {"value": "middle", "label": "中期"},
+        {"value": "late", "label": "后期"},
+    ]
+
+
 DICT_BUILDERS: dict[str, object] = {
     "agents": _build_agents,
     "task_types": _build_task_types,
     "genre_aliases": _build_genre_aliases,
     "chapter_functions": _build_chapter_functions,
+    "setting_types": _build_setting_types,
+    "role_ranks": _build_role_ranks,
+    "stages": _build_stages,
 }
 
 

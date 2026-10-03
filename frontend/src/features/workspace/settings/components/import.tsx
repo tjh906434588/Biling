@@ -6,7 +6,7 @@
  * 注意：批量导入弹窗 UI 已拆到同目录 import-modal.tsx（纯展示 + 回调），
  * 本文件只负责解析纯函数与结果条目类型。
  */
-import { ROLE_RANKS, SETTING_TYPES, STAGE_OPTIONS } from "@/constants";
+import { SETTING_TYPES } from "@/constants";
 import type { SettingType } from "@/lib/api";
 
 /** 批量导入的解析结果条目（AI 输出 → 表单字段）。 */
@@ -22,10 +22,14 @@ export interface ImportItem {
   stages: string[];
 }
 
+/** 合法值集合（与后端 pipeline 的 VALID_RANKS / VALID_STAGES 及枚举字典 value 一致；校验用，非展示 label）。 */
+const VALID_RANKS = new Set(["protagonist", "major", "minor", "extra"]);
+const VALID_STAGES = new Set(["early", "middle", "late"]);
+
 /** 解析外部 AI 的输出文本为批量设定条目；容错 markdown 围栏与前后多余文字。 */
 export function parseImportText(text: string): { items: ImportItem[]; errors: string[] } {
-  const validRanks = new Set<string>(ROLE_RANKS.map((r) => r.value));
-  const validStages = new Set(STAGE_OPTIONS.map((s) => s.value));
+  const validRanks = VALID_RANKS;
+  const validStages = VALID_STAGES;
   const errors: string[] = [];
   let clean = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = clean.indexOf("[");

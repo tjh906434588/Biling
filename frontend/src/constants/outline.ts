@@ -1,10 +1,9 @@
 /**
  * @file constants/outline.ts
- * 大纲/章节相关共享常量：视角角色等级 ROLE_RANKS、阶段标签 STAGE_LABEL/STAGE_OPTIONS、
- * 节拍类型标签 TYPE_LABELS、兜底卷 DEFAULT_VOLUME 及卷信息类型 VolumeInfo。
+ * 大纲/章节相关共享常量：节拍类型标签 TYPE_LABELS、兜底卷 DEFAULT_VOLUME 及卷信息类型 VolumeInfo。
  * 章节功能下拉项（推进/铺垫/…）已迁移为枚举字典（后端 meta.py 的 chapter_functions 单一源，
  * 见 loadChapterFunctions），不再在此维护中文 label，避免与确认面板等处漂移。
- * 原 ROLE_RANKS/STAGE_LABEL/DEFAULT_VOLUME 分别在大纲页与写作页/设定页重复定义，此处合为一份。
+ * 视角角色等级 ROLE_RANKS / 阶段标签 STAGE_LABEL 亦已迁移为枚举字典（role_ranks / stages）。
  */
 import type { Blueprint } from "@/types/api";
 import { loadMetaDict } from "@/lib/meta-dict";
@@ -34,23 +33,45 @@ export async function loadFunctionLabels(): Promise<Record<string, string>> {
   }
 }
 
-/** 视角角色按戏份分组（与设定库 role_rank 一致），方便区分主角 / 配角。 */
-export const ROLE_RANKS = [
-  { value: "protagonist", label: "主角" },
-  { value: "major", label: "重要配角" },
-  { value: "minor", label: "次要配角" },
-  { value: "extra", label: "龙套 / 炮灰" },
-] as const;
+/** 视角角色按戏份分组（与设定库 role_rank 一致，方便区分主角 / 配角；枚举字典后端单一源）。 */
+export interface RoleRankOption {
+  value: string;
+  label: string;
+}
 
-/** 章节所处阶段的中文标签（与蓝图 volumes 三分法、后端 derive_stage 保持一致）。 */
-export const STAGE_LABEL: Record<string, string> = { early: "前期", middle: "中期", late: "后期" };
+/** 拉取视角角色等级分组（后端 meta.py 单一源，统一缓存）；失败回退空数组。 */
+export async function loadRoleRanks(): Promise<RoleRankOption[]> {
+  try {
+    return await loadMetaDict<RoleRankOption[]>("role_ranks");
+  } catch {
+    return [];
+  }
+}
 
-/** 阶段选项：设定生效的故事情节阶段（可多选；不选 = 不限制）。 */
-export const STAGE_OPTIONS = [
-  { value: "early", label: "前期" },
-  { value: "middle", label: "中期" },
-  { value: "late", label: "后期" },
-];
+/** 章节所处阶段（early/middle/late；枚举字典后端单一源，列表顺序即展示顺序）。 */
+export interface StageOption {
+  value: string;
+  label: string;
+}
+
+/** 拉取章节阶段选项（后端 meta.py 单一源，统一缓存）；失败回退空数组。 */
+export async function loadStages(): Promise<StageOption[]> {
+  try {
+    return await loadMetaDict<StageOption[]>("stages");
+  } catch {
+    return [];
+  }
+}
+
+/** 拉取阶段中文标签映射（由 stages 字典派生，供展示用）；失败回退空映射（显示原始 value）。 */
+export async function loadStageLabel(): Promise<Record<string, string>> {
+  try {
+    const list = await loadMetaDict<StageOption[]>("stages");
+    return Object.fromEntries(list.map((s) => [s.value, s.label]));
+  } catch {
+    return {};
+  }
+}
 
 /** 节拍类型 → 中文标签（大纲详情「节拍」列表展示）。 */
 export const TYPE_LABELS: Record<string, string> = {

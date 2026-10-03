@@ -10,9 +10,12 @@
  */
 "use client";
 
-import { useEffect, useRef } from "react";
-import { STAGE_LABEL, STAGE_OPTIONS, STAGE_ORDER } from "@/constants";
+import { useEffect, useRef, useState } from "react";
+import { loadStageLabel, loadStages, type StageOption } from "@/constants";
 import type { Blueprint } from "@/lib/api";
+
+/** 阶段时序（前→中→后，固定语义；与 stages 字典顺序一致）。 */
+const STAGE_ORDER: Record<string, number> = { early: 0, middle: 1, late: 2 };
 
 /** 阶段数组按固定顺序排序（未知阶段排最后）。 */
 function orderStages(stages: string[]): string[] {
@@ -294,6 +297,13 @@ interface TimingProps {
 
 /** 「出现时机」控件：生效阶段（前/中/后期）+ 限定时段（按蓝图前中后期章数选；无卷蓝图只选阶段、隐藏滑块；无蓝图按已创建章节选；可多段、可输入章号跳转）。 */
 function TimingBlock({ stages, onStagesChange, segments, onSegmentsChange, plan }: TimingProps) {
+  /** 阶段中文 label 与选项（枚举字典，后端单一源；拉取前显示原始 value）。 */
+  const [stageLabel, setStageLabel] = useState<Record<string, string>>({});
+  const [stageOptions, setStageOptions] = useState<StageOption[]>([]);
+  useEffect(() => {
+    void loadStageLabel().then(setStageLabel);
+    void loadStages().then(setStageOptions);
+  }, []);
   // 有蓝图但无卷：没有精确章节边界 → 只选前/中/后期，隐藏「限定时段」滑块
   const hideSegments = plan.hasBlueprint && !plan.stageRanges;
   const blocks = deriveBlocks(stages, plan.stageRanges, plan.maxCreated, hideSegments);
@@ -319,7 +329,7 @@ function TimingBlock({ stages, onStagesChange, segments, onSegmentsChange, plan 
     return orderStages(stages)
       .map((s) => {
         const r = plan.stageRanges![s];
-        return r ? `${STAGE_LABEL[s] ?? s}（第${r.from}–${r.to}章）` : "";
+        return r ? `${stageLabel[s] ?? s}（第${r.from}–${r.to}章）` : "";
       })
       .filter(Boolean)
       .join("、");
@@ -329,7 +339,7 @@ function TimingBlock({ stages, onStagesChange, segments, onSegmentsChange, plan 
     <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
       <div className="flex items-center gap-1 text-[12px] text-zinc-600 dark:text-zinc-300">
         生效阶段
-        {STAGE_OPTIONS.map((o) => {
+        {stageOptions.map((o) => {
           const on = stages.includes(o.value);
           return (
             <button
@@ -369,7 +379,7 @@ function TimingBlock({ stages, onStagesChange, segments, onSegmentsChange, plan 
                 <BlockSlider
                   key={b.stages.join("+")}
                   block={b}
-                  label={b.stages.map((s) => STAGE_LABEL[s] ?? s).join("+")}
+                  label={b.stages.map((s) => stageLabel[s] ?? s).join("+")}
                   from={segments[i]?.from ?? ""}
                   until={segments[i]?.until ?? ""}
                   onChange={(f, u) => {

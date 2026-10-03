@@ -6,10 +6,11 @@
  */
 "use client";
 
+import { useEffect, useState } from "react";
 import Modal from "@/components/modal";
 import { orderStages } from "./timing";
-import { STAGE_STYLE, TYPE_LABEL } from "./settings-utils";
-import { STAGE_LABEL } from "@/constants";
+import { STAGE_STYLE } from "./settings-utils";
+import { loadSettingTypes, loadStages } from "@/constants";
 import type { ImportItem } from "./import";
 
 interface Props {
@@ -36,6 +37,15 @@ export default function ImportModal({
   onImport,
   onClose,
 }: Props) {
+  /** 类型/阶段中文 label（枚举字典，后端单一源；拉取前显示原始 value）。 */
+  const [typeLabel, setTypeLabel] = useState<Record<string, string>>({});
+  const [stageLabel, setStageLabel] = useState<Record<string, string>>({});
+  useEffect(() => {
+    void Promise.all([loadSettingTypes(), loadStages()]).then(([types, stages]) => {
+      setTypeLabel(Object.fromEntries(types.map((s) => [s.key, s.label])));
+      setStageLabel(Object.fromEntries(stages.map((s) => [s.value, s.label])));
+    });
+  }, []);
   return (
     <Modal
       open={open}
@@ -67,7 +77,7 @@ export default function ImportModal({
                 <li key={i} className="rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
                   <div className="flex items-center gap-1.5">
                     <span className="rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                      {TYPE_LABEL[it.type]}
+                      {typeLabel[it.type] ?? it.type}
                     </span>
                     <span className="truncate text-xs font-medium">{it.name}</span>
                     {orderStages(it.stages).map((st) => (
@@ -77,7 +87,7 @@ export default function ImportModal({
                           STAGE_STYLE[st] ?? "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
                         }`}
                       >
-                        {STAGE_LABEL[st] ?? st}
+                        {stageLabel[st] ?? st}
                       </span>
                     ))}
                     {(() => {

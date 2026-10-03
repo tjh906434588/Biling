@@ -11,7 +11,14 @@ import { useEffect, useState } from "react";
 import type { Setting } from "@/lib/api";
 import Modal from "@/components/modal";
 import { CostHint } from "@/lib/ai-status";
-import { ROLE_RANKS, STAGE_LABEL, loadChapterFunctions, type ChapterFunctionOption, type VolumeInfo } from "@/constants";
+import {
+  loadChapterFunctions,
+  loadRoleRanks,
+  loadStageLabel,
+  type ChapterFunctionOption,
+  type RoleRankOption,
+  type VolumeInfo,
+} from "@/constants";
 import { inactiveReason, roleRankOf, type GenForm } from "./outline-utils";
 
 interface Props {
@@ -53,10 +60,14 @@ export default function GenOutlineModal({
   onGenerate,
   onShowStream,
 }: Props) {
-  /** 章节功能下拉项（枚举字典，后端单一源；拉取前为空 → 下拉只剩「自动判定」）。 */
+  /** 章节功能下拉项 / 角色等级 / 阶段 label（枚举字典，后端单一源；拉取前为空/显示原始 value）。 */
   const [chapterFunctions, setChapterFunctions] = useState<ChapterFunctionOption[]>([]);
+  const [roleRanks, setRoleRanks] = useState<RoleRankOption[]>([]);
+  const [stageLabel, setStageLabel] = useState<Record<string, string>>({});
   useEffect(() => {
     void loadChapterFunctions().then(setChapterFunctions);
+    void loadRoleRanks().then(setRoleRanks);
+    void loadStageLabel().then(setStageLabel);
   }, []);
   return (
     <Modal
@@ -119,12 +130,12 @@ export default function GenOutlineModal({
           {rewriteChapterNo != null ? (
             <>
               将重写：第 {rewriteChapterNo} 章
-              {stage ? `（当前处于：${STAGE_LABEL[stage]}，这个阶段能出场的角色如下）` : ""}
+              {stage ? `（当前处于：${stageLabel[stage] ?? stage}，这个阶段能出场的角色如下）` : ""}
             </>
           ) : (
             <>
               将自动生成：第 {form.chapter_no} 章
-              {stage ? `（当前处于：${STAGE_LABEL[stage]}，这个阶段能出场的角色如下）` : ""}
+              {stage ? `（当前处于：${stageLabel[stage] ?? stage}，这个阶段能出场的角色如下）` : ""}
             </>
           )}
         </span>
@@ -142,7 +153,7 @@ export default function GenOutlineModal({
                 ? "视角角色（留空由 AI 自定）"
                 : "该章节无生效角色（留空由 AI 自定）"}
             </option>
-            {ROLE_RANKS.map((g) => {
+            {roleRanks.map((g) => {
               const items = activeCharacters.filter((c) => roleRankOf(c) === g.value);
               if (items.length === 0) return null;
               return (
@@ -155,10 +166,10 @@ export default function GenOutlineModal({
                 </optgroup>
               );
             })}
-            {activeCharacters.some((c) => !ROLE_RANKS.some((g) => roleRankOf(c) === g.value)) && (
+            {activeCharacters.some((c) => !roleRanks.some((g) => roleRankOf(c) === g.value)) && (
               <optgroup label="未标注等级">
                 {activeCharacters
-                  .filter((c) => !ROLE_RANKS.some((g) => roleRankOf(c) === g.value))
+                  .filter((c) => !roleRanks.some((g) => roleRankOf(c) === g.value))
                   .map((c) => (
                     <option key={c.id} value={c.name}>
                       {c.name}
@@ -170,7 +181,7 @@ export default function GenOutlineModal({
               <optgroup label="这章不能出场（不能选）">
                 {inactiveCharacters.map((c) => (
                   <option key={c.id} value={c.name} disabled>
-                    {c.name}（{inactiveReason(c, form.chapter_no, volumes)}）
+                    {c.name}（{inactiveReason(c, form.chapter_no, volumes, stageLabel)}）
                   </option>
                 ))}
               </optgroup>

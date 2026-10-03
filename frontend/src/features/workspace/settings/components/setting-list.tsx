@@ -7,11 +7,12 @@
  */
 "use client";
 
+import { useEffect, useState } from "react";
 import InfoTip from "@/components/info-tip";
-import { SETTING_TYPES, STAGE_LABEL } from "@/constants";
+import { SETTING_TYPES, loadRoleRanks, loadSettingTypes, loadStages } from "@/constants";
 import { orderStages } from "./timing";
 import { splitSetting, settingMeta } from "./helpers";
-import { ROLE_RANK_LABEL, ROLE_RANK_STYLE, STAGE_STYLE, TYPE_LABEL } from "./settings-utils";
+import { ROLE_RANK_STYLE, STAGE_STYLE } from "./settings-utils";
 import type { Setting } from "@/lib/api";
 
 interface Props {
@@ -29,15 +30,26 @@ interface Props {
   onDelete: (s: Setting) => void;
 }
 
-/** 单条设定卡片：类型/来源/阶段/章范围/角色等级标签 + 不可变/可变两栏文案 + 编辑/删除。 */
-function SettingCard({ s, onEdit, onDelete }: { s: Setting; onEdit: (s: Setting) => void; onDelete: (s: Setting) => void }) {
+/** 单条设定卡片：类型/来源/阶段/章范围/角色等级标签 + 不可变/可变两栏文案 + 编辑/删除。
+ *  枚举 label（类型/阶段/角色等级）由父组件从字典拉取后传入。 */
+function SettingCard({
+  s,
+  labels,
+  onEdit,
+  onDelete,
+}: {
+  s: Setting;
+  labels: { typeLabel: Record<string, string>; roleRankLabel: Record<string, string>; stageLabel: Record<string, string> };
+  onEdit: (s: Setting) => void;
+  onDelete: (s: Setting) => void;
+}) {
   const { con, dyn } = splitSetting(s);
   const meta = settingMeta(s);
   return (
     <li className="rounded-lg bg-sunken/40 p-3.5 dark:bg-sunken/30">
       <div className="flex items-center gap-2">
         <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-          {TYPE_LABEL[s.type] ?? s.type}
+          {labels.typeLabel[s.type] ?? s.type}
         </span>
         {s.source === "blueprint" && (
           <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300">
@@ -57,7 +69,7 @@ function SettingCard({ s, onEdit, onDelete }: { s: Setting; onEdit: (s: Setting)
               STAGE_STYLE[st] ?? "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
             }`}
           >
-            {STAGE_LABEL[st] ?? st}
+            {labels.stageLabel[st] ?? st}
           </span>
         ))}
         {meta.ranges.length > 0 && (
@@ -76,7 +88,7 @@ function SettingCard({ s, onEdit, onDelete }: { s: Setting; onEdit: (s: Setting)
                   ROLE_RANK_STYLE[rk] ?? "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
                 }`}
               >
-                {ROLE_RANK_LABEL[rk] ?? rk}
+                {labels.roleRankLabel[rk] ?? rk}
               </span>
             );
           })()}
@@ -126,6 +138,23 @@ export default function SettingList({
   onEdit,
   onDelete,
 }: Props) {
+  /** 类型/角色等级/阶段的中文 label（枚举字典，后端单一源；拉取前显示原始 value）。 */
+  const [labels, setLabels] = useState<{
+    typeLabel: Record<string, string>;
+    roleRankLabel: Record<string, string>;
+    stageLabel: Record<string, string>;
+  }>({ typeLabel: {}, roleRankLabel: {}, stageLabel: {} });
+  useEffect(() => {
+    void Promise.all([loadSettingTypes(), loadRoleRanks(), loadStages()]).then(
+      ([types, ranks, stages]) => {
+        setLabels({
+          typeLabel: Object.fromEntries(types.map((s) => [s.key, s.label])),
+          roleRankLabel: Object.fromEntries(ranks.map((r) => [r.value, r.label])),
+          stageLabel: Object.fromEntries(stages.map((s) => [s.value, s.label])),
+        });
+      },
+    );
+  }, []);
   return (
     <section className="panel flex min-h-0 flex-1 flex-col gap-3.5">
       <div className="panel-head mb-0">
@@ -141,7 +170,7 @@ export default function SettingList({
         <div className="flex items-center gap-2">
           <span className="panel-hint">
             共 {visibleSettings.length} 条
-            {typeFilter ? ` · 只看「${TYPE_LABEL[typeFilter] ?? typeFilter}」` : ""}
+            {typeFilter ? ` · 只看「${labels.typeLabel[typeFilter] ?? typeFilter}」` : ""}
           </span>
           <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" onClick={onImport}>
             批量导入
@@ -180,7 +209,7 @@ export default function SettingList({
               }`}
               onClick={() => onTypeFilterChange(t)}
             >
-              {TYPE_LABEL[t]}
+              {labels.typeLabel[t] ?? t}
             </button>
           ))}
         </div>
@@ -203,7 +232,7 @@ export default function SettingList({
       ) : (
         <ul className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
           {visibleSettings.map((s) => (
-            <SettingCard key={s.id} s={s} onEdit={onEdit} onDelete={onDelete} />
+            <SettingCard key={s.id} s={s} labels={labels} onEdit={onEdit} onDelete={onDelete} />
           ))}
         </ul>
       )}

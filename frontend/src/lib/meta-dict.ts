@@ -7,7 +7,14 @@
 import { getMetaDict } from "@/lib/api/meta";
 
 /** 枚举字典 key（与后端 /api/meta 的字典 key 一一对应）。 */
-export type MetaDictKey = "agents" | "task_types" | "genre_aliases" | "chapter_functions";
+export type MetaDictKey =
+  | "agents"
+  | "task_types"
+  | "genre_aliases"
+  | "chapter_functions"
+  | "setting_types"
+  | "role_ranks"
+  | "stages";
 
 /** 字典缓存 TTL（ms）：枚举数据变化低频，10 分钟足够保证"最新"，过期后自动重拉。 */
 export const META_DICT_TTL_MS = 10 * 60 * 1000;

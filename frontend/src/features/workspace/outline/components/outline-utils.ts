@@ -8,7 +8,6 @@
 import type { Setting, Outline } from "@/lib/api";
 import {
   DEFAULT_VOLUME,
-  STAGE_LABEL,
   formatVolumeLabel,
   type VolumeInfo,
 } from "@/constants";
@@ -74,6 +73,7 @@ export function inactiveReason(
   c: Setting,
   chapterNo: number,
   volumes: VolumeInfo[] | undefined,
+  stageLabel: Record<string, string> = {},
 ): string {
   const st = c.structured ?? {};
   if (typeof st.appear_from === "number" && chapterNo < st.appear_from) {
@@ -84,7 +84,7 @@ export function inactiveReason(
   }
   const stage = deriveStage(chapterNo, volumes);
   if (stage && Array.isArray(st.stages) && st.stages.length > 0 && !st.stages.includes(stage)) {
-    return `于${(st.stages as string[]).map((x) => STAGE_LABEL[x] ?? x).join("、")}阶段出场`;
+    return `于${(st.stages as string[]).map((x) => stageLabel[x] ?? x).join("、")}阶段出场`;
   }
   return "本章未生效";
 }

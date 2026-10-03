@@ -7,12 +7,19 @@
  */
 "use client";
 
+import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import Modal from "@/components/modal";
 import InfoTip from "@/components/info-tip";
 import { TimingBlock, type StagePlan } from "./timing";
-import { SPEC_OF, TYPE_LABEL, type FormState } from "./settings-utils";
-import { ROLE_RANKS, SETTING_SPECS, SETTING_TYPES } from "@/constants";
+import type { FormState } from "./settings-utils";
+import {
+  SETTING_TYPES,
+  loadRoleRanks,
+  loadSettingTypes,
+  type RoleRankOption,
+  type SettingSpec,
+} from "@/constants";
 import type { Setting, SettingType } from "@/lib/api";
 
 interface Props {
@@ -38,6 +45,14 @@ export default function SettingFormModal({
   onSave,
   onClose,
 }: Props) {
+  /** 设定类型规格 / 角色等级（枚举字典，后端单一源；拉取前类型提示为空、下拉只剩 key）。 */
+  const [settingTypes, setSettingTypes] = useState<SettingSpec[]>([]);
+  const [roleRanks, setRoleRanks] = useState<RoleRankOption[]>([]);
+  useEffect(() => {
+    void loadSettingTypes().then(setSettingTypes);
+    void loadRoleRanks().then(setRoleRanks);
+  }, []);
+  const specOf = (t: SettingType) => settingTypes.find((s) => s.key === t) ?? null;
   return (
     <Modal
       open={open}
@@ -63,7 +78,7 @@ export default function SettingFormModal({
           <InfoTip>
             <p className="mb-1 font-medium text-zinc-700 dark:text-zinc-200">类型怎么选？</p>
             <ul className="grid gap-y-1">
-              {SETTING_SPECS.map((s) => (
+              {settingTypes.map((s) => (
                 <li key={s.key}>
                   <span className="font-medium text-zinc-600 dark:text-zinc-300">{s.label}</span>
                   ：{s.judge}
@@ -85,12 +100,12 @@ export default function SettingFormModal({
         >
           {SETTING_TYPES.map((t) => (
             <option key={t} value={t}>
-              {TYPE_LABEL[t]} — {SPEC_OF(t).hint}
+              {specOf(t)?.label ?? t} — {specOf(t)?.hint ?? ""}
             </option>
           ))}
         </select>
         {editing && <p className="shrink-0 text-[11px] text-zinc-400">类型不可修改（如需更换类型，删除后重建）</p>}
-        <p className="shrink-0 text-[11px] text-zinc-400">完整示例：{SPEC_OF(form.type).example}</p>
+        <p className="shrink-0 text-[11px] text-zinc-400">完整示例：{specOf(form.type)?.example ?? ""}</p>
         {form.type === "character" && (
           <label className="flex shrink-0 flex-col gap-1">
             <span className="text-[11px] font-medium text-zinc-500">角色等级（AI 据此分配篇幅 / 视角）</span>
@@ -99,7 +114,7 @@ export default function SettingFormModal({
               value={form.role_rank}
               onChange={(e) => setForm({ ...form, role_rank: e.target.value })}
             >
-              {ROLE_RANKS.map((r) => (
+              {roleRanks.map((r) => (
                 <option key={r.value} value={r.value}>
                   {r.label}
                 </option>
@@ -124,7 +139,7 @@ export default function SettingFormModal({
           <span className="text-[11px] font-medium text-zinc-500">名称</span>
           <input
             className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            placeholder={`如：${SPEC_OF(form.type).name_hint}`}
+            placeholder={`如：${specOf(form.type)?.name_hint ?? ""}`}
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
           />
@@ -143,13 +158,13 @@ export default function SettingFormModal({
           <span className="shrink-0 text-[11px] font-medium text-zinc-500">可变 · 随剧情（可演变）</span>
           <textarea
             className="min-h-0 flex-1 rounded-lg border border-zinc-300 bg-zinc-50 p-3 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            placeholder={SPEC_OF(form.type).desc_hint}
+            placeholder={specOf(form.type)?.desc_hint ?? ""}
             rows={3}
             value={form.dynamic_text}
             onChange={(e) => setForm({ ...form, dynamic_text: e.target.value })}
           />
         </label>
-        <p className="shrink-0 text-[11px] leading-4 text-zinc-400">类型提示：{SPEC_OF(form.type).constitution_advice}</p>
+        <p className="shrink-0 text-[11px] leading-4 text-zinc-400">类型提示：{specOf(form.type)?.constitution_advice ?? ""}</p>
         {/* 出现时机：生效阶段 / 限定时段（按蓝图前中后期章数选，无蓝图时按已创建章节选） */}
         <div className="shrink-0">
           <TimingBlock
