@@ -58,7 +58,7 @@ export function AddChapterDrawer({
       <aside
         role="dialog"
         aria-modal="true"
-        className="fixed right-0 top-0 z-[95] flex h-[100dvh] w-[440px] max-w-[92vw] flex-col border-l border-zinc-200 bg-surface shadow-book dark:border-zinc-700 dark:bg-zinc-900"
+        className="fixed right-0 top-0 z-[95] flex h-[100dvh] w-[520px] max-w-[92vw] flex-col border-l border-zinc-200 bg-surface shadow-book dark:border-zinc-700 dark:bg-zinc-900"
       >
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-700">
           <div className="min-w-0">
