@@ -9,7 +9,8 @@
 "use client";
 
 import type { RefObject } from "react";
-import { AGENTS } from "@/constants";
+import { useEffect, useState } from "react";
+import { AGENTS, loadChapterFunctions } from "@/constants";
 import { CostHint } from "@/lib/ai-status";
 import { AGENT_KEYS, type CommitItem, type LogItem } from "./workspace-config";
 
@@ -44,6 +45,11 @@ export default function ToolsPanel({
   onStop: () => void;
   onCommit: (item: CommitItem) => void;
 }) {
+  /** 章节功能下拉选项（枚举字典，后端单一源；novelist 的 chapter_function select 用它，消除与字典漂移） */
+  const [chapterFunctions, setChapterFunctions] = useState<{ value: string; label: string }[]>([]);
+  useEffect(() => {
+    void loadChapterFunctions().then(setChapterFunctions);
+  }, []);
   return (
     <div className="grid w-full gap-6 lg:grid-cols-[260px_1fr]">
       {/* 角色选择 */}
@@ -112,11 +118,19 @@ export default function ToolsPanel({
                       onChange={(e) => onFormChange(p.key, e.target.value)}
                       className="rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-[13px] outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     >
-                      {p.options?.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
+                      {p.key === "chapter_function"
+                        ? (chapterFunctions.length > 0 ? chapterFunctions : [{ value: "buildup", label: "铺垫" }]).map(
+                            (o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ),
+                          )
+                        : p.options?.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
                     </select>
                   ) : p.type === "textarea" ? (
                     <textarea

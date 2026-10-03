@@ -6,10 +6,21 @@
  * 首页新建/编辑小说与工作台「设定」页复用同一套组件与文案，避免两处定义漂移。
  * 核心机制：紧凑的「分段按钮 / 标签」内联选择，点击即选、再点取消；默认不选，
  * 导入蓝图时由 AI 按素材推断、弹窗引导作者确认。
+ * 枚举数据（背景类型/题材预置）全部来自后端 /api/meta 字典（双层字典）：
+ * 题材输入即正式入库（POST），自定义题材可删除（DELETE，仅删库中选项，不影响已选题材）。
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Novel } from "@/lib/api";
-import { BACKGROUND_TYPES, GENRE_PRESETS, loadGenreAliases } from "@/constants";
+import { message } from "@/components/message";
+import { addMetaDictItem, deleteMetaDictItem } from "@/lib/api/meta";
+import { invalidateMetaDict } from "@/lib/meta-dict";
+import {
+  loadBackgroundTypes,
+  loadGenreAliases,
+  loadGenrePresets,
+  type BackgroundTypeOption,
+  type GenrePresetOption,
+} from "@/constants";
 
 /* 世界背景类型：分段按钮单选；点击已选项可取消（回到未选择），默认不选 */
 /**
@@ -24,12 +35,17 @@ export function BackgroundTypePicker({
   value: Novel["background_type"];
   onChange: (v: Novel["background_type"]) => void;
 }) {
+  /** 背景类型条目（枚举字典，后端单一源；拉取前空数组不渲染） */
+  const [types, setTypes] = useState<BackgroundTypeOption[]>([]);
+  useEffect(() => {
+    void loadBackgroundTypes().then(setTypes);
+  }, []);
   /** 当前选中的类型条目，用于展示其说明文案 */
-  const current = BACKGROUND_TYPES.find((t) => t.value === value) ?? null;
+  const current = types.find((t) => t.value === value) ?? null;
   return (
     <div className="flex flex-col gap-1.5">
       <div className="grid grid-cols-3 gap-1.5">
-        {BACKGROUND_TYPES.map((t) => {
+        {types.map((t) => {
           const active = value === t.value;
           return (
             <button
@@ -55,9 +71,11 @@ export function BackgroundTypePicker({
   );
 }
 
-/* 题材多选：预置标签 + 自定义输入，点击即选、再点取消；默认不选 */
+/* 题材多选：预置标签 + 自定义输入（输入即正式入库），点击即选、再点取消；默认不选 */
 /**
  * 题材多选：预置标签 + 自定义输入，点击即选、再点取消。
+ * 双层字典：内置预置 + 用户自定义题材都由后端 /api/meta 下发（缓存）；自定义题材输入即正式入库
+ * （POST /api/meta/genre_presets/items），库中自定义题材带 ✕ 可删除（DELETE 接口，仅删库中选项）。
  * @param value 已选题材数组。
  * @param onChange 回传更新后的题材数组。
  */
@@ -70,77 +88,138 @@ export function GenrePicker({
 }) {
   /** 自定义题材输入框的临时文本 */
   const [custom, setCustom] = useState("");
+  /** 题材预置（内置 + 自定义合并，后端单一源） */
+  const [presets, setPresets] = useState<GenrePresetOption[]>([]);
   /** 题材同义标签（后端 platform_rules 单一源经接口下发；拉取前为空映射，不影响预置标签选择） */
   const [genreAliases, setGenreAliases] = useState<Record<string, string>>({});
-  useEffect(() => {
-    void loadGenreAliases().then(setGenreAliases);
+  /** 添加/删除进行中：防连点 */
+  const [busy, setBusy] = useState(false);
+
+  const reload = useCallback(() => {
+    void Promise.all([loadGenrePresets(), loadGenreAliases()]).then(([ps, als]) => {
+      setPresets(ps);
+      setGenreAliases(als);
+    });
   }, []);
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
   /** 切换某个题材的选中态（选中 ⇄ 取消）。 */
   const toggle = (g: string) => {
     onChange(value.includes(g) ? value.filter((x) => x !== g) : [...value, g]);
   };
-  /** 把输入框内容添加为自定义题材（空值或已存在时忽略）。 */
-  const addCustom = () => {
+  /** 把输入框内容正式入库并选中（输入即正式入库，无临时态；空值或已选中时忽略）。 */
+  const addCustom = async () => {
     const g = custom.trim();
-    if (!g || value.includes(g)) return;
-    onChange([...value, g]);
-    setCustom("");
+    if (!g || busy) return;
+    if (value.includes(g)) {
+      setCustom("");
+      return;
+    }
+    setBusy(true);
+    try {
+      await addMetaDictItem("genre_presets", g);
+      invalidateMetaDict("genre_presets"); // 立即失效缓存，下一次访问拉到最新
+      setPresets((prev) => (prev.some((p) => p.value === g) ? prev : [...prev, { value: g, label: g, custom: true }]));
+      onChange([...value, g]);
+      setCustom("");
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  /** 把库中的自定义题材删除（仅删库中选项，不影响已选题材）。 */
+  const removeFromLibrary = async (g: string) => {
+    if (busy || !window.confirm(`把「${g}」从题材库删除？已选中的书不受影响，只是以后不再作为预置选项。`)) return;
+    setBusy(true);
+    try {
+      await deleteMetaDictItem("genre_presets", g);
+      invalidateMetaDict("genre_presets");
+      setPresets((prev) => prev.filter((p) => p.value !== g));
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
   /** 输入命中已知同义标签（与后端题材族匹配同步）且标准标签未选中 → 提示改用标准标签 */
   const aliasTarget = custom.trim() ? genreAliases[custom.trim()] : undefined;
+  /** 已选但不在题材库里的（历史遗留/手动加的），单独展示可取消选择 */
+  const presetValues = presets.map((p) => p.value);
+  const orphanSelected = value.filter((g) => !presetValues.includes(g));
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-1.5">
-        {GENRE_PRESETS.map((g) => {
-          const active = value.includes(g);
+        {presets.map((p) => {
+          const active = value.includes(p.value);
           return (
             <button
-              key={g}
+              key={p.value}
               type="button"
-              onClick={() => toggle(g)}
+              onClick={() => toggle(p.value)}
               className={`rounded-md border px-2 py-0.5 text-[11.5px] transition-colors ${
                 active
                   ? "border-zinc-500 bg-zinc-800 text-white dark:border-zinc-400 dark:bg-zinc-200 dark:text-zinc-900"
                   : "border-zinc-200 text-zinc-600 hover:border-zinc-400 dark:border-zinc-700 dark:text-zinc-300"
               }`}
             >
-              {g}
+              {p.label}
+              {p.custom && (
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  title="从题材库删除"
+                  className="ml-1 cursor-pointer text-zinc-400 hover:text-red-500"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void removeFromLibrary(p.value);
+                  }}
+                >
+                  ✕
+                </span>
+              )}
             </button>
           );
         })}
       </div>
-      {/* 已选的自定义题材（不在预置列表里的）也展示出来 */}
-      {value.some((g) => !GENRE_PRESETS.includes(g)) && (
+      {/* 已选但不在题材库里的（历史数据）也展示出来，可取消选择 */}
+      {orphanSelected.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {value
-            .filter((g) => !GENRE_PRESETS.includes(g))
-            .map((g) => (
-              <button
-                key={g}
-                type="button"
-                onClick={() => toggle(g)}
-                className="rounded-md border border-zinc-500 bg-zinc-100 px-2 py-0.5 text-[11.5px] text-zinc-700 dark:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-200"
-              >
-                {g} ✕
-              </button>
-            ))}
+          {orphanSelected.map((g) => (
+            <button
+              key={g}
+              type="button"
+              onClick={() => toggle(g)}
+              className="rounded-md border border-zinc-500 bg-zinc-100 px-2 py-0.5 text-[11.5px] text-zinc-700 dark:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-200"
+            >
+              {g} ✕
+            </button>
+          ))}
         </div>
       )}
       <div className="flex items-center gap-1.5">
         <input
-          className="w-28 rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11.5px] text-zinc-800 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+          className="w-28 rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11.5px] text-zinc-800 outline-none focus:border-zinc-500 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
           placeholder="自定义题材"
           value={custom}
           maxLength={12}
+          disabled={busy}
           onChange={(e) => setCustom(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              addCustom();
+              void addCustom();
             }
           }}
         />
-        <button type="button" onClick={addCustom} className="text-[11.5px] text-zinc-500 hover:text-zinc-700">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void addCustom()}
+          className="text-[11.5px] text-zinc-500 hover:text-zinc-700 disabled:opacity-60"
+        >
           + 添加
         </button>
       </div>
@@ -160,7 +239,7 @@ export function GenrePicker({
             改用「{aliasTarget}」
           </button>
           <span>·</span>
-          <button type="button" className="hover:underline" onClick={addCustom}>
+          <button type="button" className="hover:underline" disabled={busy} onClick={() => void addCustom()}>
             仍用「{custom.trim()}」
           </button>
         </div>

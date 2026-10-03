@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { listLedger, type LedgerItem } from "@/lib/api";
-import { LEDGER_TYPE_LABELS } from "@/constants";
+import { loadLedgerTypeLabels } from "@/constants";
 import { message } from "@/components/message";
 import Loading from "@/components/loading";
 
@@ -31,6 +31,11 @@ function urgencyColor(u: number | null): string {
 export default function LedgerPanel({ novelId }: Props) {
   const [items, setItems] = useState<LedgerItem[]>([]);
   const [loading, setLoading] = useState(true);
+  /** 伏笔类型中文标签（枚举字典，后端单一源；拉取前显示原始 value） */
+  const [typeLabels, setTypeLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    void loadLedgerTypeLabels().then(setTypeLabels);
+  }, []);
 
   /** 拉取伏笔清单；失败仅弹错误提示。 */
   const load = useCallback(async () => {
@@ -70,7 +75,7 @@ export default function LedgerPanel({ novelId }: Props) {
       >
         <div className="mb-1 flex flex-wrap items-center gap-1.5">
           <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-            {LEDGER_TYPE_LABELS[item.item_type] ?? item.item_type}
+            {typeLabels[item.item_type] ?? item.item_type}
           </span>
           {item.urgency != null && (
             <span className={`rounded px-1.5 py-0.5 text-[11px] ${urgencyColor(item.urgency)}`}>

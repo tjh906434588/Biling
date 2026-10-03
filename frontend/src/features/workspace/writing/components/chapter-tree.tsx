@@ -9,10 +9,25 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 
-import { DEFAULT_VOLUME, SOURCE_LABELS, formatVolumeLabel, type VolumeInfo } from "@/constants";
+import { DEFAULT_VOLUME, formatVolumeLabel, loadSourceLabels, type VolumeInfo } from "@/constants";
 import type { ChapterListItem, ChapterVersion } from "@/lib/api";
 import { CostHint } from "@/lib/ai-status";
 import InfoTip from "@/components/info-tip";
+
+/** 远程版本来源标签缓存（loadSourceLabels 拉取后写入；空 = 未拉取/失败，回退本地兜底）。 */
+let remoteSourceLabels: Record<string, string> = {};
+
+/** 应用启动/进入写作页时调用一次：拉取版本来源中文标签（后端 meta.py 单一源），失败保持本地兜底。 */
+export async function loadSourceLabelsOnce(): Promise<void> {
+  try {
+    remoteSourceLabels = await loadSourceLabels();
+  } catch {
+    remoteSourceLabels = {}; // 拉取失败：继续用本地兜底
+  }
+}
+
+/** 立即触发一次远程标签拉取（模块级，页面一进来就预载，配合本地兜底）。 */
+void loadSourceLabelsOnce();
 
 export interface ChapterVolumeGroup {
   key: string;
@@ -79,10 +94,14 @@ export function groupChaptersByVolume(
   return result;
 }
 
-/** 版本来源的友好标签（章节详情版本列表用）。 */
+/** 版本来源的友好标签（章节详情版本列表用）：远程字典优先，本地兜底。 */
 export function sourceLabel(source: string): string {
   if (source.startsWith("novelist")) return "初稿";
-  return SOURCE_LABELS[source] ?? "未知来源";
+  return (
+    remoteSourceLabels[source] ??
+    ({ novelist: "初稿", regenerate: "再稿", reviser: "修订稿", merged: "手动合并" } as Record<string, string>)[source] ??
+    "未知来源"
+  );
 }
 
 /** 章节目录侧栏的 props：数据 + 回调全部由 writing-panel 传入，组件内不做任何状态编排。 */

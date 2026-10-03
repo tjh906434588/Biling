@@ -1,9 +1,9 @@
 /**
  * @file constants/api.ts
  * API 相关共享常量：请求前缀 BASE、设定类型枚举 SETTING_TYPES（「常量即类型」的单一事实来源，
- * types/api.ts 的 SettingType 直接由它推导）、伏笔类型中文标签 LEDGER_TYPE_LABELS。
+ * types/api.ts 的 SettingType 直接由它推导）、伏笔类型中文标签（已迁移为枚举字典，见 loadLedgerTypeLabels）。
  */
-import type { LedgerType } from "@/types/api";
+import { loadMetaDict } from "@/lib/meta-dict";
 
 /** 请求前缀：直接走 Next.js rewrite 代理（/api/* → 后端 8000）。 */
 export const BASE = "/api";
@@ -19,11 +19,12 @@ export const SETTING_TYPES = [
   "concept",
 ] as const;
 
-/** 伏笔类型 → 中文标签（账本列表/筛选下拉展示）。 */
-export const LEDGER_TYPE_LABELS: Record<LedgerType, string> = {
-  setup: "埋设伏笔",
-  thread: "线索推进",
-  character_state: "角色状态",
-  location_state: "地点状态",
-  unresolved_hook: "未解钩子",
-};
+/** 拉取伏笔类型中文标签（后端 meta.py 单一源，统一缓存）；失败回退空映射（显示原始 value）。 */
+export async function loadLedgerTypeLabels(): Promise<Record<string, string>> {
+  try {
+    const list = await loadMetaDict<{ value: string; label: string }[]>("ledger_types");
+    return Object.fromEntries(list.map((l) => [l.value, l.label]));
+  } catch {
+    return {};
+  }
+}

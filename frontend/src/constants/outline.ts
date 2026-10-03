@@ -1,6 +1,7 @@
 /**
  * @file constants/outline.ts
- * 大纲/章节相关共享常量：节拍类型标签 TYPE_LABELS、兜底卷 DEFAULT_VOLUME 及卷信息类型 VolumeInfo。
+ * 大纲/章节相关共享常量：节拍类型标签（已迁移为枚举字典，见 loadBeatTypeLabels）、
+ * 兜底卷 DEFAULT_VOLUME 及卷信息类型 VolumeInfo。
  * 章节功能下拉项（推进/铺垫/…）已迁移为枚举字典（后端 meta.py 的 chapter_functions 单一源，
  * 见 loadChapterFunctions），不再在此维护中文 label，避免与确认面板等处漂移。
  * 视角角色等级 ROLE_RANKS / 阶段标签 STAGE_LABEL 亦已迁移为枚举字典（role_ranks / stages）。
@@ -73,14 +74,15 @@ export async function loadStageLabel(): Promise<Record<string, string>> {
   }
 }
 
-/** 节拍类型 → 中文标签（大纲详情「节拍」列表展示）。 */
-export const TYPE_LABELS: Record<string, string> = {
-  scene: "场景",
-  transition: "过场",
-  dialogue: "对话",
-  action: "动作",
-  reveal: "揭示",
-};
+/** 拉取节拍类型中文标签（大纲详情「节拍」列表展示；后端 meta.py 单一源，统一缓存）；失败回退空映射。 */
+export async function loadBeatTypeLabels(): Promise<Record<string, string>> {
+  try {
+    const list = await loadMetaDict<{ value: string; label: string }[]>("beat_types");
+    return Object.fromEntries(list.map((b) => [b.value, b.label]));
+  } catch {
+    return {};
+  }
+}
 
 /** 卷信息（与蓝图 content.volumes 一致，用于章节目录/大纲按卷分组）。 */
 export type VolumeInfo = NonNullable<Blueprint["content"]["volumes"]>[number];

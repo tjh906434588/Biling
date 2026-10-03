@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "react";
 import type { Outline } from "@/lib/api";
-import { TYPE_LABELS, loadFunctionLabels } from "@/constants";
+import { loadBeatTypeLabels, loadFunctionLabels } from "@/constants";
 import type { OutlineContent } from "./outline-utils";
 
 interface Props {
@@ -46,8 +46,13 @@ export default function OutlineDetail({
 }: Props) {
   /** 章节功能 label 映射（枚举字典，后端单一源；拉取前显示原始 value）。 */
   const [fnLabels, setFnLabels] = useState<Record<string, string>>({});
+  /** 节拍类型 label 映射（枚举字典，后端单一源；拉取前显示原始 value）。 */
+  const [beatLabels, setBeatLabels] = useState<Record<string, string>>({});
   useEffect(() => {
-    void loadFunctionLabels().then(setFnLabels);
+    void Promise.all([loadFunctionLabels(), loadBeatTypeLabels()]).then(([fn, bt]) => {
+      setFnLabels(fn);
+      setBeatLabels(bt);
+    });
   }, []);
   return (
     <div className="panel flex max-h-[calc(100dvh-6rem)] min-h-0 flex-col overflow-hidden">
@@ -182,7 +187,7 @@ export default function OutlineDetail({
                 <li key={i} className="rounded-lg border border-zinc-200 p-2.5 text-sm dark:border-zinc-800">
                   <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
                     <span className="rounded bg-zinc-100 px-1.5 py-0.5 dark:bg-zinc-800">
-                      #{b.beat_no ?? i + 1} · {TYPE_LABELS[b.type ?? ""] ?? b.type ?? "场景"}
+                      #{b.beat_no ?? i + 1} · {beatLabels[b.type ?? ""] ?? b.type ?? "场景"}
                     </span>
                     {b.pov && <span>视角 {b.pov}</span>}
                     {b.length_hint && <span>{b.length_hint}</span>}

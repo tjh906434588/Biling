@@ -1,34 +1,46 @@
 /**
  * @file constants/writing.ts
- * 写作页相关共享常量：评价维度/追读力子项/问题严重度的中文标签、联动重写中断总展示时长、
- * 评价栏宽度预设、版本来源友好标签。原定义均在 writing-panel.tsx 内，此处集中维护。
+ * 写作页相关共享常量：评价维度/追读力子项/问题严重度/版本来源的中文标签已迁移为枚举字典
+ * （后端 /api/meta 单一源，见 loadRubricLabels / loadRetentionHookLabels / loadSeverityLabels /
+ * loadSourceLabels），联动重写中断总展示时长、评价栏宽度预设为固定配置，前端写死。
  */
+import { loadMetaDict } from "@/lib/meta-dict";
 
-/** 评价维度英文 key → 用户可读中文（界面直接展示用）。 */
-export const RUBRIC_LABELS: Record<string, string> = {
-  blueprint_adherence: "蓝图贴合度",
-  consistency: "前后一致性",
-  character_voice: "角色口吻",
-  pacing: "节奏把控",
-  style_compliance: "文风与语言",
-  foreshadowing_accountability: "伏笔交代",
-  reader_retention: "读者追读",
-};
+/** 拉取评价维度中文标签（key 由后端 QualityReview.rubric 产生，统一缓存）；失败回退空映射。 */
+export async function loadRubricLabels(): Promise<Record<string, string>> {
+  try {
+    return await loadMetaDict<Record<string, string>>("rubric_labels");
+  } catch {
+    return {};
+  }
+}
 
-/** 追读力子项英文 key → 中文。 */
-export const RETENTION_HOOK_LABELS: Record<string, string> = {
-  opening_hook: "开篇钩子",
-  ending_hook: "章末悬念",
-  tension: "情绪张力",
-  anticipation: "期待感",
-};
+/** 拉取追读力子项中文标签（rubric.reader_retention 子维度）；失败回退空映射。 */
+export async function loadRetentionHookLabels(): Promise<Record<string, string>> {
+  try {
+    return await loadMetaDict<Record<string, string>>("retention_hook_labels");
+  } catch {
+    return {};
+  }
+}
 
-/** 问题严重度 → 中文。 */
-export const SEVERITY_LABELS: Record<string, string> = {
-  high: "严重",
-  medium: "中等",
-  low: "轻微",
-};
+/** 拉取问题严重度中文标签（high/medium/low）；失败回退空映射。 */
+export async function loadSeverityLabels(): Promise<Record<string, string>> {
+  try {
+    return await loadMetaDict<Record<string, string>>("severity_labels");
+  } catch {
+    return {};
+  }
+}
+
+/** 拉取章节版本来源中文标签（初稿/再稿/修订稿/手动合并）；失败回退空映射。 */
+export async function loadSourceLabels(): Promise<Record<string, string>> {
+  try {
+    return await loadMetaDict<Record<string, string>>("source_labels");
+  } catch {
+    return {};
+  }
+}
 
 /** 联动重写中断通知的总展示时长（ms）：只累计「页面可见时间」，离开页面暂停、回来继续。 */
 export const REWRITE_FAIL_TOTAL_MS = 15_000;
@@ -43,11 +55,3 @@ export const REVIEW_W_PRESETS: ReadonlyArray<readonly [string, number]> = [
   ["中", 620],
   ["宽", 860],
 ];
-
-/** 版本来源的友好标签（章节详情版本列表用）。 */
-export const SOURCE_LABELS: Record<string, string> = {
-  novelist: "初稿", // 新增章节首次生成
-  regenerate: "再稿", // 重新生成正文（novelist，根层平级）
-  reviser: "修订稿", // 评价优化（按评价修订）
-  merged: "手动合并",
-};

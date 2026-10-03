@@ -16,7 +16,7 @@ import { message } from "@/components/message";
 import { CreateDialog, DeleteDialog, EditDialog } from "./components/dialogs";
 import { EmptyCreate } from "./components/empty-create";
 import { Topbar } from "./components/topbar";
-import { BACKGROUND_TYPES, GUIDE_KEY, ONBOARDING_STEPS } from "@/constants";
+import { GUIDE_KEY, ONBOARDING_STEPS, loadBackgroundTypes, type BackgroundTypeOption } from "@/constants";
 import { formatDate } from "@/utils/format";
 
 /** 书架页组件：作品网格 + 新建/编辑/删除弹窗 + 空书架欢迎指引 */
@@ -35,6 +35,11 @@ export default function Bookshelf() {
   const [, setGuideHidden] = useState(true);
   /** 是否已做过「空书架自动展开欢迎面板」（仅首次且书架为空时执行一次） */
   const autoOpened = useRef(false);
+  /** 背景类型条目（枚举字典，后端单一源；拉取前不显示背景徽标） */
+  const [backgroundTypes, setBackgroundTypes] = useState<BackgroundTypeOption[]>([]);
+  useEffect(() => {
+    void loadBackgroundTypes().then(setBackgroundTypes);
+  }, []);
 
   /** 拉取小说列表；若书架为空且首次进入，自动展开欢迎面板（少一次点击） */
   async function refresh() {
@@ -288,7 +293,7 @@ export default function Bookshelf() {
                       <p className="mt-1.5 flex items-center gap-1.5 font-mono text-[10.5px] text-zinc-400">
                         {n.background_type ? (
                           <span className="rounded bg-zinc-100 px-1.5 py-px text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                            {BACKGROUND_TYPES.find((t) => t.value === n.background_type)?.label}
+                            {backgroundTypes.find((t) => t.value === n.background_type)?.label}
                           </span>
                         ) : (
                           <span className="rounded bg-zinc-100 px-1.5 py-px text-[10px] font-medium text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500">

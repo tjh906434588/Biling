@@ -108,13 +108,8 @@ export const AGENTS: Record<string, { name: string; desc: string; params: ParamS
         label: "章节功能",
         type: "select",
         default: "buildup",
-        options: [
-          { value: "buildup", label: "铺垫" },
-          { value: "progression", label: "推进" },
-          { value: "climax", label: "高潮" },
-          { value: "turning", label: "转折" },
-          { value: "interlude", label: "过渡" },
-        ],
+        // options 不在此维护：与 meta.chapter_functions 字典重复易漂移，
+        // tools 面板渲染 select 时用 loadChapterFunctions() 的动态选项（见 tools-panel.tsx）。
       },
       {
         key: "writing_mode",

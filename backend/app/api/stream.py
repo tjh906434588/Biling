@@ -216,6 +216,10 @@ async def _ensure_era_research(
                                 if g and g not in new_genres:
                                     new_genres.append(g)
                             novel2.genres = new_genres
+                            # AI 新增的题材直接正式登记进题材字典库（作者后续所有书都能复用；升级不丢）
+                            from app.api.meta import _upsert_custom_items
+
+                            _upsert_custom_items("genre_presets", new_genres, db)
                     novel2.era_research = result
                     db.commit()
             # ignore：不落库研究，保持现有设定

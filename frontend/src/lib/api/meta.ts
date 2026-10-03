@@ -12,3 +12,43 @@ export async function getMetaDict(keys?: string[]): Promise<Record<string, unkno
   if (!res.ok) throw new Error("加载元数据失败");
   return res.json();
 }
+
+/** 给指定字典新增一个用户自定义项（如自定义题材）；成功返回 {value,label}。 */
+export async function addMetaDictItem(
+  key: string,
+  value: string,
+  label?: string,
+): Promise<{ value: string; label: string }> {
+  const res = await fetch(`${BASE}/meta/${key}/items`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value, label }),
+  });
+  if (!res.ok) {
+    let msg = "添加自定义项失败";
+    try {
+      const data = await res.json();
+      if (data && typeof data.detail === "string") msg = data.detail;
+    } catch {
+      /* 忽略解析失败 */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/** 删除指定字典的一个用户自定义项；成功返回 {ok:true}。 */
+export async function deleteMetaDictItem(key: string, value: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`${BASE}/meta/${key}/items/${encodeURIComponent(value)}`, { method: "DELETE" });
+  if (!res.ok) {
+    let msg = "删除自定义项失败";
+    try {
+      const data = await res.json();
+      if (data && typeof data.detail === "string") msg = data.detail;
+    } catch {
+      /* 忽略解析失败 */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}

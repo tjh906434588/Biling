@@ -14,7 +14,15 @@ export type MetaDictKey =
   | "chapter_functions"
   | "setting_types"
   | "role_ranks"
-  | "stages";
+  | "stages"
+  | "genre_presets"
+  | "background_types"
+  | "ledger_types"
+  | "beat_types"
+  | "rubric_labels"
+  | "retention_hook_labels"
+  | "severity_labels"
+  | "source_labels";
 
 /** 字典缓存 TTL（ms）：枚举数据变化低频，10 分钟足够保证"最新"，过期后自动重拉。 */
 export const META_DICT_TTL_MS = 10 * 60 * 1000;
@@ -35,4 +43,9 @@ export async function loadMetaDict<T>(key: MetaDictKey): Promise<T> {
   const value = data[key] as T;
   cache.set(key, { value, expiresAt: Date.now() + META_DICT_TTL_MS });
   return value;
+}
+
+/** 立即失效指定字典的缓存（增/删自定义项后调用，让下次访问拉到最新）。 */
+export function invalidateMetaDict(key: MetaDictKey): void {
+  cache.delete(key);
 }

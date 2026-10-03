@@ -399,3 +399,21 @@ class PromptTemplate(Base):
     scope: Mapped[str] = mapped_column(String(16), default="global")  # global|novel:{novel_id}
     content: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class MetaDictItem(Base):
+    """用户自定义字典项（双层字典的用户层）。
+
+    内置枚举在代码 DICT_BUILDERS 里只读；用户自定义项（如作者自加的题材）存此表，
+    经 GET /api/meta 合并下发、POST /api/meta/{key}/items 新增、DELETE 删除。
+    因为存数据库而非代码，升级版本不会重置自定义项。
+    """
+
+    __tablename__ = "meta_dict_items"
+    __table_args__ = (UniqueConstraint("dict_key", "value", name="uq_meta_dict_items_key_value"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    dict_key: Mapped[str] = mapped_column(String(32), index=True)  # 对应 DICT_BUILDERS 的 key（如 genre_presets）
+    value: Mapped[str] = mapped_column(String(32))
+    label: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -6,8 +6,12 @@
  */
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { RETENTION_HOOK_LABELS, RUBRIC_LABELS, SEVERITY_LABELS } from "@/constants";
+import { useEffect, useState, type ReactNode } from "react";
+import {
+  loadRetentionHookLabels,
+  loadRubricLabels,
+  loadSeverityLabels,
+} from "@/constants";
 import type { QualityReview } from "@/lib/api";
 
 /** 评价师结果卡片：整体分 + 六维评分 + 问题 + 亮点 + 修改建议 + 按评价优化。 */
@@ -26,6 +30,19 @@ export function ReviewCard({
   /** 出现在「按评价优化本章」左侧的附加按钮（如：查看 AI 过程）。 */
   viewButton?: ReactNode;
 }) {
+  /** 评价维度/追读力子项/严重度中文标签（枚举字典，后端单一源；拉取前显示原始 value） */
+  const [rubricLabels, setRubricLabels] = useState<Record<string, string>>({});
+  const [hookLabels, setHookLabels] = useState<Record<string, string>>({});
+  const [severityLabels, setSeverityLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    void Promise.all([loadRubricLabels(), loadRetentionHookLabels(), loadSeverityLabels()]).then(
+      ([r, h, s]) => {
+        setRubricLabels(r);
+        setHookLabels(h);
+        setSeverityLabels(s);
+      },
+    );
+  }, []);
   const rubric = review.rubric ?? {};
   const rubricEntries = Object.entries(rubric);
   const scoreColor = (s?: number) =>
@@ -90,7 +107,7 @@ export function ReviewCard({
               >
                 <div className="mb-1 flex items-center justify-between">
                   <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    {RUBRIC_LABELS[k] ?? k}
+                    {rubricLabels[k] ?? k}
                   </span>
                   <span className={`text-sm font-bold ${scoreColor(v?.score)}`}>{v?.score ?? "—"}</span>
                 </div>
@@ -101,7 +118,7 @@ export function ReviewCard({
                         key={hk}
                         className="flex items-center justify-between rounded bg-zinc-100 px-1.5 py-1 text-[11px] dark:bg-zinc-900"
                       >
-                        <span className="text-zinc-500">{RETENTION_HOOK_LABELS[hk] ?? hk}</span>
+                        <span className="text-zinc-500">{hookLabels[hk] ?? hk}</span>
                         <span className={`font-semibold ${scoreColor(hs)}`}>{hs ?? "—"}</span>
                       </div>
                     ))}
@@ -140,7 +157,7 @@ export function ReviewCard({
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <span className="mr-1.5 rounded bg-red-100 px-1 py-0.5 text-[10px] text-red-700 dark:bg-red-900 dark:text-red-300">
-                      {i.severity ? (SEVERITY_LABELS[i.severity] ?? i.severity) : "?"}
+                      {i.severity ? (severityLabels[i.severity] ?? i.severity) : "?"}
                     </span>
                     {i.desc}
                     {i.suggested_fix && (
