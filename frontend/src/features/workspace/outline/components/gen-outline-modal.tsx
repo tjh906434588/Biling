@@ -7,10 +7,11 @@
  */
 "use client";
 
+import { useEffect, useState } from "react";
 import type { Setting } from "@/lib/api";
 import Modal from "@/components/modal";
 import { CostHint } from "@/lib/ai-status";
-import { FUNCTIONS, ROLE_RANKS, STAGE_LABEL, type VolumeInfo } from "@/constants";
+import { ROLE_RANKS, STAGE_LABEL, loadChapterFunctions, type ChapterFunctionOption, type VolumeInfo } from "@/constants";
 import { inactiveReason, roleRankOf, type GenForm } from "./outline-utils";
 
 interface Props {
@@ -52,6 +53,11 @@ export default function GenOutlineModal({
   onGenerate,
   onShowStream,
 }: Props) {
+  /** 章节功能下拉项（枚举字典，后端单一源；拉取前为空 → 下拉只剩「自动判定」）。 */
+  const [chapterFunctions, setChapterFunctions] = useState<ChapterFunctionOption[]>([]);
+  useEffect(() => {
+    void loadChapterFunctions().then(setChapterFunctions);
+  }, []);
   return (
     <Modal
       open={open}
@@ -181,9 +187,9 @@ export default function GenOutlineModal({
             disabled={generating}
           >
             <option value="">本章节奏定位：自动判定</option>
-            {FUNCTIONS.map(([v, l]) => (
-              <option key={v} value={v}>
-                本章节奏定位：{l}
+            {chapterFunctions.map((f) => (
+              <option key={f.value} value={f.value}>
+                本章节奏定位：{f.label}
               </option>
             ))}
           </select>

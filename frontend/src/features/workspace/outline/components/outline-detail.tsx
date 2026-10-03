@@ -6,9 +6,10 @@
  */
 "use client";
 
+import { useEffect, useState } from "react";
 import type { Outline } from "@/lib/api";
-import { TYPE_LABELS } from "@/constants";
-import { FUNCTION_LABELS, type OutlineContent } from "./outline-utils";
+import { TYPE_LABELS, loadFunctionLabels } from "@/constants";
+import type { OutlineContent } from "./outline-utils";
 
 interface Props {
   /** 详情当前展示的版本（父组件算好的 viewing：历史预览版或当前生效版）。 */
@@ -43,6 +44,11 @@ export default function OutlineDetail({
   onRewrite,
   onApprove,
 }: Props) {
+  /** 章节功能 label 映射（枚举字典，后端单一源；拉取前显示原始 value）。 */
+  const [fnLabels, setFnLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    void loadFunctionLabels().then(setFnLabels);
+  }, []);
   return (
     <div className="panel flex max-h-[calc(100dvh-6rem)] min-h-0 flex-col overflow-hidden">
       <div className="panel-head shrink-0">
@@ -52,7 +58,7 @@ export default function OutlineDetail({
           {content?.pov ? <span className="ml-2 text-xs font-normal text-zinc-500">视角：{content.pov}</span> : null}
           {content?.chapter_function ? (
             <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-normal text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-              节奏：{FUNCTION_LABELS[content.chapter_function] ?? content.chapter_function}
+              节奏：{fnLabels[content.chapter_function] ?? content.chapter_function}
             </span>
           ) : null}
         </h3>

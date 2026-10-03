@@ -3,12 +3,11 @@
  * 大纲页纯函数、类型与常量（由 outline-panel.tsx 按逻辑边界拆分）：
  * 角色在指定章节的生效判定（roleRankOf/deriveStage/isCharacterActive/inactiveReason，与后端逻辑一致）、
  * 按蓝图分卷归组（groupByVolume）、生成表单类型（GenForm/EMPTY_FORM）、章节号自动推导（nextAutoChapterNo）、
- * 详情正文结构（OutlineContent）与章节功能标签（FUNCTION_LABELS）。不依赖组件状态，可独立复用/测试。
+ * 详情正文结构（OutlineContent）。不依赖组件状态，可独立复用/测试。
  */
 import type { Setting, Outline } from "@/lib/api";
 import {
   DEFAULT_VOLUME,
-  FUNCTIONS,
   STAGE_LABEL,
   formatVolumeLabel,
   type VolumeInfo,
@@ -28,8 +27,6 @@ export const EMPTY_FORM: GenForm = {
   chapter_function: "", // 留空 = 由大纲师按剧情节奏自动判定
   pov: "",
 };
-
-export const FUNCTION_LABELS: Record<string, string> = Object.fromEntries(FUNCTIONS);
 
 /** 读取设定的戏份等级 role_rank（视角角色按戏份分组下拉用）。 */
 export function roleRankOf(s: Setting): string {

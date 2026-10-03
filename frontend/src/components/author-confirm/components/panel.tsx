@@ -16,17 +16,7 @@ import {
   type AuthorConfirm,
   type AuthorConfirmField,
 } from "@/lib/api";
-
-/** 节奏功能英文 → 中文（规划详情展示用）。 */
-const FUNCTION_LABELS: Record<string, string> = {
-  progression: "推进",
-  buildup: "蓄势",
-  turning: "转折",
-  climax: "高潮",
-  revelation: "揭示",
-  resolution: "收束",
-  interlude: "间奏",
-};
+import { loadFunctionLabels } from "@/constants";
 
 /** 内嵌进生成内容模块时的卡片外壳：色系与内容统一（灰阶），仅用更深的底色/边框
  * 与模块背景区分，配合上方的琥珀色标题突出"需要手动选择"。 */
@@ -75,6 +65,11 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
   const [busy, setBusy] = useState(false);
   const [gone, setGone] = useState(false); // 已被其他入口处理（404/409）：静默收起，不弹错误
   const customRef = useRef<HTMLInputElement | null>(null);
+  /** 章节功能 label 映射（枚举字典，后端单一源；拉取前显示原始 value）。 */
+  const [fnLabels, setFnLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    void loadFunctionLabels().then(setFnLabels);
+  }, []);
 
   // 每条确认打开时重置表单（放在条件返回之前，保证 hooks 调用顺序稳定）
   useEffect(() => {
@@ -213,7 +208,7 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
                         {opt.chapter_function ? (
                           <span className="mr-3">
                             <span className="font-medium text-zinc-500">节奏：</span>
-                            {FUNCTION_LABELS[opt.chapter_function] ?? opt.chapter_function}
+                            {fnLabels[opt.chapter_function] ?? opt.chapter_function}
                           </span>
                         ) : null}
                         {opt.pov ? (

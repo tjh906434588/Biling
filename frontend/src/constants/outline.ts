@@ -1,22 +1,38 @@
 /**
  * @file constants/outline.ts
- * 大纲/章节相关共享常量：章节功能下拉项 FUNCTIONS、视角角色等级 ROLE_RANKS、阶段标签
- * STAGE_LABEL/STAGE_OPTIONS、节拍类型标签 TYPE_LABELS、兜底卷 DEFAULT_VOLUME 及卷信息类型 VolumeInfo。
- * 原 FUNCTIONS/ROLE_RANKS/STAGE_LABEL/DEFAULT_VOLUME 分别在大纲页与写作页/设定页重复定义，此处合为一份。
+ * 大纲/章节相关共享常量：视角角色等级 ROLE_RANKS、阶段标签 STAGE_LABEL/STAGE_OPTIONS、
+ * 节拍类型标签 TYPE_LABELS、兜底卷 DEFAULT_VOLUME 及卷信息类型 VolumeInfo。
+ * 章节功能下拉项（推进/铺垫/…）已迁移为枚举字典（后端 meta.py 的 chapter_functions 单一源，
+ * 见 loadChapterFunctions），不再在此维护中文 label，避免与确认面板等处漂移。
+ * 原 ROLE_RANKS/STAGE_LABEL/DEFAULT_VOLUME 分别在大纲页与写作页/设定页重复定义，此处合为一份。
  */
 import type { Blueprint } from "@/types/api";
+import { loadMetaDict } from "@/lib/meta-dict";
 
-/** 章节功能枚举（value / label）：生成表单下拉选项，留空 = 由大纲师按剧情节奏自动判定。
- *  写作页与大纲页共用同一份，保证两处下拉完全一致（默认空 = 自动判定）。 */
-export const FUNCTIONS = [
-  ["progression", "推进"],
-  ["buildup", "铺垫"],
-  ["turning", "转折"],
-  ["climax", "高潮"],
-  ["revelation", "揭秘"],
-  ["resolution", "收束"],
-  ["interlude", "间奏"],
-] as const;
+/** 章节功能下拉项（字典下发，value + label；后端 meta.py 单一源，统一缓存命中不再请求）。 */
+export interface ChapterFunctionOption {
+  value: string;
+  label: string;
+}
+
+/** 拉取章节功能下拉项（后端单一源）；失败回退空数组（下拉只剩「自动判定」选项）。 */
+export async function loadChapterFunctions(): Promise<ChapterFunctionOption[]> {
+  try {
+    return await loadMetaDict<ChapterFunctionOption[]>("chapter_functions");
+  } catch {
+    return [];
+  }
+}
+
+/** 章节功能 label 映射（由字典派生，供详情/确认展示用）；失败回退空映射（显示原始 value）。 */
+export async function loadFunctionLabels(): Promise<Record<string, string>> {
+  try {
+    const list = await loadMetaDict<ChapterFunctionOption[]>("chapter_functions");
+    return Object.fromEntries(list.map((f) => [f.value, f.label]));
+  } catch {
+    return {};
+  }
+}
 
 /** 视角角色按戏份分组（与设定库 role_rank 一致），方便区分主角 / 配角。 */
 export const ROLE_RANKS = [

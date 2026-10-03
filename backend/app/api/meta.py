@@ -53,10 +53,27 @@ def _build_genre_aliases() -> dict[str, str]:
     return dict(GENRE_ALIASES)
 
 
+def _build_chapter_functions() -> list[dict[str, str]]:
+    """章节节奏功能下拉项（value + 中文 label）。
+    value 集合与 schemas/agents.py 的 CHAPTER_FUNCTIONS 一致（LLM 输出约束）；
+    中文 label 全项目统一经此下发（大纲页/写作页下拉、规划确认展示共用一份，不再各自维护）。
+    """
+    return [
+        {"value": "progression", "label": "推进"},
+        {"value": "buildup", "label": "铺垫"},
+        {"value": "turning", "label": "转折"},
+        {"value": "climax", "label": "高潮"},
+        {"value": "revelation", "label": "揭秘"},
+        {"value": "resolution", "label": "收束"},
+        {"value": "interlude", "label": "间奏"},
+    ]
+
+
 DICT_BUILDERS: dict[str, object] = {
     "agents": _build_agents,
     "task_types": _build_task_types,
     "genre_aliases": _build_genre_aliases,
+    "chapter_functions": _build_chapter_functions,
 }
 
 
