@@ -7,9 +7,9 @@
  * 核心机制：紧凑的「分段按钮 / 标签」内联选择，点击即选、再点取消；默认不选，
  * 导入蓝图时由 AI 按素材推断、弹窗引导作者确认。
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Novel } from "@/lib/api";
-import { BACKGROUND_TYPES, GENRE_ALIASES, GENRE_PRESETS } from "@/constants";
+import { BACKGROUND_TYPES, GENRE_PRESETS, loadGenreAliases } from "@/constants";
 
 /* 世界背景类型：分段按钮单选；点击已选项可取消（回到未选择），默认不选 */
 /**
@@ -70,6 +70,11 @@ export function GenrePicker({
 }) {
   /** 自定义题材输入框的临时文本 */
   const [custom, setCustom] = useState("");
+  /** 题材同义标签（后端 platform_rules 单一源经接口下发；拉取前为空映射，不影响预置标签选择） */
+  const [genreAliases, setGenreAliases] = useState<Record<string, string>>({});
+  useEffect(() => {
+    void loadGenreAliases().then(setGenreAliases);
+  }, []);
   /** 切换某个题材的选中态（选中 ⇄ 取消）。 */
   const toggle = (g: string) => {
     onChange(value.includes(g) ? value.filter((x) => x !== g) : [...value, g]);
@@ -81,8 +86,8 @@ export function GenrePicker({
     onChange([...value, g]);
     setCustom("");
   };
-  /** 输入命中已知同义标签（GENRE_ALIASES，与后端题材族匹配同步）且标准标签未选中 → 提示改用标准标签 */
-  const aliasTarget = custom.trim() ? GENRE_ALIASES[custom.trim()] : undefined;
+  /** 输入命中已知同义标签（与后端题材族匹配同步）且标准标签未选中 → 提示改用标准标签 */
+  const aliasTarget = custom.trim() ? genreAliases[custom.trim()] : undefined;
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-1.5">

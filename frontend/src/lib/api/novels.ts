@@ -6,6 +6,13 @@ import { BASE } from "@/constants/api";
 import type { ChapterInfoControl, InfoControl, Novel } from "@/types/api";
 import { httpError } from "./errors";
 
+/** 题材同义标签 → 标准标签（后端 platform_rules 单一源，设定页自定义题材同义提示用）。 */
+export async function getGenreAliases(): Promise<Record<string, string>> {
+  const res = await fetch(`${BASE}/novels/genre-aliases`);
+  if (!res.ok) throw new Error("加载题材同义标签失败");
+  return res.json();
+}
+
 export async function listNovels(q?: string): Promise<Novel[]> {
   const url = q ? `${BASE}/novels?q=${encodeURIComponent(q)}` : `${BASE}/novels`;
   const res = await fetch(url);

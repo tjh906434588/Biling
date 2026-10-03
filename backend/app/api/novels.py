@@ -44,6 +44,18 @@ def create_novel(payload: NovelCreate, db: Session = Depends(get_db)):
     return novel
 
 
+@router.get("/genre-aliases")
+def list_genre_aliases() -> dict[str, str]:
+    """题材同义标签 → 标准标签（单一源：app/agents/platform_rules.py 的 GENRE_ALIASES）。
+
+    前端自定义题材输入的同义提示用（如输入「修仙」提示改用「仙侠」），经此接口下发，
+    避免题材别名在后端平台规则与前端常量各维护一份导致漂移。
+    """
+    from app.agents.platform_rules import GENRE_ALIASES
+
+    return dict(GENRE_ALIASES)
+
+
 @router.get("", response_model=list[NovelRead])
 def list_novels(db: Session = Depends(get_db)):
     """小说项目列表（按最近更新倒序）。"""
