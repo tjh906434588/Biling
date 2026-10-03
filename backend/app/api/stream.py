@@ -1319,6 +1319,10 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
         # 前置子代理（时代研究/蓝图质检/方向提案/章节规划）的思考过程实时转发：
         # 让用户在等确认、等主生成时看到模型正在思考，而不是长时间空白占位。
         def _emit_stream(sse_text: str) -> None:
+            # 关键：前置阶段不在 run_agent_stream 主循环里，thinking_delta 若不累积进
+            # PROGRESS，刷新/断线后恢复轮询读不到已流出的思考内容 → 生成弹窗「思考过程」
+            # 模块消失、只剩占位文字。这里统一转发 + 累积，保证刷新后思考内容可恢复。
+            _update_progress(task.id, sse_text)
             try:
                 queue.put_nowait(sse_text)
             except asyncio.QueueFull:

@@ -152,8 +152,9 @@ export default function AgentStreamModal({
               </div>
             ) : null}
 
-            {/* 深度思考折叠条：生成中自动展开、完成自动收起，可点击展开/收起（豆包/DeepSeek 折叠样式） */}
-            {thinkingText ? (
+            {/* 深度思考折叠条：生成中常显（尚无思考内容时显示「思考中」占位，避免刷新/断线后
+                思考模块消失、只剩占位文字）、完成自动收起，可点击展开/收起（豆包/DeepSeek 折叠样式） */}
+            {thinkingText || running ? (
               <>
                 <button
                   type="button"
@@ -165,6 +166,7 @@ export default function AgentStreamModal({
                     <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-400" />
                   </span>
                   AI 思考过程
+                  {running && !thinkingText && <span className="text-zinc-400">思考中…</span>}
                   <span className="ml-auto font-mono text-[11px] text-zinc-400">
                     {thinkingOpen ? "收起" : "展开"}
                   </span>
@@ -174,7 +176,10 @@ export default function AgentStreamModal({
                     ref={thinkingRef}
                     className="whitespace-pre-wrap border-b border-zinc-200 bg-sunken/60 px-3.5 py-2.5 font-mono text-xs leading-5 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400"
                   >
-                    {typedThinking}
+                    {typedThinking ||
+                      (running ? (
+                        <span className="text-zinc-400">模型正在深度思考…思考内容生成后在此滚动显示</span>
+                      ) : null)}
                   </pre>
                 )}
               </>
