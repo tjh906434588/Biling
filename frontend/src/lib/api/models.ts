@@ -10,10 +10,18 @@ import type {
   DefaultModel,
   ModelRoute,
   ProviderKeyStatus,
+  TaskTypeMeta,
 } from "@/types/api";
 import { httpError } from "./errors";
 
 // ---------- 模型路由管理 ----------
+
+/** 任务类型清单（key + label + hint，后端单一源）：前端任务类型文案不各自维护。 */
+export async function getTaskTypes(): Promise<TaskTypeMeta[]> {
+  const res = await fetch(`${BASE}/models/task-types`);
+  if (!res.ok) throw new Error("加载任务类型失败");
+  return res.json();
+}
 
 export async function listRoutes(): Promise<ModelRoute[]> {
   const res = await fetch(`${BASE}/models/routes`);

@@ -352,6 +352,14 @@ export interface ModelRoute {
   is_default: boolean;
 }
 
+/** 任务类型元数据（后端 /api/models/task-types 下发，单一源；含该类型下的角色中文名）。 */
+export interface TaskTypeMeta {
+  key: TaskType;
+  label: string;
+  hint: string;
+  roles: string[];
+}
+
 export interface ProviderKeyStatus {
   configured: boolean;
   source: "db" | "env" | null;

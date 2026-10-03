@@ -1,8 +1,9 @@
 /**
  * @file models-panel.tsx
  * 模型管理面板：展示当前默认模型与服务商接入状态，提供添加/切换模型（弹窗）入口；
- * 高级设置可为「设定/创作/评价/提取」四类任务分别指定模型。
+ * 高级设置可为各任务类型（设定/质检/规划/创作/提取/评价/编年）分别指定模型。
  * 核心机制：任务路由（ModelRoute）按任务类型映射服务商+模型+温度，留空即回退默认模型；
+ * 任务类型的标签/提示文案由后端 /api/models/task-types 下发（单一源，不本地维护）；
  * 保存后同步刷新路由列表与全局 AI 就绪状态（顶部红条即时消失）。
  */
 "use client";
@@ -17,13 +18,14 @@ import {
   type CatalogProvider,
   type DefaultModel,
   type ModelRoute,
+  type TaskTypeMeta,
 } from "@/lib/api";
 import Modal from "@/components/modal";
 import ModelPickerModal from "./components/model-picker-modal";
 import Loading from "@/components/loading";
 import { useAiStatus } from "@/lib/ai-status";
 import { message } from "@/components/message";
-import { TASK_TYPES, type TaskType } from "@/constants/task-types";
+import { TASK_TYPES, loadTaskTypes, type TaskType } from "@/constants/task-types";
 
 /** 各任务类型各自的配置表单（provider/model/temperature；留空 = 用默认模型） */
 type TaskForm = Record<TaskType, { provider: string; model: string; temperature: string }>;
@@ -43,10 +45,14 @@ export default function ModelsPanel() {
   const [loading, setLoading] = useState(true);
   // 模型目录 / 默认模型加载中：遮罩过渡，加载完成后解除
   const [loadingModels, setLoadingModels] = useState(true);
-  // ---- 高级设置弹窗：五类任务各自配置 ----
+  // ---- 高级设置弹窗：各任务类型各自配置 ----
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedSaving, setAdvancedSaving] = useState(false);
   const [formByTask, setFormByTask] = useState<TaskForm>(EMPTY_TASK_FORMS);
+  // 任务类型文案（label/hint/roles，后端单一源）；接口未返回前先用 key 兜底
+  const [taskMetas, setTaskMetas] = useState<TaskTypeMeta[]>(() =>
+    TASK_TYPES.map((key) => ({ key, label: key, hint: "", roles: [] })),
+  );
 
   // ---- 模型接入：弹窗驱动（参考 TRAE「添加模型」：自定义模型置顶 + 预设服务商） ----
   const [catalog, setCatalog] = useState<CatalogProvider[]>([]);
@@ -86,6 +92,7 @@ export default function ModelsPanel() {
   useEffect(() => {
     load();
     loadModels();
+    loadTaskTypes().then(setTaskMetas); // 任务类型文案（后端单一源）；失败内部回落 key 兜底
   }, [load, loadModels]);
 
   /** 打开添加模型弹窗；传入 provider 时定位到该服务商详情；custom=true 直接进自定义配置表单。 */
@@ -121,15 +128,15 @@ export default function ModelsPanel() {
     return (p.enabledModels ?? []).map((e) => ({ model: e.model, label: e.label || e.model }));
   };
 
-  /** 打开高级设置弹窗：用现有路由预填四类表单；服务商/模型已失效的留空（= 恢复默认）。 */
+  /** 打开高级设置弹窗：用现有路由预填各类表单；服务商/模型已失效的留空（= 恢复默认）。 */
   const openAdvanced = () => {
     const init: TaskForm = { ...EMPTY_TASK_FORMS };
-    for (const t of TASK_TYPES) {
-      const r = routes.find((x) => x.task_type === t.key);
+    for (const key of TASK_TYPES) {
+      const r = routes.find((x) => x.task_type === key);
       if (!r) continue;
       const provOk = accessProviders.some((p) => p.provider === r.provider);
       const modelOk = provOk && modelsFor(r.provider).some((m) => m.model === r.model);
-      init[t.key] = {
+      init[key] = {
         provider: provOk ? r.provider : "",
         model: modelOk ? r.model : "",
         temperature: r.temperature != null ? String(r.temperature) : "",
@@ -149,14 +156,14 @@ export default function ModelsPanel() {
   const saveAdvanced = async () => {
     setAdvancedSaving(true);
     try {
-      for (const t of TASK_TYPES) {
-        const f = formByTask[t.key];
+      for (const key of TASK_TYPES) {
+        const f = formByTask[key];
         const provider = f.provider.trim();
         const model = f.model.trim();
         const temperature = f.temperature === "" ? null : num(f.temperature);
-        const existing = routes.find((x) => x.task_type === t.key);
+        const existing = routes.find((x) => x.task_type === key);
         if (provider && model) {
-          await upsertRoute({ task_type: t.key, provider, model, temperature });
+          await upsertRoute({ task_type: key, provider, model, temperature });
         } else if (existing) {
           await deleteRoute(existing.id);
         }
@@ -229,7 +236,7 @@ export default function ModelsPanel() {
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">高级设置：为不同写作环节选不同的模型</h2>
             <p className="mt-0.5 text-xs text-zinc-400">
-              可不用。不设置时所有环节都用前面配好的默认模型。点「设置」可以给设定、创作、提取、编年、评价五种写作环节分别选模型。
+              可不用。不设置时所有环节都用前面配好的默认模型。点「设置」可以给{taskMetas.map((t) => t.label).join("、")}各写作环节分别选模型。
             </p>
           </div>
           <button
@@ -246,9 +253,9 @@ export default function ModelsPanel() {
             还没做设置，所有写作环节都用前面配好的默认模型。
           </div>
         ) : (
-          /* 四类任务逐行展示：任务名 + 用途说明在左，右侧显示该类型当前用的模型（已指定/默认模型） */
+          /* 各任务类型逐行展示：任务名 + 用途说明在左，右侧显示该类型当前用的模型（已指定/默认模型） */
           <div className="flex flex-col divide-y divide-zinc-100 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-            {TASK_TYPES.map((t) => {
+            {taskMetas.map((t) => {
               const r = routes.find((x) => x.task_type === t.key);
               const providerLabel = r ? catalog.find((p) => p.provider === r.provider)?.label ?? r.provider : null;
               return (
@@ -256,6 +263,11 @@ export default function ModelsPanel() {
                   <div className="min-w-0">
                     <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{t.label}</span>
                     <span className="ml-2 text-[11px] text-zinc-400">{t.hint}</span>
+                    {t.roles.length > 0 && (
+                      <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                        {t.roles.join(" · ")}
+                      </span>
+                    )}
                   </div>
                   <span
                     className={`shrink-0 rounded px-2 py-0.5 font-mono text-[11px] ${
@@ -313,7 +325,7 @@ export default function ModelsPanel() {
         }
       >
         <div className="flex flex-col gap-3">
-          {TASK_TYPES.map((t) => {
+          {taskMetas.map((t) => {
             const f = formByTask[t.key];
             const ms = modelsFor(f.provider);
             return (
@@ -321,7 +333,12 @@ export default function ModelsPanel() {
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{t.label}</span>
-                    <p className="text-[11px] text-zinc-400">{t.hint}</p>
+                    <p className="text-[11px] text-zinc-400">
+                      {t.hint}
+                      {t.roles.length > 0 && (
+                        <span className="ml-1.5 text-zinc-400/80">（{t.roles.join("、")}）</span>
+                      )}
+                    </p>
                   </div>
                   <span className="shrink-0 rounded bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                     {f.provider && f.model
