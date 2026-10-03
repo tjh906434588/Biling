@@ -63,15 +63,15 @@ export default function AgentStreamModal({
   novelId,
 }: AgentStreamModalProps) {
   const [thinkingOpen, setThinkingOpen] = useState(true); // 深度思考折叠条是否展开：生成中自动展开、完成后自动收起
-  // 正文 / 深度思考滚动区引用：自动吸底时定位到「正在增长」的一侧的末尾
-  const streamRef = useRef<HTMLPreElement | null>(null);
-  const thinkingRef = useRef<HTMLPreElement | null>(null);
-  // 记录上一帧已打字长度，判断是「深度思考」还是「正文」在增长，吸底到对应的末尾
-  const lastDraftRef = useRef(0);
-  const lastThinkingRef = useRef(0);
+  // 内容区共用一个滚动容器：AI 自动吸底时跟随最新内容，用户手动上滚后接管滚动位置。
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const autoFollowRef = useRef(true);
   // 打字机逐字展示（区别于已收到的 draftText/thinkingText 总量）
   const typedDraft = useTypewriter(draftText, open, running);
   const typedThinking = useTypewriter(thinkingText, open, running);
+  // 思考开始后隐藏正文；正文首字到达后恢复正文并折叠思考。
+  const thinkingPhase = running && Boolean(thinkingText) && !draftText;
+  const showDraft = !thinkingPhase;
 
   // 内嵌确认宿主：弹窗打开且正在生成时注册 +1，关闭/停止/卸载时 -1。
   // 计数 > 0 时全局作者确认弹窗让位，确认随本弹窗内联展示。
@@ -86,29 +86,36 @@ export default function AgentStreamModal({
   const confirms = useSyncExternalStore(subscribeAuthorConfirms, getAuthorConfirms, () => EMPTY_CONFIRM_SNAPSHOT);
   const pendingConfirm = novelId ? confirms.find((c) => c.novel_id === novelId) : undefined;
 
-  // 统一滚动模块内自动吸底：深度思考 / 正文谁在增长，就让它的末尾保持在可见区底部
-  // （内容不断增长时不做任何"停留在原处"，永远显示最新）；
-  // 作者确认待办出现时保持原位（作者需在确认面板操作），不强行吸底
+  // 每次重新打开过程弹窗时，从最新内容开始跟随；打开后用户仍可随时接管滚动位置。
   useEffect(() => {
-    if (pendingConfirm) return;
-    const draftGrew = typedDraft.length > lastDraftRef.current;
-    const thinkingGrew = typedThinking.length > lastThinkingRef.current;
-    lastDraftRef.current = typedDraft.length;
-    lastThinkingRef.current = typedThinking.length;
-    if (thinkingGrew && thinkingOpen && thinkingText) {
-      thinkingRef.current?.scrollIntoView({ block: "end" });
-    } else if (draftGrew) {
-      streamRef.current?.scrollIntoView({ block: "end" });
-    }
-  }, [typedDraft, typedThinking, thinkingOpen, running, pendingConfirm, thinkingText]);
+    if (open) autoFollowRef.current = true;
+  }, [open]);
 
-  // 思考过程折叠块：生成中自动展开，生成完成后自动收起；
-  // 作者确认暂停时同样收起——生成流程已暂停、思考不再增长，把空间让给确认面板与正文
+  // 监听内容区滚动：用户离开底部后接管位置，回到底部附近再恢复自动吸底。
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      autoFollowRef.current = distanceToBottom <= 32;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [open]);
+
+  // 只在自动跟随时吸底；用户手动上滚后保留阅读位置，不再被新文字抢回底部。
+  useEffect(() => {
+    if (!open || pendingConfirm || !autoFollowRef.current) return;
+    const el = scrollContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [open, pendingConfirm, typedDraft, typedThinking, thinkingOpen, thinkingPhase]);
+
+  // 思考阶段默认展开；正文开始输出后自动折叠思考，让正文重新成为主视图。
   useEffect(() => {
     if (pendingConfirm) setThinkingOpen(false);
-    else if (running) setThinkingOpen(true);
-    else setThinkingOpen(false);
-  }, [running, pendingConfirm]);
+    else if (thinkingPhase) setThinkingOpen(true);
+    else if (draftText || !running) setThinkingOpen(false);
+  }, [draftText, thinkingPhase, running, pendingConfirm]);
 
   return (
     <Modal
@@ -141,7 +148,7 @@ export default function AgentStreamModal({
               作者确认（内嵌在生成内容模块顶部）：生成流程在此暂停，需手动选择后自动继续。
               色系与生成内容统一（灰阶卡片，区别于外层模块背景），
               仅用琥珀色标题 + 脉动圆点突出"这一块需要手动选择"。 */}
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto">
             {pendingConfirm ? (
               <div className="border-b border-zinc-200 px-3.5 py-3 dark:border-zinc-800">
                 <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
@@ -154,7 +161,7 @@ export default function AgentStreamModal({
 
             {/* 深度思考折叠条：生成中常显（尚无思考内容时显示「思考中」占位，避免刷新/断线后
                 思考模块消失、只剩占位文字）、完成自动收起，可点击展开/收起（豆包/DeepSeek 折叠样式） */}
-            {thinkingText || running ? (
+            {thinkingText ? (
               <>
                 <button
                   type="button"
@@ -172,10 +179,7 @@ export default function AgentStreamModal({
                   </span>
                 </button>
                 {thinkingOpen && (
-                  <pre
-                    ref={thinkingRef}
-                    className="whitespace-pre-wrap border-b border-zinc-200 bg-sunken/60 px-3.5 py-2.5 font-mono text-xs leading-5 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400"
-                  >
+                  <pre className="whitespace-pre-wrap border-b border-zinc-200 bg-sunken/60 px-3.5 py-2.5 font-mono text-xs leading-5 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
                     {typedThinking ||
                       (running ? (
                         <span className="text-zinc-400">模型正在深度思考…思考内容生成后在此滚动显示</span>
@@ -185,21 +189,20 @@ export default function AgentStreamModal({
               </>
             ) : null}
 
-            {/* 正文：打字机逐字播放 + 流式滚动输出 */}
-            <pre
-              ref={streamRef}
-              className="whitespace-pre-wrap bg-sunken/50 px-4 py-3 font-mono text-xs leading-6 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-            >
-              {typedDraft ||
-                (running ? (
-                  <span className="text-zinc-400 dark:text-zinc-500">{emptyRunningText}</span>
-                ) : (
-                  <span className="text-zinc-400 dark:text-zinc-500">{emptyDoneText}</span>
-                ))}
-              {running && (
-                <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-blue-500 align-middle" />
-              )}
-            </pre>
+            {/* 正文：思考阶段暂时隐藏；正式输出开始后显示打字机流式内容 */}
+            {showDraft && (
+              <pre className="whitespace-pre-wrap bg-sunken/50 px-4 py-3 font-mono text-xs leading-6 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                {typedDraft ||
+                  (running ? (
+                    <span className="text-zinc-400 dark:text-zinc-500">{emptyRunningText}</span>
+                  ) : (
+                    <span className="text-zinc-400 dark:text-zinc-500">{emptyDoneText}</span>
+                  ))}
+                {running && (
+                  <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-blue-500 align-middle" />
+                )}
+              </pre>
+            )}
           </div>
         </div>
       </div>
