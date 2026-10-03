@@ -15,6 +15,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - **常量收敛 constants/**：UI 标签、key、枚举值集中在 `frontend/src/constants/`（按领域分文件：task-types / agents / outline / settings / meta / writing / api / storage），业务代码从 `@/constants` 导入。
 - **常量粒度边界（自动执行，无需用户提醒）**：仅被单个文件用到的常量**就地保留**（靠近使用处更可读），**不要**把所有常量物理塞进一个文件；拆分大文件时顺带把「跨文件重复」的常量提升到 `constants/`——提升的是消除重复，不是搬位置。
 - **跨端契约属例外**：后端 `backend/` 与前端 `frontend/` 各自维护一份接口契约（如任务类型、API 路径），这是合理的分端例外；变更时必须**两端同步**并在此类单源文件头部注释里写明"另一端在哪"。
+- **枚举字典统一收敛（自动执行，无需用户提醒）**：会变动的枚举/字典数据（角色名、任务类型、题材别名等）统一在后端 `app/api/meta.py` 的 `DICT_BUILDERS` 注册（一个 key 一个构建函数），经 `GET /api/meta?keys=...` 按 key 下发——**不一个枚举一个接口**；前端统一经 `lib/meta-dict.ts` 的 `loadMetaDict(key)` 拉取（模块缓存 + TTL 过期自动重拉，命中未过期不请求），各业务 loader 从它取值并做失败兜底。固定死文案前端写死、动态枚举一律走字典接口（枚举变化不再导致前端文案过时）。**新增枚举：后端 `meta.py` 的 `DICT_BUILDERS` 加一项即可；前端需类型约束时补静态 key 清单（如 `task-types.ts` 的 `TASK_TYPES`），无需另起接口**。
 - **doc 与 code 镜像属例外**：规则文档（如 `rules/fanqie_rules.md`）与运行时代码（`platform_rules.py`）是同一内容的两种形态；文档为人类可读源、代码为运行时事实源，通过 skill 流程保证同步，不另立第三份。
 - 发现重复 → 合并回单一源，并在源文件注释里说明"谁从这里派生"。
 
@@ -80,7 +81,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - 新文件顶部写 `@file 路径 · 作用 · 关键机制` 中文头注释；关键逻辑行内注释说明"为什么"。
 - 领域类型统一放 `types/api.ts`，经 `@/lib/api` re-export；页面禁止直接 `fetch`，一律走 `lib/api/` 的函数。
 - **API 新增（自动执行）**：新接口函数按后端域放入 `lib/api/<域>.ts`（域文件不存在则新建并在 `index.ts` barrel 追加 `export *`），业务代码统一 `import from "@/lib/api"`，不新增别的入口。
-- **任务类型集合**（setting/creation/review/extract/chronicle）：前端在 `frontend/src/constants/task-types.ts` 单一维护（`types/api.ts` 的 `TaskType` 与 `models-panel.tsx` 的 UI 都由它派生）；后端在 `backend/app/api/models.py` 单独一份（跨端契约例外）。新增/修改任务类型：前端只改 `constants/task-types.ts` 即可，同时同步后端 `api/models.py`。
+- **任务类型（枚举字典统一收敛）**：key 静态清单在 `frontend/src/constants/task-types.ts`（`types/api.ts` 的 `TaskType` 由它推导，编译期约束）；label/hint/角色由后端 `app/api/meta.py` 的 `TASK_TYPES` 维护、经 `GET /api/meta` 的 `task_types` 字典下发（角色由角色注册表动态聚合），前端经 `loadTaskTypes()`（统一缓存）取值。新增/修改任务类型：后端 `meta.py` 改 `TASK_TYPES` 即可，前端 key 清单补 key（漏补编译报错提醒），文案自动下发，不另起接口。
 - 组件默认 `"use client"`；Tailwind 4，同时覆盖亮/暗色（`dark:`）；样式类名简洁、不引入多余库。
 - 错误提示走全局 `message` / `notification`；**不吞异常**——catch 里至少 `log.errorFrom`（见 `@/lib/logging`）留痕，前端错误经 `POST /api/logs` 落盘供「导出日志」排查。
 - 交互类改动（弹窗/确认/流式）遵循既有组件模式（modal.tsx / confirm-dialog.tsx / auto-textarea.tsx）。
