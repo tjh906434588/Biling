@@ -45,13 +45,13 @@ export async function loadSourceLabels(): Promise<Record<string, string>> {
 /** 联动重写中断通知的总展示时长（ms）：只累计「页面可见时间」，离开页面暂停、回来继续。 */
 export const REWRITE_FAIL_TOTAL_MS = 15_000;
 
-/** 评价栏宽度（px）：三档预设切换，xl 起生效。偏好存 localStorage，跨刷新保持。 */
-export const REVIEW_W_DEFAULT = 620;
-export const REVIEW_W_MIN = 340;
-export const REVIEW_W_MAX = 1000;
-/** 评价栏三档预设（窄 / 中 / 宽），点一下即切换。 */
-export const REVIEW_W_PRESETS: ReadonlyArray<readonly [string, number]> = [
-  ["窄", 420],
-  ["中", 620],
-  ["宽", 860],
+/** 评价栏占剩余横向空间的比例（百分比）：三档预设切换，xl 起生效。偏好存 localStorage。 */
+export const REVIEW_RATIO_DEFAULT = 30;
+export const REVIEW_RATIO_MIN = 20;
+export const REVIEW_RATIO_MAX = 70;
+/** 评价栏三档预设（窄 / 中 / 宽）：正文与评价栏按剩余空间比例分配。 */
+export const REVIEW_RATIO_PRESETS: ReadonlyArray<readonly [string, number]> = [
+  ["窄", 30],
+  ["中", 50],
+  ["宽", 70],
 ];

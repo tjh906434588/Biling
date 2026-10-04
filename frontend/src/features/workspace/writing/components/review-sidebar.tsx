@@ -1,22 +1,19 @@
 /**
  * @file writing/review-sidebar.tsx
- * 写作页右侧「评价与优化」常驻侧栏：可折叠窄条 + 展开面板（宽度三档预设 + 重新评价提示 +
- * 评价卡片 ReviewCard + 空态（后台任务加载 / 无评价引导））。
+ * 写作页右侧「评价与优化」常驻侧栏：按剩余空间比例分配（窄/中/宽） + 重新评价提示 +
+ * 评价卡片 ReviewCard + 空态（后台任务加载 / 无评价引导）。
  * 纯展示组件：评价数据、运行状态与回调全部由 writing-panel 传入，组件内无状态。
  */
 "use client";
 
-import type { CSSProperties } from "react";
-import { REVIEW_W_PRESETS } from "@/constants";
+import { REVIEW_RATIO_PRESETS } from "@/constants";
 import type { ChapterDetail, ChapterVersion, QualityReview } from "@/lib/api";
 import { ReviewCard } from "./review-card";
 
 /** 评价与优化侧栏 props：数据与回调全部由 writing-panel 传入。 */
 interface ReviewSidebarProps {
-  collapsed: boolean;
-  onCollapsedChange: (v: boolean) => void;
-  reviewWidth: number;
-  onReviewWidth: (w: number) => void;
+  reviewRatio: number;
+  onReviewRatio: (ratio: number) => void;
   detail: ChapterDetail | null;
   /** 正文在最近一次评价后被修改过：显示「重新评价」提示条。 */
   reviewStale: boolean;
@@ -36,12 +33,10 @@ interface ReviewSidebarProps {
   onShowReviseRun: () => void;
 }
 
-/** 评价与优化常驻侧栏（折叠窄条 / 展开面板）。 */
+/** 评价与优化常驻侧栏（按剩余空间比例分配）。 */
 export function ReviewSidebar({
-  collapsed,
-  onCollapsedChange,
-  reviewWidth,
-  onReviewWidth,
+  reviewRatio,
+  onReviewRatio,
   detail,
   reviewStale,
   currentReview,
@@ -57,39 +52,22 @@ export function ReviewSidebar({
   onShowReviseRun,
 }: ReviewSidebarProps) {
   return (
-    <>
-      {collapsed ? (
-        <div className="panel flex max-h-[45vh] min-h-0 flex-row items-center justify-center gap-2 py-2 xl:max-h-none xl:w-12 xl:flex-col xl:shrink-0 xl:justify-start xl:py-3">
-          <button
-            type="button"
-            onClick={() => onCollapsedChange(false)}
-            title="展开评价与优化"
-            aria-label="展开评价与优化"
-            className="btn btn-ghost h-8 w-8 shrink-0 p-0"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 6l6 6-6 6" /></svg>
-          </button>
-          <span className="text-xs tracking-widest text-zinc-500 dark:text-zinc-400 xl:[writing-mode:vertical-rl]">评价与优化</span>
-        </div>
-      ) : (
-        <div
-          className="panel flex max-h-[45vh] min-h-0 flex-col xl:max-h-none xl:w-[var(--review-w)] xl:shrink-0 xl:max-w-[min(1000px,calc(100%_-_380px))]"
-          style={{ "--review-w": `${Math.round(reviewWidth)}px` } as CSSProperties}
-        >
+    <div className="panel flex max-h-[45vh] min-h-0 min-w-0 flex-col xl:max-h-none">
+
         <div className="panel-head shrink-0">
           <h3 className="panel-title">评价与优化</h3>
           <div className="flex items-center gap-2">
-            {/* 宽度三档（仅并排时有效）：窄/中/宽一键切换 */}
-            <div className="hidden items-center gap-0.5 rounded border border-zinc-200 p-0.5 xl:flex dark:border-zinc-700">
-              {REVIEW_W_PRESETS.map(([label, w]) => {
-                const on = Math.round(reviewWidth) === w;
+            {/* 比例三档：窄/中/宽一键切换 */}
+            <div className="hidden items-center gap-0.5 rounded border border-zinc-200 p-0.5 2xl:flex dark:border-zinc-700">
+              {REVIEW_RATIO_PRESETS.map(([label, ratio]) => {
+                const on = Math.round(reviewRatio) === ratio;
                 return (
                   <button
                     key={label}
                     type="button"
-                    onClick={() => onReviewWidth(w)}
+                    onClick={() => onReviewRatio(ratio)}
                     aria-pressed={on}
-                    title={`评价栏宽度设为 ${w}`}
+                    title={`评价栏占剩余空间 ${ratio}%`}
                     className={`rounded px-1.5 py-0.5 text-[11px] leading-none transition-colors ${
                       on
                         ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
@@ -101,15 +79,6 @@ export function ReviewSidebar({
                 );
               })}
             </div>
-            <button
-              type="button"
-              onClick={() => onCollapsedChange(true)}
-              title="收起，正文全宽阅读"
-              aria-label="收起评价与优化"
-              className="btn btn-ghost h-7 w-7 shrink-0 p-0"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M15 6l-6 6 6 6" /></svg>
-            </button>
           </div>
         </div>
         <div className="@container min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
@@ -215,7 +184,5 @@ export function ReviewSidebar({
           )}
         </div>
       </div>
-      )}
-    </>
   );
 }

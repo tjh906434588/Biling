@@ -44,10 +44,10 @@ import Loading from "@/components/loading";
 import { message } from "@/components/message";
 import { useAiStatus } from "@/lib/ai-status";
 import {
-  REVIEW_W_DEFAULT,
-  REVIEW_W_KEY,
-  REVIEW_W_MAX,
-  REVIEW_W_MIN,
+  REVIEW_RATIO_DEFAULT,
+  REVIEW_RATIO_KEY,
+  REVIEW_RATIO_MAX,
+  REVIEW_RATIO_MIN,
   type VolumeInfo,
 } from "@/constants";
 import { copyText } from "@/utils/clipboard";
@@ -243,27 +243,25 @@ export default function WritingPanel({ novelId }: Props) {
   /** 二次确认弹窗（定稿 / 提取记忆层）：用页面内自定义弹窗替代 window.confirm，
    *  规避 IDE 内嵌浏览器对原生 confirm 对话框的处理异常（原生弹窗挂起会导致页面卡死/跳转报错）。 */
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
-  /** 评价与优化侧栏折叠：折叠后正文恢复全宽阅读，再点窄条展开 */
-  const [reviewCollapsed, setReviewCollapsed] = useState(false);
-  /** 评价栏宽度（px）：窄/中/宽三档预设切换，xl 起生效。偏好存 localStorage，跨刷新保持。 */
-  const [reviewWidth, setReviewWidth] = useState(REVIEW_W_DEFAULT);
+  /** 评价栏占正文区域剩余宽度的比例：窄/中/宽三档预设，xl 起生效。 */
+  const [reviewRatio, setReviewRatio] = useState(REVIEW_RATIO_DEFAULT);
 
-  // 读取/保存评价栏宽度偏好（localStorage 不可用时静默退化为默认值）
+  // 读取/保存评价栏占比偏好（localStorage 不可用时静默退化为默认值）
   useEffect(() => {
     try {
-      const v = Number(window.localStorage.getItem(REVIEW_W_KEY));
-      if (Number.isFinite(v) && v >= REVIEW_W_MIN && v <= REVIEW_W_MAX) setReviewWidth(v);
+      const v = Number(window.localStorage.getItem(REVIEW_RATIO_KEY));
+      if (Number.isFinite(v) && v >= REVIEW_RATIO_MIN && v <= REVIEW_RATIO_MAX) setReviewRatio(v);
     } catch {
-      /* localStorage 不可用：用默认宽度 */
+      /* localStorage 不可用：用默认占比 */
     }
   }, []);
   useEffect(() => {
     try {
-      window.localStorage.setItem(REVIEW_W_KEY, String(Math.round(reviewWidth)));
+      window.localStorage.setItem(REVIEW_RATIO_KEY, String(Math.round(reviewRatio)));
     } catch {
       /* 忽略：写不进去不影响本次使用 */
     }
-  }, [reviewWidth]);
+  }, [reviewRatio]);
 
   /** 版本树：标题旁版本号点击展开的内联浮层（替代原弹窗）。 */
   const [versionOpen, setVersionOpen] = useState(false);
@@ -722,7 +720,7 @@ export default function WritingPanel({ novelId }: Props) {
 
   return (
     <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
-      <div className="grid min-h-0 flex-1 items-stretch gap-4 lg:grid-cols-[340px_minmax(0,1fr)] [grid-template-rows:minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 items-stretch gap-4 overflow-hidden lg:grid-cols-[340px_minmax(0,1fr)] [grid-template-rows:minmax(0,1fr)]">
       <ChapterSidebar
         chapters={chapters}
         volumes={volumes}
@@ -758,10 +756,16 @@ export default function WritingPanel({ novelId }: Props) {
         onViewInfo={() => void openInfoView()}
       />
 
-      {/* 右侧：正文（左，占据主区）+ 评价与优化（右，常驻侧栏）并排，各自独立滚动、互不挤压；
-          中窄屏（<xl）回退为上下堆叠，评价栏限高可滚动；xl 起正文与评价左右并排、各自满高独立滚动。正文与评价始终同屏可见，不再用弹窗；评价栏可折叠为窄条让正文全宽阅读。 */}
+      {/* 右侧：正文与评价栏共享章节目录之外的剩余空间；2xl 起按比例并排，较窄时上下堆叠避免正文不可读。 */}
       <section
-        className="flex min-h-0 min-w-0 flex-col gap-4 overflow-hidden xl:flex-row xl:gap-4"
+        className={`flex min-h-0 min-w-0 flex-col gap-4 overflow-hidden 2xl:grid 2xl:gap-4 ${
+          activeNo != null ? "2xl:grid-cols-2" : "2xl:grid-cols-1"
+        }`}
+        style={
+          activeNo != null
+            ? { gridTemplateColumns: `minmax(0, ${100 - reviewRatio}fr) minmax(0, ${reviewRatio}fr)` }
+            : undefined
+        }
       >
         {/* ① 当前章节正文（全部版本 + 已定稿正文），显示在界面、不撑破页面高度 */}
         <ChapterContent
@@ -780,27 +784,26 @@ export default function WritingPanel({ novelId }: Props) {
           showToast={showToast}
         />
 
-        {/* 评价与优化：右侧常驻侧栏（替代原弹窗），评价师结果与「按评价优化」与正文同屏可见；
-            可点标题栏「收起」按钮折叠为窄条，正文即恢复全宽阅读；再点窄条展开。 */}
-        <ReviewSidebar
-          collapsed={reviewCollapsed}
-          onCollapsedChange={setReviewCollapsed}
-          reviewWidth={reviewWidth}
-          onReviewWidth={setReviewWidth}
-          detail={detail}
-          reviewStale={reviewStale}
-          currentReview={currentReview}
-          onReview={() => void handleReview(flowCtx)}
-          reviewing={reviewing}
-          reviewTaskRunning={reviewTaskRunning}
-          selectedVersion={selectedVersion}
-          isRecentlyGenerated={isRecentlyGenerated}
-          reviewBusyForChapter={reviewBusyForChapter}
-          onRevise={(r, a) => void handleRevise(flowCtx, r, a)}
-          revising={revising}
-          onShowReviewRun={() => setShowReviewRun(true)}
-          onShowReviseRun={() => setShowReviseRun(true)}
-        />
+        {/* 评价与优化只在选中章节后显示。 */}
+        {activeNo != null && (
+          <ReviewSidebar
+            reviewRatio={reviewRatio}
+            onReviewRatio={setReviewRatio}
+            detail={detail}
+            reviewStale={reviewStale}
+            currentReview={currentReview}
+            onReview={() => void handleReview(flowCtx)}
+            reviewing={reviewing}
+            reviewTaskRunning={reviewTaskRunning}
+            selectedVersion={selectedVersion}
+            isRecentlyGenerated={isRecentlyGenerated}
+            reviewBusyForChapter={reviewBusyForChapter}
+            onRevise={(r, a) => void handleRevise(flowCtx, r, a)}
+            revising={revising}
+            onShowReviewRun={() => setShowReviewRun(true)}
+            onShowReviseRun={() => setShowReviseRun(true)}
+          />
+        )}
 
         {/* 联动重写中断：已迁移为右上角全局 error Notification（writing-panel 顶部 rewriteFail 同步 effect 管理） */}
       </section>

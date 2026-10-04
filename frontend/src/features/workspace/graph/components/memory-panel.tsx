@@ -11,7 +11,7 @@ import type { MemoryReview } from "@/lib/api";
 /** 角色状态面板：头部（计数/健康度/进度）+ 状态列表 + 问题清单。 */
 export function MemoryPanel({ memory }: { memory: MemoryReview }) {
   return (
-    <section className="panel panel-fit w-[min(24rem,40%)] shrink-0">
+    <section className="panel panel-fit min-h-0 2xl:w-[min(24rem,40%)] 2xl:shrink-0">
       <div className="panel-head shrink-0">
         <h2 className="panel-title">
           角色状态

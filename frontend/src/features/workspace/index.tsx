@@ -277,8 +277,8 @@ export default function Workspace({ novelId }: { novelId: string }) {
 
           <main className="min-h-0 flex-1 overflow-hidden">
             <div
-              className={`mx-auto flex h-full min-h-0 w-full flex-col overflow-y-auto px-4 py-6 sm:px-6 ${
-                tab === "write" || tab === "outline" ? "max-w-[1728px]" : "max-w-[1280px]"
+              className={`flex h-full min-h-0 w-full flex-col overflow-y-auto px-4 py-6 sm:px-6 ${
+                tab === "write" ? "max-w-none" : tab === "outline" ? "mx-auto max-w-[1728px]" : "mx-auto max-w-[1280px]"
               }`}
             >
               {AI_TABS.has(tab) && <AiNotReadyBanner onConfigure={() => setTab("models")} />}

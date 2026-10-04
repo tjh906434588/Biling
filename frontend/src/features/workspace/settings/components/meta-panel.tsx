@@ -39,7 +39,7 @@ export default function SettingsSidebar({
   onEditEra,
 }: Props) {
   return (
-    <div className="flex min-h-0 flex-col gap-4 lg:w-[400px] lg:shrink-0 lg:self-start lg:max-h-full lg:overflow-y-auto lg:pr-1">
+    <div className="flex min-h-0 flex-col gap-4 2xl:w-[400px] 2xl:shrink-0 2xl:self-start 2xl:max-h-full 2xl:overflow-y-auto 2xl:pr-1">
       {/* 世界背景类型与题材：创建时可留空，导入蓝图时 AI 按素材推断、弹窗引导作者确认；这里可直接修改 */}
       <section className="panel flex shrink-0 flex-col gap-2.5">
         <div className="panel-head mb-0">

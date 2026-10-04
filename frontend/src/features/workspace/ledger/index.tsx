@@ -136,7 +136,7 @@ export default function LedgerPanel({ novelId }: Props) {
       )}
 
       {/* open / closed 泳道 */}
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2 [grid-template-rows:minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 gap-4 2xl:grid-cols-2 [grid-template-rows:minmax(0,1fr)]">
         <section className="panel panel-fit">
           <div className="panel-head shrink-0">
             <h4 className="panel-title">

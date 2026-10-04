@@ -375,7 +375,7 @@ export default function SettingsPanel({ novelId }: Props) {
 
   return (
     <Loading loading={loading} className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:gap-5">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 2xl:flex-row 2xl:gap-5">
         {/* 左侧参考栏：世界背景/题材 + 时代行业研究（只读参考信息），窄栏竖排，内容多时独立滚动；主区留给设定列表 */}
         <SettingsSidebar
           bgType={bgType}

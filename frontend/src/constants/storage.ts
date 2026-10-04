@@ -7,5 +7,5 @@
 /** localStorage 键：用户关闭空书架指引后记 "1"，此后不再展示。 */
 export const GUIDE_KEY = "biling.guide.hidden";
 
-/** localStorage 键：写作页评价栏宽度（px）偏好，跨刷新保持。 */
-export const REVIEW_W_KEY = "biling.reviewWidth";
+/** localStorage 键：写作页评价栏占比偏好，跨刷新保持。 */
+export const REVIEW_RATIO_KEY = "biling.reviewRatio";

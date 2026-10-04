@@ -326,8 +326,8 @@ export function ChapterSidebar({
           )}
         </div>
 
-        {/* 本章操作：提取入记忆 / 复制正文，收在一张卡里。必须选中章节才能点（针对某一章）。
-            shrink-0：高度固定，始终把目录面板挤到剩余的视口高度里去滚动。 */}
+        {/* 本章操作只在选中章节后显示。 */}
+        {activeNo != null && (
         <div className="panel shrink-0">
           <div className="panel-head">
             <h3 className="panel-title">本章操作</h3>
@@ -448,6 +448,7 @@ export function ChapterSidebar({
             </div>
           </div>
         </div>
+        )}
       </aside>
     </>
   );
