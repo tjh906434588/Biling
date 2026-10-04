@@ -10,6 +10,7 @@
 
 import type { ReactNode } from "react";
 import type { ChapterVersion } from "@/lib/api";
+import { sourceLabel } from "./source-label";
 
 /** 多级递归版本树（外层负责包裹浮层与透明点击捕获层）。 */
 export function VersionTree({
@@ -59,8 +60,9 @@ export function VersionTree({
                   v.is_active ? "bg-green-500 dark:bg-green-400" : "bg-zinc-300 dark:bg-zinc-600"
                 }`}
               />
-              {/* 版本号 */}
+              {/* 版本号与来源 */}
               <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">第{v.version_no}版</span>
+              <span className="shrink-0 text-zinc-500 dark:text-zinc-400">· {sourceLabel(v.source)}</span>
               {/* 签约未过签标记：评价存在内容红线/抄袭类高危 issue，定稿默认被拒 */}
               {v.signing_blocked && (
                 <span className="shrink-0 rounded-md bg-red-600/90 px-1.5 py-px text-[10px] font-medium text-white">

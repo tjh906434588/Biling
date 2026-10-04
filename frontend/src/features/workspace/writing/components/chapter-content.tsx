@@ -12,6 +12,7 @@ import { copyText } from "@/utils/clipboard";
 import type { ChapterDetail, ChapterVersion } from "@/lib/api";
 import { VersionTree } from "./version-tree";
 import type { ShowToast } from "./panel-utils";
+import { sourceLabel } from "./source-label";
 
 /** 正文区展示 props：数据与回调全部由 writing-panel 传入，不做状态编排。 */
 interface ChapterContentProps {
@@ -66,31 +67,46 @@ export function ChapterContent({
         <div className="panel flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="panel-head">
             <h3 className="panel-title">
-              {/* 点击标题即复制「第 X 章 标题」（含章节号），无需单独按钮 */}
-              <span
-                title="点击复制章节标题"
-                className="cursor-pointer select-text"
-                onClick={() => {
-                  if (editingTitle) return;
-                  const t = title || "默认章节";
-                  void copyText(t)
-                    .then(() => showToast("已复制章节标题", "success"))
-                    .catch(() => showToast("复制失败，请手动选中标题复制。", "error"));
-                }}
-              >
-                第 {detail.chapter_no} 章{title ? ` ${title}` : " 默认章节"}
-              </span>
-              {canEditTitle && !editingTitle && (
-                <button type="button" className="ml-1 rounded p-1 text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800" title="编辑章节标题" onClick={() => setEditingTitle(true)}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5"><path d="m4 16 10-10 4 4L8 20H4v-4Z" /><path d="m13 7 4 4" /></svg>
-                </button>
-              )}
-              {canEditTitle && editingTitle && (
-                <span className="ml-2 inline-flex items-center gap-1">
-                  <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)} onClick={(e) => e.stopPropagation()} className="w-40 rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-xs dark:border-zinc-600 dark:bg-zinc-800" placeholder="默认章节" />
-                  <button type="button" className="text-xs text-seal" onClick={() => void onSaveTitle(titleDraft).then(() => setEditingTitle(false))}>保存</button>
-                  <button type="button" className="text-xs text-zinc-400" onClick={() => setEditingTitle(false)}>取消</button>
+              {editingTitle ? (
+                <span className="inline-flex items-center">
+                  <input
+                    autoFocus
+                    value={titleDraft}
+                    onChange={(e) => setTitleDraft(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="ml-1 w-40 rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-xs dark:border-zinc-600 dark:bg-zinc-800"
+                    placeholder="默认章节"
+                    aria-label="章节标题"
+                  />
+                  <button type="button" className="ml-1 text-xs text-seal" onClick={() => void onSaveTitle(titleDraft).then(() => setEditingTitle(false))}>保存</button>
+                  <button type="button" className="ml-1 text-xs text-zinc-400" onClick={() => setEditingTitle(false)}>取消</button>
                 </span>
+              ) : (
+                <>
+                  {/* 点击标题即复制「第 X 章 标题」（含章节号），无需单独按钮 */}
+                  <span
+                    title="点击复制章节标题"
+                    className="cursor-pointer select-text"
+                    onClick={() => {
+                      const t = title || "默认章节";
+                      void copyText(t)
+                        .then(() => showToast("已复制章节标题", "success"))
+                        .catch(() => showToast("复制失败，请手动选中标题复制。", "error"));
+                    }}
+                  >
+                    第 {detail.chapter_no} 章{title ? ` ${title}` : " 默认章节"}
+                  </span>
+                  {canEditTitle && (
+                    <button
+                      type="button"
+                      className="ml-1 rounded p-1 text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      title="编辑章节标题"
+                      onClick={() => setEditingTitle(true)}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5"><path d="m4 16 10-10 4 4L8 20H4v-4Z" /><path d="m13 7 4 4" /></svg>
+                    </button>
+                  )}
+                </>
               )}
               {/* 标题旁版本标识：v{n}，点击展开内联版本树（新增/重新生成=根，评价优化=子级） */}
               <span className="relative inline-flex">
@@ -138,8 +154,13 @@ export function ChapterContent({
                 )}
               </span>
               <span className="ml-1 text-xs font-normal text-zinc-500">
-                {selectedIsFinal ? "已定稿" : "草稿"}
+                  {selectedIsFinal ? "已定稿" : "草稿"}
               </span>
+              {selectedVersion && (
+                <span className="ml-1 text-xs font-normal text-zinc-500">
+                  · {sourceLabel(selectedVersion.source)}
+                </span>
+              )}
               {/* 当前章节版本字数：跟随正文实时统计（含就地编辑中的内容） */}
               {selectedVersion != null && (
                 <span className="ml-1.5 text-xs font-normal tabular-nums text-zinc-500">

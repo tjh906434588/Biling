@@ -231,7 +231,7 @@ def _build_source_labels() -> dict[str, str]:
         "novelist": "初稿",
         "regenerate": "再稿",
         "reviser": "修订稿",
-        "user_edit": "人工编辑",
+        "user_edit": "人工",
         "expanded": "AI 扩写",
         "merged": "手动合并",
     }

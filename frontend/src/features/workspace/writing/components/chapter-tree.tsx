@@ -9,25 +9,13 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 
-import { DEFAULT_VOLUME, formatVolumeLabel, loadSourceLabels, type VolumeInfo } from "@/constants";
+import { DEFAULT_VOLUME, formatVolumeLabel, type VolumeInfo } from "@/constants";
+import { sourceLabel } from "./source-label";
+
+export { sourceLabel } from "./source-label";
 import type { ChapterListItem, ChapterVersion } from "@/lib/api";
 import { CostHint } from "@/lib/ai-status";
 import InfoTip from "@/components/info-tip";
-
-/** 远程版本来源标签缓存（loadSourceLabels 拉取后写入；空 = 未拉取/失败，回退本地兜底）。 */
-let remoteSourceLabels: Record<string, string> = {};
-
-/** 应用启动/进入写作页时调用一次：拉取版本来源中文标签（后端 meta.py 单一源），失败保持本地兜底。 */
-export async function loadSourceLabelsOnce(): Promise<void> {
-  try {
-    remoteSourceLabels = await loadSourceLabels();
-  } catch {
-    remoteSourceLabels = {}; // 拉取失败：继续用本地兜底
-  }
-}
-
-/** 立即触发一次远程标签拉取（模块级，页面一进来就预载，配合本地兜底）。 */
-void loadSourceLabelsOnce();
 
 export interface ChapterVolumeGroup {
   key: string;
@@ -94,16 +82,6 @@ export function groupChaptersByVolume(
   return result;
 }
 
-/** 版本来源的友好标签（章节详情版本列表用）：远程字典优先，本地兜底。 */
-export function sourceLabel(source: string): string {
-  if (source.startsWith("novelist")) return "初稿";
-  return (
-    remoteSourceLabels[source] ??
-    ({ novelist: "初稿", regenerate: "再稿", reviser: "修订稿", merged: "手动合并" } as Record<string, string>)[source] ??
-    "未知来源"
-  );
-}
-
 /** 章节目录侧栏的 props：数据 + 回调全部由 writing-panel 传入，组件内不做任何状态编排。 */
 interface ChapterSidebarProps {
   chapters: ChapterListItem[];
@@ -130,9 +108,8 @@ interface ChapterSidebarProps {
   onAdd: () => void;
   /** 点击目录某章：切激活章并加载详情（含评价/版本选中态重置）。 */
   onSelectChapter: (no: number) => void;
-  /** 打开「重新生成正文」弹窗。 */
-  onRegenerate: () => void;
-  onManualRewrite: () => void;
+  /** 打开「重写正文」弹窗，由用户选择人工重写或 AI 重新生成。 */
+  onRewrite: () => void;
   onExpand: () => void;
   /** 当前预览选中的正文版本（null=未选中）。 */
   selectedVersion: ChapterVersion | null;
@@ -171,8 +148,7 @@ export function ChapterSidebar({
   showToast,
   onAdd,
   onSelectChapter,
-  onRegenerate,
-  onManualRewrite,
+  onRewrite,
   onExpand,
   selectedVersion,
   selectedIsFinal,
@@ -312,6 +288,11 @@ export function ChapterSidebar({
                                 >
                                   <div className="flex min-w-0 items-center gap-2">
                                     <EllipsisTitle text={`第${c.chapter_no}章${listItemTitle(c) ? ` ${listItemTitle(c)}` : ""}`} />
+                                    {c.active_source && (
+                                      <span className="shrink-0 text-[10px] text-zinc-400 dark:text-zinc-500">
+                                        {sourceLabel(c.active_source)}
+                                      </span>
+                                    )}
                                     {c.status === "complete" && (
                                       <span className="shrink-0 rounded bg-green-100 px-1 py-0.5 text-[11px] text-green-700 dark:bg-green-900 dark:text-green-300">
                                         已定稿
@@ -343,16 +324,15 @@ export function ChapterSidebar({
             )}
           </div>
           <div className="grid grid-cols-2 gap-2">
-            {/* 重新生成正文：复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）。
-                生成中不禁用：要能再次打开弹窗查看「查看生成过程」进度；但「新增章节」生成中需禁用——
-                本次是新增而非重新生成，进度只能从「新增章节」入口重开查看；评价 / 提取进行中禁用。 */}
+            {/* 重写正文：统一人工重写与 AI 重新生成入口，在抽屉内选择方式。 */}
             <button
               type="button"
-              onClick={onManualRewrite}
+              onClick={onRewrite}
               disabled={activeNo == null || aiBusy || !selectedVersion}
               className="btn btn-ghost w-full"
+              title="重新写一版正文，可在抽屉中选择人工重写或 AI 重新生成"
             >
-              人工重写
+              重写正文
             </button>
             <button
               type="button"
@@ -362,25 +342,6 @@ export function ChapterSidebar({
               title="基于当前正文调用 AI 扩写，生成一个子版本"
             >
               AI 扩写
-            </button>
-            <button
-              type="button"
-              onClick={onRegenerate}
-              disabled={activeNo == null || (generating && !genIsRegenerate) || aiBusy}
-              className="btn btn-ghost w-full"
-              title={
-                activeNo == null
-                  ? "请先选择一章"
-                  : aiBusy
-                    ? reviewing
-                      ? "评价进行中，暂不能重新生成正文"
-                      : "正在记进 AI 记忆中，暂不能重新生成正文"
-                    : generating && !genIsRegenerate
-                      ? "新增正文生成中，暂不能重新生成正文"
-                      : "重新写一版正文，新的一版会保留下来"
-              }
-            >
-              重新生成正文
             </button>
             {/* 定稿：把当前选中的草稿版本定稿激活（同一时间只能定稿一个版本）；选中已定稿版本时隐藏 */}
             {!selectedIsFinal && (
@@ -405,7 +366,7 @@ export function ChapterSidebar({
               </button>
             )}
             {/* 信息控制：仅选中章节时显示；查看本章已填写的信息控制（谁知道了什么），修改需重新生成时调整 */}
-            {activeNo != null && (
+            {activeNo != null && selectedVersion?.source !== "user_edit" && (
               <button
                 type="button"
                 onClick={onViewInfo}

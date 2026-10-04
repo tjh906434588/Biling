@@ -754,10 +754,9 @@ export default function WritingPanel({ novelId }: Props) {
           setVersionOpen(false);
           void loadDetail(no);
         }}
-        onRegenerate={openRegenerateModal}
-        onManualRewrite={() => {
+        onRewrite={() => {
           openRegenerateModal();
-          setCreationMode("manual_rewrite");
+          setCreationMode("ai");
         }}
         onExpand={() => void handleExpand(flowCtx)}
         selectedVersion={selectedVersion}

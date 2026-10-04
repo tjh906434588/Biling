@@ -94,21 +94,26 @@ export function AddChapterDrawer({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
       <div className="flex flex-col gap-3">
-        {regenerateNo == null && (
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-zinc-500">新增章节方式</span>
-            <select
-              className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              value={mode}
-              onChange={(e) => onModeChange(e.target.value as "ai" | "manual" | "manual_rewrite")}
-              disabled={generating}
-            >
-              {(creationModes ?? [{ value: "ai", label: "AI 生成" }, { value: "manual", label: "人工输入" }]).map((item) => (
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-zinc-500">{regenerateNo != null ? "重写方式" : "新增章节方式"}</span>
+          <select
+            className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            value={mode}
+            onChange={(e) => onModeChange(e.target.value as "ai" | "manual" | "manual_rewrite")}
+            disabled={generating}
+          >
+            {regenerateNo != null ? (
+              <>
+                <option value="ai">AI 重新生成</option>
+                <option value="manual_rewrite">人工重写</option>
+              </>
+            ) : (
+              (creationModes ?? [{ value: "ai", label: "AI 生成" }, { value: "manual", label: "人工输入" }]).map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
-              ))}
-            </select>
-          </label>
-        )}
+              ))
+            )}
+          </select>
+        </label>
         {mode !== "ai" ? (
           <>
             <label className="flex flex-col gap-1">
