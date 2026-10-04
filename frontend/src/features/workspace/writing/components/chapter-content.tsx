@@ -83,7 +83,9 @@ export function ChapterContent({
                   <button type="button" className="ml-1 text-xs text-zinc-400" onClick={() => setEditingTitle(false)}>取消</button>
                 </span>
               ) : (
-                <>
+                /* 标题与编辑图标包进同一个 inline-flex 容器：二者作为一个整体参与 panel-title 的
+                   flex 布局，避免容器 gap 在标题文字与图标之间再插入额外间隔（图标自身 ml-1 保留）。 */
+                <span className="inline-flex items-center">
                   {/* 点击标题仅复制章节标题；章节号独立显示，不参与标题编辑。 */}
                   <span
                     title="点击复制章节标题"
@@ -107,7 +109,7 @@ export function ChapterContent({
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5"><path d="m4 16 10-10 4 4L8 20H4v-4Z" /><path d="m13 7 4 4" /></svg>
                     </button>
                   )}
-                </>
+                </span>
               )}
               {/* 标题旁版本标识：v{n}，点击展开内联版本树（新增/重新生成=根，评价优化=子级） */}
               <span className="relative inline-flex">
@@ -187,8 +189,8 @@ export function ChapterContent({
               value={editText}
               onChange={(e) => onEditText(e.target.value)}
               spellCheck={false}
-              aria-label="本章正文（可直接编辑，停止输入后自动保存）"
-              placeholder="直接在正文上修改，停止输入后自动保存；修改后右侧「评价与优化」会出现「重新评价」按钮。"
+              aria-label="本章正文（可直接编辑）"
+              placeholder="直接在正文上修改：人工版本停止输入后自动保存；AI 版本上的修改只是临时改动，点左侧「存为新版本」才会真正保存为一个新版本。"
               className="reading w-full flex-1 min-h-0 resize-none overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50 p-5 outline-none focus:border-primary dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             />
           ) : (
