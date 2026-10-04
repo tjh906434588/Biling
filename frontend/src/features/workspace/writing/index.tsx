@@ -69,6 +69,7 @@ import { AddChapterDrawer } from "./components/add-chapter-drawer";
 import { ChapterContent } from "./components/chapter-content";
 import { InfoModal } from "./components/info-modal";
 import {
+  formatChapterText,
   summarizeOutline,
   type AiRunState,
   type ConfirmDialogState,
@@ -222,12 +223,13 @@ export default function WritingPanel({ novelId }: Props) {
   const selectedIsFinal = selectedVersion?.is_active ?? false;
   const activeChapter = chapters.find((c) => c.chapter_no === activeNo) ?? null;
 
-  // ── 正文就地编辑机制（镜像 ref + 防抖落盘 + 切版本/卸载兜底），详见 use-chapter-editor ──
+  // ── 正文就地编辑机制（镜像 ref + 防抖落盘 + 切版本/卸载兜底 + 确认式版本化），详见 use-chapter-editor ──
   const {
     editText,
     setEditText,
     saveState,
     flushSave,
+    saveAsNewVersion,
     editTextRef,
     editTargetRef,
   } = useChapterEditor({
@@ -238,6 +240,28 @@ export default function WritingPanel({ novelId }: Props) {
     setSelectedVersionId,
     showToast,
   });
+
+  /** 当前 AI 版本上有未确认的临时修改 → 显示「存为新版本」按钮；改回原样时自动隐藏。 */
+  const hasVersionEdits =
+    !!selectedVersion && selectedVersion.source !== "user_edit" && editText !== selectedVersion.content;
+
+  /** 「存为新版本」：把当前临时修改真正保存为一个新的人工版本（原版本保留不变），并选中新版本。 */
+  const handleSaveAsNewVersion = useCallback(async () => {
+    if (await saveAsNewVersion()) {
+      showToast("已把当前修改保存为一个新的人工版本，原版本保留不变。", "success");
+    }
+  }, [saveAsNewVersion]);
+
+  /** 「格式化排版」：纯文本排版整理（首行缩进/段落空行，不调 AI、不改文字），随后走正常保存流程。 */
+  const handleFormat = useCallback(() => {
+    const formatted = formatChapterText(editText);
+    if (formatted === editText) {
+      showToast("正文排版已符合格式，无需调整。", "success");
+      return;
+    }
+    setEditText(formatted);
+    showToast("已完成排版格式化。", "success");
+  }, [editText, setEditText]);
 
   // 弹窗开关：新增章节 / 信息控制 仍用弹窗；评价与优化、版本树已改为右侧常驻内联面板（见下方）
   const [showAddModal, setShowAddModal] = useState(false);
@@ -758,7 +782,18 @@ export default function WritingPanel({ novelId }: Props) {
           openRegenerateModal();
           setCreationMode("ai");
         }}
-        onExpand={() => void handleExpand(flowCtx)}
+        onExpand={() => {
+          // AI 扩写基于后端版本内容：有未确认修改时先拦下，提示用户先存为新版本
+          if (hasVersionEdits) {
+            showToast("正文有未保存的修改：请先在「本章操作」点「存为新版本」，或把内容改回原样。", "warning");
+            return;
+          }
+          void handleExpand(flowCtx);
+        }}
+        hasVersionEdits={hasVersionEdits}
+        onSaveAsNewVersion={() => void handleSaveAsNewVersion()}
+        canFormat={!!selectedVersion && !!editText.trim()}
+        onFormat={handleFormat}
         selectedVersion={selectedVersion}
         selectedIsFinal={selectedIsFinal}
         extractPending={extractPending}

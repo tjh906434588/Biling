@@ -129,6 +129,14 @@ interface ChapterSidebarProps {
   /** 打开「重写正文」弹窗，由用户选择人工重写或 AI 重新生成。 */
   onRewrite: () => void;
   onExpand: () => void;
+  /** 当前 AI 版本上有未确认的临时修改 → 显示「存为新版本」按钮（确认式版本化入口）。 */
+  hasVersionEdits: boolean;
+  /** 把当前临时修改真正保存为一个新的人工版本（原版本保留不变）。 */
+  onSaveAsNewVersion: () => void;
+  /** 「格式化排版」可用性：已选中版本且正文非空。 */
+  canFormat: boolean;
+  /** 纯文本排版格式化（首行缩进/段落空行，不调 AI、不改文字）。 */
+  onFormat: () => void;
   /** 当前预览选中的正文版本（null=未选中）。 */
   selectedVersion: ChapterVersion | null;
   /** 选中版本是否已定稿（激活）：决定「定稿」/「提取」按钮可用性。 */
@@ -168,6 +176,10 @@ export function ChapterSidebar({
   onSelectChapter,
   onRewrite,
   onExpand,
+  hasVersionEdits,
+  onSaveAsNewVersion,
+  canFormat,
+  onFormat,
   selectedVersion,
   selectedIsFinal,
   extractPending,
@@ -343,6 +355,29 @@ export function ChapterSidebar({
             )}
           </div>
           <div className="grid grid-cols-2 gap-2">
+            {/* 存为新版本：AI 版本上有未确认的临时修改时才显示（确认式版本化入口）；
+                点击才把修改真正保存为一个新的人工版本，避免改一点就多一个版本 */}
+            {hasVersionEdits && (
+              <button
+                type="button"
+                onClick={onSaveAsNewVersion}
+                disabled={activeNo == null || aiBusy || !selectedVersion}
+                className="btn btn-primary col-span-2 w-full"
+                title="把当前修改保存为一个新的人工版本，原版本保留不变"
+              >
+                存为新版本
+              </button>
+            )}
+            {/* 格式化排版：纯文本整理（首行缩进/段落空行），不调 AI、不改文字内容 */}
+            <button
+              type="button"
+              onClick={onFormat}
+              disabled={activeNo == null || aiBusy || !canFormat}
+              className="btn btn-ghost w-full"
+              title="把正文整理成 AI 生成稿的排版：每段首行缩进两格、段落之间空一行（不改文字内容）"
+            >
+              格式化排版
+            </button>
             {/* 重写正文：统一人工重写与 AI 重新生成入口，在抽屉内选择方式。 */}
             <button
               type="button"
