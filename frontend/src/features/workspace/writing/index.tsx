@@ -733,7 +733,7 @@ export default function WritingPanel({ novelId }: Props) {
       <div className="grid min-h-0 flex-1 items-stretch gap-4 overflow-hidden lg:grid-cols-[340px_minmax(0,1fr)] [grid-template-rows:minmax(0,1fr)]">
       <ChapterSidebar
         chapters={chapters}
-        volumes={approvedOutlines.length > 0 ? volumes : []}
+        volumes={volumes}
         chapterSearch={chapterSearch}
         onChapterSearch={setChapterSearch}
         collapsedVols={collapsedVols}
