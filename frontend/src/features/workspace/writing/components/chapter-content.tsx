@@ -67,6 +67,7 @@ export function ChapterContent({
         <div className="panel flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="panel-head">
             <h3 className="panel-title">
+              <span className="shrink-0">第 {detail.chapter_no} 章</span>
               {editingTitle ? (
                 <span className="inline-flex items-center">
                   <input
@@ -83,10 +84,10 @@ export function ChapterContent({
                 </span>
               ) : (
                 <>
-                  {/* 点击标题即复制「第 X 章 标题」（含章节号），无需单独按钮 */}
+                  {/* 点击标题仅复制章节标题；章节号独立显示，不参与标题编辑。 */}
                   <span
                     title="点击复制章节标题"
-                    className="cursor-pointer select-text"
+                    className="ml-1 cursor-pointer select-text"
                     onClick={() => {
                       const t = title || "默认章节";
                       void copyText(t)
@@ -94,7 +95,7 @@ export function ChapterContent({
                         .catch(() => showToast("复制失败，请手动选中标题复制。", "error"));
                     }}
                   >
-                    第 {detail.chapter_no} 章{title ? ` ${title}` : " 默认章节"}
+                    {title || "默认章节"}
                   </span>
                   {canEditTitle && (
                     <button

@@ -9,7 +9,7 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 
-import { DEFAULT_VOLUME, formatVolumeLabel, type VolumeInfo } from "@/constants";
+import { DEFAULT_VOLUME, type VolumeInfo } from "@/constants";
 import { sourceLabel } from "./source-label";
 
 export { sourceLabel } from "./source-label";
@@ -19,8 +19,18 @@ import InfoTip from "@/components/info-tip";
 
 export interface ChapterVolumeGroup {
   key: string;
+  no: number | undefined;
+  title: string;
   label: string;
   items: ChapterListItem[];
+}
+
+function cleanVolumeTitle(name: string | undefined): string {
+  const n = (name ?? "")
+    .replace(/【[^】]*】/g, "")
+    .replace(/\[[^\]]*\]/g, "")
+    .trim();
+  return n.replace(/^第\s*[一二三四五六七八九十百千万零〇\d]+\s*卷\s*[:：、.。\-—\s]*/, "").trim();
 }
 
 /** 章节列表标题：超长时省略号截断 + 悬浮显示完整标题；未超长不显示悬浮效果。 */
@@ -58,13 +68,21 @@ export function groupChaptersByVolume(
   const effectiveParsed =
     parsed.length > 0 ? parsed : [{ v: DEFAULT_VOLUME, start: 1, end: Number.MAX_SAFE_INTEGER }];
 
-  const groups: ChapterVolumeGroup[] = effectiveVols.map((v) => ({
-    key: `vol-${v.no ?? v.name ?? "?"}`,
-    label: formatVolumeLabel(v.no, v.name),
-    items: [],
-  }));
+  const groups: ChapterVolumeGroup[] = effectiveVols.map((v) => {
+    const title = cleanVolumeTitle(v.name);
+    const label = v.no != null ? `第${v.no}卷${title ? ` ${title}` : ""}` : title || "卷";
+    return {
+      key: `vol-${v.no ?? v.name ?? "?"}`,
+      no: v.no,
+      title,
+      label,
+      items: [],
+    };
+  });
   const rest: ChapterVolumeGroup = {
     key: "rest",
+    no: undefined,
+    title: "未分卷",
     label: "未分卷",
     items: [],
   };
@@ -265,7 +283,8 @@ export function ChapterSidebar({
                             ▾
                           </span>
                           <h4 className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-600 dark:text-zinc-300">
-                            {g.label}
+                            {g.no != null && <span className="shrink-0">第{g.no}卷</span>}
+                            {g.title && <span className={g.no != null ? "ml-1" : ""}>{g.title}</span>}
                           </h4>
                           <span className="ml-auto shrink-0 text-[10px] text-zinc-400">{items.length} 章</span>
                         </button>
