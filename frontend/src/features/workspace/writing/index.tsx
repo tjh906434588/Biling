@@ -44,12 +44,13 @@ import { useElapsed } from "@/lib/use-elapsed";
 import Loading from "@/components/loading";
 import { message } from "@/components/message";
 import { useAiStatus } from "@/lib/ai-status";
-import { loadChapterCreationModes, type ChapterCreationModeOption } from "@/constants";
 import {
+  loadChapterCreationModes,
   REVIEW_RATIO_DEFAULT,
   REVIEW_RATIO_KEY,
   REVIEW_RATIO_MAX,
   REVIEW_RATIO_MIN,
+  type ChapterCreationModeOption,
   type VolumeInfo,
 } from "@/constants";
 import { copyText } from "@/utils/clipboard";
@@ -732,7 +733,7 @@ export default function WritingPanel({ novelId }: Props) {
       <div className="grid min-h-0 flex-1 items-stretch gap-4 overflow-hidden lg:grid-cols-[340px_minmax(0,1fr)] [grid-template-rows:minmax(0,1fr)]">
       <ChapterSidebar
         chapters={chapters}
-        volumes={volumes}
+        volumes={approvedOutlines.length > 0 ? volumes : []}
         chapterSearch={chapterSearch}
         onChapterSearch={setChapterSearch}
         collapsedVols={collapsedVols}

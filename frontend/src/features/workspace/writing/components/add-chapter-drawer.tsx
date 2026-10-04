@@ -19,7 +19,7 @@ interface AddChapterDrawerProps {
   regenerateNo: number | null;
   mode: "ai" | "manual" | "manual_rewrite";
   onModeChange: (mode: "ai" | "manual" | "manual_rewrite") => void;
-  creationModes: ChapterCreationModeOption[];
+  creationModes?: ChapterCreationModeOption[];
   form: GenForm;
   onFormChange: (f: GenForm) => void;
   nextNo: number;
@@ -103,15 +103,14 @@ export function AddChapterDrawer({
               onChange={(e) => onModeChange(e.target.value as "ai" | "manual" | "manual_rewrite")}
               disabled={generating}
             >
-              {creationModes.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              {(creationModes ?? [{ value: "ai", label: "AI 生成" }, { value: "manual", label: "人工输入" }]).map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
             </select>
           </label>
         )}
         {mode !== "ai" ? (
           <>
-            <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs leading-5 text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
-              不填写章节号，保存后自动追加到最新章节之后；标题可留空，显示为“默认章节”。
-            </p>
             <label className="flex flex-col gap-1">
               <span className="text-xs text-zinc-500">章节标题（可选）</span>
               <input
