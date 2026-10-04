@@ -193,6 +193,8 @@ export async function handleGenerate(
       ctx.setActiveNo(created.chapter_no);
       await ctx.loadChapters();
       await ctx.loadDetail(created.chapter_no, created.versions.at(-1)?.id ?? null);
+      ctx.setShowAddModal(false);
+      ctx.setRegenerateNo(null);
       ctx.showToast(`第 ${created.chapter_no} 章人工草稿已创建，可以直接编辑正文。`, "success");
     } catch (e) {
       ctx.showToast((e as Error).message, "error");
