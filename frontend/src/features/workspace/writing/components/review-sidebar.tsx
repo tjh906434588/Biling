@@ -15,8 +15,6 @@ interface ReviewSidebarProps {
   reviewRatio: number;
   onReviewRatio: (ratio: number) => void;
   detail: ChapterDetail | null;
-  /** 正文在最近一次评价后被修改过：显示「重新评价」提示条。 */
-  reviewStale: boolean;
   currentReview: QualityReview | null;
   onReview: () => void;
   reviewing: boolean;
@@ -38,7 +36,6 @@ export function ReviewSidebar({
   reviewRatio,
   onReviewRatio,
   detail,
-  reviewStale,
   currentReview,
   onReview,
   reviewing,
@@ -84,21 +81,6 @@ export function ReviewSidebar({
         <div className="@container min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
           {detail ? (
             <>
-              {reviewStale && currentReview != null && (
-                <div className="mb-2.5 flex items-start justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-500/10">
-                  <p className="min-w-0 flex-1 text-xs leading-5 text-amber-800 dark:text-amber-200">
-                    正文已修改，现有评价基于修改前的内容，已不对应当前版本。点击「重新评价」对本版本重新评价。
-                  </p>
-                  <button
-                    type="button"
-                    onClick={onReview}
-                    disabled={reviewing || reviewTaskRunning || !selectedVersion}
-                    className="btn btn-primary shrink-0 px-3 py-1 text-xs font-medium"
-                  >
-                    {reviewing ? "评价中…" : reviewTaskRunning ? "已有评价任务进行中…" : "重新评价"}
-                  </button>
-                </div>
-              )}
               {currentReview ? (
               <ReviewCard
                 review={currentReview}

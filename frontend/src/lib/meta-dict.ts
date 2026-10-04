@@ -22,7 +22,8 @@ export type MetaDictKey =
   | "rubric_labels"
   | "retention_hook_labels"
   | "severity_labels"
-  | "source_labels";
+  | "source_labels"
+  | "chapter_creation_modes";
 
 /** 字典缓存 TTL（ms）：枚举数据变化低频，10 分钟足够保证"最新"，过期后自动重拉。 */
 export const META_DICT_TTL_MS = 10 * 60 * 1000;

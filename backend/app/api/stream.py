@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agents.registry import AGENT_NAMES
-from app.db.models import AgentTask, AuthorConfirm, Chapter, Outline
+from app.db.models import AgentTask, AuthorConfirm, Chapter, ChapterVersion, Novel, Outline
 from app.db.session import SessionLocal, get_db
 from app.schemas.agents import (
     AgentCommitRequest,
@@ -1289,6 +1289,25 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
                 400,
                 "设定库为空，无法生成蓝图。请先在「设定」中添加角色、地点、规则等设定。",
             )
+
+    if agent == "novelist" and ((payload.params or {}).get("mode") == "expand" or (payload.params or {}).get("writing_mode") == "expand"):
+        expand_params = payload.params or {}
+        chapter_no = expand_params.get("chapter_no")
+        parent_id = expand_params.get("parent_version_id")
+        if chapter_no is None or parent_id is None:
+            raise HTTPException(422, "AI 扩写必须指定 chapter_no 和 parent_version_id")
+        if not str(expand_params.get("source_content") or expand_params.get("content") or "").strip():
+            raise HTTPException(422, "AI 扩写原稿不能为空")
+        chapter = db.execute(select(Chapter).where(Chapter.novel_id == payload.novel_id, Chapter.chapter_no == int(chapter_no))).scalar_one_or_none()
+        if chapter is None:
+            raise HTTPException(404, "章节不存在或不属于该小说")
+        try:
+            parent = db.get(ChapterVersion, uuid.UUID(str(parent_id)))
+        except (ValueError, TypeError):
+            parent = None
+        if parent is None or parent.chapter_id != chapter.id:
+            raise HTTPException(404, "扩写父版本不存在或不属于该章节")
+        payload.params = {**expand_params, "source_content": str(expand_params.get("source_content") or expand_params.get("content")), "parent_version_id": str(parent.id), "writing_mode": "expand"}
 
     # 先懒清理该 novel+agent 的僵尸任务（失联超时无心跳的 running），再查并发位，
     # 否则进程中断遗留的 running 会永远占位导致 409，只能靠重启后端（生产不可取）。

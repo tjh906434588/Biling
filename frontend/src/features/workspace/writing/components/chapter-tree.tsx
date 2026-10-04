@@ -132,6 +132,8 @@ interface ChapterSidebarProps {
   onSelectChapter: (no: number) => void;
   /** 打开「重新生成正文」弹窗。 */
   onRegenerate: () => void;
+  onManualRewrite: () => void;
+  onExpand: () => void;
   /** 当前预览选中的正文版本（null=未选中）。 */
   selectedVersion: ChapterVersion | null;
   /** 选中版本是否已定稿（激活）：决定「定稿」/「提取」按钮可用性。 */
@@ -170,6 +172,8 @@ export function ChapterSidebar({
   onAdd,
   onSelectChapter,
   onRegenerate,
+  onManualRewrite,
+  onExpand,
   selectedVersion,
   selectedIsFinal,
   extractPending,
@@ -212,10 +216,11 @@ export function ChapterSidebar({
                     // 最新一章尚未定稿 → 拦截：必须先定稿才能新增章节（空小说除外）
                     const latest = [...chapters].sort((a, b) => b.chapter_no - a.chapter_no)[0];
                     if (latest && latest.status !== "complete") {
-                      showToast(
-                        `最新一章（第 ${latest.chapter_no} 章）还是草稿，请先定稿后再新增章节。`,
-                        "warning",
-                      );
+                      showToast(`最新一章（第 ${latest.chapter_no} 章）还是草稿，请先定稿后再新增章节。`, "warning");
+                      return;
+                    }
+                    if (latest && latest.extracted_version_id == null) {
+                      showToast(`最新一章（第 ${latest.chapter_no} 章）尚未提取记忆，请先提取后再新增章节。`, "warning");
                       return;
                     }
                   }
@@ -341,6 +346,23 @@ export function ChapterSidebar({
             {/* 重新生成正文：复用新增章节弹窗，基于当前章节重新生成一版正文（新增为一个草稿版本）。
                 生成中不禁用：要能再次打开弹窗查看「查看生成过程」进度；但「新增章节」生成中需禁用——
                 本次是新增而非重新生成，进度只能从「新增章节」入口重开查看；评价 / 提取进行中禁用。 */}
+            <button
+              type="button"
+              onClick={onManualRewrite}
+              disabled={activeNo == null || aiBusy || !selectedVersion}
+              className="btn btn-ghost w-full"
+            >
+              人工重写
+            </button>
+            <button
+              type="button"
+              onClick={onExpand}
+              disabled={activeNo == null || aiBusy || !selectedVersion || !selectedVersion.content.trim()}
+              className="btn btn-ghost w-full"
+              title="基于当前正文调用 AI 扩写，生成一个子版本"
+            >
+              AI 扩写
+            </button>
             <button
               type="button"
               onClick={onRegenerate}

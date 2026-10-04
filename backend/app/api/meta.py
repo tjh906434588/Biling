@@ -231,8 +231,18 @@ def _build_source_labels() -> dict[str, str]:
         "novelist": "初稿",
         "regenerate": "再稿",
         "reviser": "修订稿",
+        "user_edit": "人工编辑",
+        "expanded": "AI 扩写",
         "merged": "手动合并",
     }
+
+
+def _build_chapter_creation_modes() -> list[dict[str, str]]:
+    """章节创建方式字典：人工输入与 AI 生成共用前端下拉选项。"""
+    return [
+        {"value": "ai", "label": "AI 生成"},
+        {"value": "manual", "label": "人工输入"},
+    ]
 
 
 DICT_BUILDERS: dict[str, object] = {
@@ -251,6 +261,7 @@ DICT_BUILDERS: dict[str, object] = {
     "retention_hook_labels": _build_retention_hook_labels,
     "severity_labels": _build_severity_labels,
     "source_labels": _build_source_labels,
+    "chapter_creation_modes": _build_chapter_creation_modes,
 }
 
 # 支持「用户自定义项」的字典 key：内置枚举只读，自定义项存 meta_dict_items 表，

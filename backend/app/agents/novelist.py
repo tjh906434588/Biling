@@ -51,6 +51,8 @@ SYSTEM_PROMPT = f"""你是「小说家」，一部小说的写作者。
 - 输出必须是严格的 JSON：{{"title": "本章标题", "content": "章节正文（不少于200字）", "note": "自评：本章用到的设定、待回收伏笔"}}
 - 标题要求：简洁有力、能概括本章核心；若作者已给定标题则原文沿用。
 - 正文就是正文本身，不要把 JSON 解释写进正文。
+- 当写作模式为 expand/扩写时，必须以【待扩写原稿】为唯一改写基础：保留原稿事实、人物关系、叙事视角和核心事件，只补充场景、动作、感官、对话与因果细节；不得另起炉灶、删改原稿结论、覆盖原稿。
+- 扩写输出必须是完整的新版本，不能返回空内容；不得在正文中解释扩写过程。
 
 写作铁律（追加）：
 - 【作者定向·本章写法要点】当【本章大纲】含"写法要点（作者定向）"时，其中进入/触发方式、风格基调、主角反应弧、核心冲突落点、爽点类型是**作者选定的执行要求，不可替换演法**——正文必须逐项照此演：触发方式照写、风格基调贯穿全章、主角反应按"从什么到什么"的弧线推进、核心冲突落在指定场面、爽点给足指定类型；只允许在语言呈现层面自由发挥，不允许在"演什么、怎么演"层面自行换成另一种演法。若确因素材冲突必须微调，只能在保持该演法精神的前提下调整具体细节。
@@ -190,6 +192,8 @@ class NovelistAgent(Agent[NovelChapter]):
         # L3 节奏/心态指令：由 chapter_function 与写作模式运行时派生
         chapter_function = params.get("chapter_function", "progression")
         writing_mode = params.get("writing_mode", "draft_free")
+        expand_mode = params.get("mode") == "expand" or writing_mode == "expand"
+        source_content = str(params.get("source_content") or params.get("content") or "").strip()
         if chapter_function in ("climax", "turning"):
             l3 = "【L3·本章节奏】加快节奏、冲突升级、节拍短促有力。"
         elif chapter_function in ("buildup", "interlude"):
@@ -200,6 +204,14 @@ class NovelistAgent(Agent[NovelChapter]):
             l3 += " 心态：不必追求完美，写到哪算哪，让故事自然流淌。"
         else:  # outline_guided
             l3 += f" 心态：完成本章目标——{params.get('goal', '')}"
+        if expand_mode:
+            if not source_content:
+                raise ValueError("扩写原稿不能为空")
+            l3 += (
+                "\n【扩写模式（固定系统约束）】只允许在待扩写原稿基础上增补细节，必须保留原稿事件顺序、事实、人物关系、视角和结论；"
+                "不得总结、重写成另一种故事、删去原稿信息或覆盖原稿。输出完整扩写后的正文。"
+                f"\n【待扩写原稿】\n{source_content}"
+            )
 
         # 时间线提示：当前章节号 + 所处阶段（有蓝图可推导时），约束 AI 不提前引入后期设定
         if chapter_no > 0:

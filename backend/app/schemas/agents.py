@@ -342,7 +342,7 @@ class NovelChapter(BaseModel):
         default=None,
         description="本章标题：大纲约束模式沿用大纲标题；自由草稿模式由 AI 拟定（简洁有力）",
     )
-    content: str = Field(..., min_length=200, description="章节正文，长度下限防止空章/截断")
+    content: str = Field(..., min_length=200, description="章节正文，长度下限防止空章/截断；人工空白章节不经过此 AI schema")
     note: str = Field(default="", description="自评：用到的设定、待回收伏笔等")
 
 

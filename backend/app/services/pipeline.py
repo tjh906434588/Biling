@@ -1546,10 +1546,16 @@ def _persist_novelist(
     # 版本树：新增/重新生成不传 parent_version_id=根；评价优化（reviser）传被优化版本 id=子节点。
     outline_id = params.get("outline_id")
     parent_version_id = params.get("parent_version_id")
+    if (params.get("mode") == "expand" or params.get("writing_mode") == "expand") and not parent_version_id:
+        raise ValueError("扩写必须指定 parent_version_id")
     # 来源区分版本类型：新增章节=novelist（初稿）；重新生成正文=regenerate（再稿）；
     # 评价优化=reviser（修订稿）。前端据此显示版本名，并在版本树里区分层级。
     ver_source = source or "novelist"
-    if params.get("regenerate"):
+    if params.get("mode") == "expand" or params.get("writing_mode") == "expand":
+        ver_source = "expanded"
+        if not str(getattr(parsed, "content", "") or "").strip():
+            raise ValueError("扩写结果不能为空")
+    elif params.get("regenerate"):
         ver_source = "regenerate"
 
     # 章节标题规则：

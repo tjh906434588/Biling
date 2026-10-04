@@ -49,6 +49,8 @@ export interface Setting {
   created_at: string;
 }
 
+export type ChapterCreationMode = "ai" | "manual";
+
 export interface ChapterVersion {
   id: string;
   version_no: number;

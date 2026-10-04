@@ -32,6 +32,7 @@ import {
   listChapters,
   listOutlines,
   listReviews,
+  updateChapterTitle,
   type ChapterDetail,
   type ChapterListItem,
   type InfoControl,
@@ -43,6 +44,7 @@ import { useElapsed } from "@/lib/use-elapsed";
 import Loading from "@/components/loading";
 import { message } from "@/components/message";
 import { useAiStatus } from "@/lib/ai-status";
+import { loadChapterCreationModes, type ChapterCreationModeOption } from "@/constants";
 import {
   REVIEW_RATIO_DEFAULT,
   REVIEW_RATIO_KEY,
@@ -79,6 +81,7 @@ import { RunModals } from "./components/run-modals";
 import { useChapterEditor } from "./components/use-chapter-editor";
 import { useResumeAgentTask } from "./components/use-resume-agent-task";
 import {
+  handleExpand,
   handleGenerate,
   handleFinalizeSelected,
   doFinalize,
@@ -224,16 +227,14 @@ export default function WritingPanel({ novelId }: Props) {
     setEditText,
     saveState,
     flushSave,
-    reviewStale,
-    setReviewStale,
     editTextRef,
     editTargetRef,
-    reviewBaselineRef,
   } = useChapterEditor({
     novelId,
     selectedVersion,
     detailChapterNo: detail?.chapter_no,
     setDetail,
+    setSelectedVersionId,
     showToast,
   });
 
@@ -271,6 +272,8 @@ export default function WritingPanel({ novelId }: Props) {
    *  不能据此判断本次生成模式，用 state 记录（按钮禁用/提示在渲染期读取，用 ref 会触发
    *  react-hooks/refs 告警且不触发重渲染）。 */
   const [genIsRegenerate, setGenIsRegenerate] = useState(false);
+  const [creationMode, setCreationMode] = useState<"ai" | "manual" | "manual_rewrite">("ai");
+  const [creationModes, setCreationModes] = useState<ChapterCreationModeOption[]>([]);
 
   /** 信息控制弹窗：本地 draft，点「完成」才提交，点「取消」丢弃。
    *  「谁知道了什么」按章设立（chapters.info_control）：生成/重写本章时填写，不可事后单独编辑；
@@ -405,6 +408,10 @@ export default function WritingPanel({ novelId }: Props) {
   );
 
   useEffect(() => {
+    void loadChapterCreationModes().then(setCreationModes);
+  }, []);
+
+  useEffect(() => {
     (async () => {
       try {
         const [chs] = await Promise.all([
@@ -452,6 +459,7 @@ export default function WritingPanel({ novelId }: Props) {
     onStart: (i) => {
       const chapterNo = Number(i.params.chapter_no);
       const isRegenerate = i.params.regenerate === true;
+      const isExpand = i.params.mode === "expand" || i.params.writing_mode === "expand";
       if (Number.isFinite(chapterNo)) {
         setForm((f) => ({
           ...f,
@@ -463,11 +471,11 @@ export default function WritingPanel({ novelId }: Props) {
           goal: typeof i.params.goal === "string" ? i.params.goal : f.goal,
         }));
         setRegenerateNo(isRegenerate ? chapterNo : null);
-        void loadDetail(chapterNo);
+      void loadDetail(chapterNo);
       }
-      setShowAddModal(true);
+      setShowAddModal(!isExpand);
       setGenStartAt(i.startedAt);
-      setGenIsRegenerate(isRegenerate);
+      setGenIsRegenerate(isRegenerate && !isExpand);
       setGenerating(true);
       setGenRun({ thinking: i.thinking, output: i.output, running: true });
     },
@@ -600,6 +608,7 @@ export default function WritingPanel({ novelId }: Props) {
       chapter_function: "",
     }));
     setRegenerateNo(null);
+    setCreationMode("ai");
     setShowAddModal(true);
     // 加载下一章已填的信息控制（新增弹窗入口按钮显示「已填 N 项」，生成时提交）
     void loadChapterInfo(nextNo);
@@ -621,6 +630,7 @@ export default function WritingPanel({ novelId }: Props) {
       chapter_function: "",
     }));
     setRegenerateNo(activeNo);
+    setCreationMode("ai");
     setShowAddModal(true);
     // 加载该章已填的信息控制（重写弹窗回显「已填 N 项」并可在生成时覆盖）
     void loadChapterInfo(activeNo);
@@ -666,8 +676,8 @@ export default function WritingPanel({ novelId }: Props) {
     flushSave,
     editTextRef,
     editTargetRef,
-    reviewBaselineRef,
     form,
+    creationMode,
     useOutline,
     infoControl,
     chapters,
@@ -710,7 +720,6 @@ export default function WritingPanel({ novelId }: Props) {
     setAffectedChapters,
     setRewriteFail,
     setChapters,
-    setReviewStale,
   };
 
   /** 「挨个重写」始终指向最新一次渲染的联动重写逻辑，避免通知里回调闭包过期。 */
@@ -734,7 +743,7 @@ export default function WritingPanel({ novelId }: Props) {
         aiBusy={aiBusy}
         reviewing={reviewing}
         generating={generating}
-        genIsRegenerate={genIsRegenerate}
+        genIsRegenerate={generating && genIsRegenerate}
         showToast={showToast}
         onAdd={openAddModal}
         onSelectChapter={(no) => {
@@ -745,6 +754,11 @@ export default function WritingPanel({ novelId }: Props) {
           void loadDetail(no);
         }}
         onRegenerate={openRegenerateModal}
+        onManualRewrite={() => {
+          openRegenerateModal();
+          setCreationMode("manual_rewrite");
+        }}
+        onExpand={() => void handleExpand(flowCtx)}
         selectedVersion={selectedVersion}
         selectedIsFinal={selectedIsFinal}
         extractPending={extractPending}
@@ -782,6 +796,19 @@ export default function WritingPanel({ novelId }: Props) {
           aiBusy={aiBusy}
           onSelectVersion={handleSelectVersion}
           showToast={showToast}
+          canEditTitle={selectedVersion?.source === "user_edit"}
+          onSaveTitle={async (title) => {
+            if (activeNo == null || !selectedVersion) return;
+            try {
+              const updated = await updateChapterTitle(novelId, activeNo, { title, version_id: selectedVersion.id });
+              setDetail(updated);
+              await loadChapters();
+              showToast("章节标题已保存", "success");
+            } catch (e) {
+              showToast((e as Error).message, "error");
+              throw e;
+            }
+          }}
         />
 
         {/* 评价与优化只在选中章节后显示。 */}
@@ -790,7 +817,6 @@ export default function WritingPanel({ novelId }: Props) {
             reviewRatio={reviewRatio}
             onReviewRatio={setReviewRatio}
             detail={detail}
-            reviewStale={reviewStale}
             currentReview={currentReview}
             onReview={() => void handleReview(flowCtx)}
             reviewing={reviewing}
@@ -812,6 +838,9 @@ export default function WritingPanel({ novelId }: Props) {
       {showAddModal && (
         <AddChapterDrawer
           regenerateNo={regenerateNo}
+          mode={creationMode}
+          onModeChange={setCreationMode}
+          creationModes={creationModes}
           form={form}
           onFormChange={setForm}
           nextNo={nextNo}

@@ -11,6 +11,8 @@
 
 import type { Dispatch, SetStateAction, MutableRefObject } from "react";
 import {
+  createManualChapter,
+  deriveManualVersion,
   getChapter,
   listChapters,
   listReviews,
@@ -43,10 +45,10 @@ export interface FlowCtx {
   showToast: ShowToast;
   flushSave: () => Promise<string | null>;
   editTextRef: MutableRefObject<string>;
-  editTargetRef: MutableRefObject<{ chapterNo: number; versionId: string } | null>;
-  reviewBaselineRef: MutableRefObject<string | null>;
+  editTargetRef: MutableRefObject<{ chapterNo: number; versionId: string; source: string } | null>;
   // ── 只读状态 ──
   form: GenForm;
+  creationMode: "ai" | "manual" | "manual_rewrite";
   useOutline: boolean;
   /** 当前目标章已填的信息控制（谁知道了什么）：生成时提交为本章信息控制 */
   infoControl: InfoControl;
@@ -92,15 +94,111 @@ export interface FlowCtx {
   setAffectedChapters: Dispatch<SetStateAction<AffectedChapter[] | null>>;
   setRewriteFail: Dispatch<SetStateAction<RewriteFailData | null>>;
   setChapters: Dispatch<SetStateAction<ChapterListItem[]>>;
-  setReviewStale: Dispatch<SetStateAction<boolean>>;
 }
 
 /** 发起正文生成（新增章节或重新生成正文，靠 regenerateNo 区分）：置生成中 → 合成本次配置 → runAgent SSE。 */
+/** 从当前版本创建人工重写子版本，保留原版本并立即切换到新版本。 */
+export async function handleManualRewrite(ctx: FlowCtx) {
+  const { detail, selectedVersion, novelId } = ctx;
+  if (!detail || !selectedVersion) {
+    ctx.showToast("请先选择要人工重写的正文版本", "warning");
+    return;
+  }
+  try {
+    const version = await deriveManualVersion(novelId, detail.chapter_no, selectedVersion.id, { source: "manual_rewrite" });
+    await ctx.loadChapters();
+    await ctx.loadDetail(detail.chapter_no, version.id);
+    ctx.showToast(`第 ${detail.chapter_no} 章已创建人工重写草稿`, "success");
+  } catch (e) {
+    ctx.showToast((e as Error).message, "error");
+  }
+}
+
+/** 基于当前版本发起 AI 扩写：使用 novelist + mode=expand，结果由后端落为 expanded 子版本。 */
+export async function handleExpand(ctx: FlowCtx) {
+  const { detail, selectedVersion, novelId, liveNovelRef, mountedRef } = ctx;
+  if (!detail || !selectedVersion) {
+    ctx.showToast("请先选择要扩写的正文版本", "warning");
+    return;
+  }
+  const sourceContent = selectedVersion.content.trim();
+  if (!sourceContent) {
+    ctx.showToast("正文为空，不能扩写。", "warning");
+    return;
+  }
+  ctx.setGenerating(true);
+  ctx.setGenStartAt(Date.now());
+  ctx.setGenRun({ thinking: "", output: "", running: true });
+  try {
+    ctx.ensureReady();
+    await runAgent("novelist", novelId, {
+      chapter_no: detail.chapter_no,
+      mode: "expand",
+      writing_mode: "expand",
+      source_content: sourceContent,
+      parent_version_id: selectedVersion.id,
+      source: "expand",
+      title: selectedVersion.title ?? undefined,
+    }, (ev) => {
+      if (liveNovelRef.current !== novelId || !mountedRef.current) return;
+      const d = ev.data as { delta?: string; message?: string };
+      if (ev.event === "thinking_delta" && d.delta) ctx.setGenRun((r) => r ? { ...r, thinking: r.thinking + d.delta } : r);
+      if (ev.event === "stream_delta" && d.delta) ctx.setGenRun((r) => r ? { ...r, output: r.output + d.delta } : r);
+      if (ev.event === "stream_error") ctx.showToast(d.message ?? "AI 扩写出错，请稍后重试。", "error");
+    });
+    if (liveNovelRef.current === novelId && mountedRef.current) ctx.showToast("AI 扩写完成，已生成新的草稿子版本。", "success");
+  } catch (e) {
+    if (liveNovelRef.current === novelId && mountedRef.current) ctx.showToast((e as Error).message, "error");
+  } finally {
+    ctx.setGenerating(false);
+    ctx.setGenRun((r) => r ? { ...r, running: false } : r);
+    if (liveNovelRef.current === novelId) {
+      await ctx.loadChapters();
+      let expandedVersionId: string | null = null;
+      try {
+        const fresh = await getChapter(novelId, detail.chapter_no);
+        const expanded = [...fresh.versions]
+          .filter((v) => v.source === "expanded" && v.parent_version_id === selectedVersion.id)
+          .sort((a, b) => (b.version_no ?? 0) - (a.version_no ?? 0))[0];
+        expandedVersionId = expanded?.id ?? null;
+      } catch (e) {
+        ctx.showToast((e as Error).message, "warning");
+      }
+      await ctx.loadDetail(detail.chapter_no, expandedVersionId);
+    }
+  }
+}
+
 export async function handleGenerate(
   ctx: FlowCtx,
   override?: Partial<GenForm>,
 ) {
   const { novelId, liveNovelRef, mountedRef, form, useOutline, approvedOutlines, regenerateNo } = ctx;
+  if (ctx.creationMode === "manual_rewrite" && regenerateNo != null && ctx.selectedVersion) {
+    try {
+      const version = await deriveManualVersion(novelId, regenerateNo, ctx.selectedVersion.id, { source: "manual_rewrite" });
+      await ctx.loadChapters();
+      await ctx.loadDetail(regenerateNo, version.id);
+      ctx.setShowAddModal(false);
+      ctx.setRegenerateNo(null);
+      ctx.showToast(`第 ${regenerateNo} 章已创建人工重写草稿`, "success");
+    } catch (e) {
+      ctx.showToast((e as Error).message, "error");
+    }
+    return;
+  }
+  if (ctx.creationMode === "manual" && regenerateNo == null && !override) {
+    try {
+      const created = await createManualChapter(novelId, { title: form.title.trim() || undefined });
+      ctx.setActiveNo(created.chapter_no);
+      await ctx.loadChapters();
+      await ctx.loadDetail(created.chapter_no, created.versions.at(-1)?.id ?? null);
+      ctx.showToast(`第 ${created.chapter_no} 章人工草稿已创建，可以直接编辑正文。`, "success");
+    } catch (e) {
+      ctx.showToast((e as Error).message, "error");
+    }
+    return;
+  }
   ctx.setGenerating(true);
   // 写后设定自检：本次生成收集到的疑似漏项（SSE setting_warning），完成后弹右上角告警通知
   let collectedGaps: SettingGap[] = [];
@@ -203,6 +301,10 @@ export async function handleFinalizeSelected(ctx: FlowCtx) {
   if (savedText == null && ctx.editTargetRef.current != null) return;
   const { detail, selectedVersion, selectedIsFinal } = ctx;
   if (!detail || !selectedVersion || selectedIsFinal) return;
+  if (!selectedVersion.content.trim() && !(await ctx.flushSave())?.trim()) {
+    ctx.showToast("正文为空，不能定稿。请先补充正文。", "warning");
+    return;
+  }
   // 定稿一律需二次确认；签约未过签版本走强制定稿（红字危险弹窗，强制定稿逃生口）
   ctx.setConfirmDialog({ kind: selectedVersion.signing_blocked ? "finalize-force" : "finalize", savedText });
 }
@@ -357,6 +459,10 @@ export async function handleReview(ctx: FlowCtx) {
     ctx.showToast("该章尚未选定版本，无法评价。请先完成生成与选定。", "warning");
     return;
   }
+  if (!(savedText ?? selectedVersion.content).trim()) {
+    ctx.showToast("正文为空，不能评价。请先补充正文。", "warning");
+    return;
+  }
   // 旧大纲版本生成的正文只读：不能评价（防止拿旧正文的评价结果反向影响当前大纲语境的写作决策）
   if (isStaleForActiveOutline) {
     ctx.showToast(
@@ -420,13 +526,7 @@ export async function handleReview(ctx: FlowCtx) {
       } catch {
         /* 刷新失败不阻塞完成提示 */
       }
-      // 重新评价后：若评价期间作者没有继续改正文，本次评价对应当前内容 →
-      // 清除「待重新评价」提示；并刷新详情同步版本的签约标记（signing_blocked「未过签」徽标）。
-      if (ctx.editTextRef.current === (savedText ?? selectedVersion.content)) {
-        ctx.setReviewStale(false);
-        // 本次评价基于当前正文：把「已评价基线」更新为本次评价的内容，后续改动是否过期以此为准
-        ctx.reviewBaselineRef.current = ctx.editTextRef.current;
-      }
+      // 评价结果按 chapter_version_id 绑定当前版本；人工修改会派生新版本，不会污染旧评价。
       void getChapter(novelId, activeChapter.chapter_no).then(ctx.setDetail).catch(() => undefined);
       ctx.showToast(`第 ${activeChapter.chapter_no} 章评价完成，报告已展示在「评价与优化」中。`, "success");
     }

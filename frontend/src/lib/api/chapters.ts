@@ -37,6 +37,60 @@ export async function updateChapterVersion(
   return res.json();
 }
 
+/** 创建人工章节草稿；chapter_no 省略时由后端追加到最大章号之后。 */
+export async function createManualChapter(
+  novelId: string,
+  data: { chapter_no?: number; title?: string; content?: string; parent_version_id?: string },
+): Promise<ChapterDetail> {
+  const res = await fetch(`${BASE}/novels/${novelId}/chapters/manual`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw httpError(err.detail, "创建人工章节失败");
+  }
+  return res.json();
+}
+
+/** 仅人工用户动作修改章标题，并同步章级与目标版本标题。 */
+export async function updateChapterTitle(
+  novelId: string,
+  chapterNo: number,
+  data: { title: string; version_id?: string },
+): Promise<ChapterDetail> {
+  const res = await fetch(`${BASE}/novels/${novelId}/chapters/${chapterNo}/title`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw httpError(err.detail, "保存章节标题失败");
+  }
+  return res.json();
+}
+
+/** 从已有版本派生人工编辑版本，保留原版本并建立父子关系。 */
+export async function deriveManualVersion(
+  novelId: string,
+  chapterNo: number,
+  versionId: string,
+  data: { source?: string; content?: string; title?: string },
+): Promise<ChapterVersion> {
+  const res = await fetch(`${BASE}/novels/${novelId}/chapters/${chapterNo}/versions/${versionId}/derive`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw httpError(err.detail, "创建人工版本失败");
+  }
+  return res.json();
+}
+
 export async function selectVersion(
   novelId: string,
   chapterNo: number,

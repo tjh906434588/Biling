@@ -84,6 +84,7 @@ export function validateExtractFor(
   if (!selectedVersion) return "该章尚未选定版本，无法提取。请先完成生成与选定。";
   if (isStaleForActiveOutline)
     return "当前正文基于旧版大纲生成，只能查看，不能记进 AI 记忆。请先基于当前正在用的大纲重新生成一份正文，再定稿并记进 AI 记忆。";
+  if (!selectedVersion.content.trim()) return "正文为空，不能提取记忆。请先补充正文。";
   if (!selectedIsFinal)
     return "只有已定稿的正文才能记进 AI 记忆。请先在「本章操作」点「定稿」，再点「记进 AI 记忆」。";
   return null;

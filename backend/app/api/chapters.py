@@ -1,9 +1,10 @@
 """章节路由：列表 / 详情 / 版本选定回滚。"""
+import logging
 import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Chapter, ChapterVersion, Novel, QualityReview, StoryState
@@ -12,11 +13,16 @@ from app.schemas.chapter import (
     ChapterDetail,
     ChapterListItem,
     ChapterVersionRead,
+    DeriveVersionRequest,
+    ManualChapterRequest,
     ReviewRead,
     SelectVersionRequest,
+    UpdateChapterTitleRequest,
     UpdateVersionRequest,
 )
 from app.schemas.novel import ChapterInfoControl, InfoControl
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/novels", tags=["chapters"])
 
@@ -124,6 +130,90 @@ def list_chapters(novel_id: uuid.UUID, db: Session = Depends(get_db)):
     return items
 
 
+@router.post("/{novel_id}/chapters/manual", response_model=ChapterDetail)
+def create_manual_chapter(
+    novel_id: uuid.UUID,
+    payload: ManualChapterRequest,
+    db: Session = Depends(get_db),
+):
+    """创建人工空白章节或指定章节的人工重写版本；旧版本永不覆盖。"""
+    _get_novel(db, novel_id)
+    chapter_no = payload.chapter_no
+    if chapter_no is None:
+        chapter_no = (db.execute(select(func.max(Chapter.chapter_no)).where(Chapter.novel_id == novel_id)).scalar() or 0) + 1
+    if chapter_no < 1:
+        raise HTTPException(422, "章节号必须为正整数")
+    chapter = db.execute(select(Chapter).where(Chapter.novel_id == novel_id, Chapter.chapter_no == chapter_no)).scalar_one_or_none()
+    if chapter is None:
+        chapter = Chapter(novel_id=novel_id, chapter_no=chapter_no, title=payload.title or None, status="draft", content=None, word_count=0)
+        db.add(chapter)
+        db.flush()
+    parent_id = payload.parent_version_id
+    if parent_id is not None:
+        parent = db.get(ChapterVersion, parent_id)
+        if parent is None or parent.chapter_id != chapter.id:
+            raise HTTPException(404, "父版本不存在或不属于该章节")
+    version_no = (db.execute(select(func.max(ChapterVersion.version_no)).where(ChapterVersion.chapter_id == chapter.id)).scalar() or 0) + 1
+    version = ChapterVersion(
+        chapter_id=chapter.id, version_no=version_no, source="user_edit",
+        title=payload.title or chapter.title, content=payload.content or "", note=None,
+        parent_version_id=parent_id, is_active=False,
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+    logger.info("novel_id=%s 人工创建章节 chapter_no=%s version_no=%s", novel_id, chapter_no, version_no)
+    versions = db.execute(select(ChapterVersion).where(ChapterVersion.chapter_id == chapter.id).order_by(ChapterVersion.version_no)).scalars().all()
+    return ChapterDetail(chapter_no=chapter.chapter_no, title=chapter.title, status=chapter.status, versions=[ChapterVersionRead.model_validate(v) for v in versions])
+
+
+@router.patch("/{novel_id}/chapters/{chapter_no}/title", response_model=ChapterDetail)
+def update_chapter_title(
+    novel_id: uuid.UUID,
+    chapter_no: int,
+    payload: UpdateChapterTitleRequest,
+    db: Session = Depends(get_db),
+):
+    """人工更新章标题，并同步指定目标版本（缺省使用激活版本或最新版本）。"""
+    _get_novel(db, novel_id)
+    chapter = _get_chapter(db, novel_id, chapter_no)
+    target = db.get(ChapterVersion, payload.version_id) if payload.version_id else None
+    if target is not None and target.chapter_id != chapter.id:
+        raise HTTPException(404, "版本不属于该章节")
+    if target is None:
+        target = db.execute(select(ChapterVersion).where(ChapterVersion.chapter_id == chapter.id).order_by(ChapterVersion.is_active.desc(), ChapterVersion.version_no.desc())).scalars().first()
+    if target is None or target.source != "user_edit":
+        raise HTTPException(409, "只有人工编辑版本可以修改章节标题")
+    title = payload.title.strip() or None
+    chapter.title = title
+    target.title = title
+    db.commit()
+    versions = db.execute(select(ChapterVersion).where(ChapterVersion.chapter_id == chapter.id).order_by(ChapterVersion.version_no)).scalars().all()
+    return ChapterDetail(chapter_no=chapter.chapter_no, title=chapter.title, status=chapter.status, versions=[ChapterVersionRead.model_validate(v) for v in versions])
+
+
+@router.post("/{novel_id}/chapters/{chapter_no}/versions/{version_id}/derive", response_model=ChapterVersionRead)
+def derive_user_edit_version(
+    novel_id: uuid.UUID,
+    chapter_no: int,
+    version_id: uuid.UUID,
+    payload: DeriveVersionRequest,
+    db: Session = Depends(get_db),
+):
+    """从指定版本派生 user_edit 版本，保留原版本并建立版本树父子关系。"""
+    _get_novel(db, novel_id)
+    chapter = _get_chapter(db, novel_id, chapter_no)
+    parent = db.get(ChapterVersion, version_id)
+    if parent is None or parent.chapter_id != chapter.id:
+        raise HTTPException(404, "版本不存在或不属于该章节")
+    version_no = (db.execute(select(func.max(ChapterVersion.version_no)).where(ChapterVersion.chapter_id == chapter.id)).scalar() or 0) + 1
+    version = ChapterVersion(chapter_id=chapter.id, version_no=version_no, source="user_edit", title=payload.title if payload.title is not None else parent.title, content=payload.content if payload.content is not None else parent.content, note=parent.note, outline_id=parent.outline_id, parent_version_id=parent.id, is_active=False, info_control=parent.info_control)
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+    return ChapterVersionRead.model_validate(version)
+
+
 @router.get("/{novel_id}/chapters/{chapter_no}", response_model=ChapterDetail)
 def get_chapter(novel_id: uuid.UUID, chapter_no: int, db: Session = Depends(get_db)):
     """单章详情：全部版本（含 is_active 标记），供对比选择。"""
@@ -175,6 +265,8 @@ def update_version(
     if target is None or target.chapter_id != chapter.id:
         raise HTTPException(404, "版本不存在")
 
+    if target.source != "user_edit":
+        raise HTTPException(409, "AI 版本不能直接修改，请先派生人工编辑版本")
     if payload.content is not None:
         target.content = payload.content
     if payload.title is not None:
@@ -256,6 +348,9 @@ def select_version(
 
     # 签约未过签拦截：最新评价存在 severity=high 的红线 issue（内容红线/抄袭）→ 默认拒绝定稿；
     # force=true 为作者权威逃生口，强制通过。
+    if not target.content.strip():
+        raise HTTPException(422, "正文为空，不能定稿")
+
     if target.signing_blocked and not payload.force:
         # 取该版本最新一条评价中的红线 issue，拼成提示
         last_review = db.execute(

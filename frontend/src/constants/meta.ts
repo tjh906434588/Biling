@@ -8,6 +8,23 @@ import type { Tab } from "@/types/workspace";
 import { loadMetaDict } from "@/lib/meta-dict";
 
 /** 世界背景类型条目（枚举字典下发：value + label + hint；列表顺序即展示顺序）。 */
+/** 章节创建模式（后端 /api/meta 单一源）。 */
+export interface ChapterCreationModeOption {
+  value: "ai" | "manual";
+  label: string;
+}
+
+export async function loadChapterCreationModes(): Promise<ChapterCreationModeOption[]> {
+  try {
+    return await loadMetaDict<ChapterCreationModeOption[]>("chapter_creation_modes");
+  } catch {
+    return [
+      { value: "ai", label: "AI 生成" },
+      { value: "manual", label: "人工输入" },
+    ];
+  }
+}
+
 export interface BackgroundTypeOption {
   value: "realistic" | "alternate" | "pure_fantasy";
   label: string;

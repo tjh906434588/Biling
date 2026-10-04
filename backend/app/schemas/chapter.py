@@ -54,11 +54,33 @@ class SelectVersionRequest(BaseModel):
     force: bool = False  # 越过签约未过签拦截强制定稿（作者权威逃生口）
 
 
+class ManualChapterRequest(BaseModel):
+    """人工创建章节或已有章节人工重写的负载；content 允许为空。"""
+
+    chapter_no: Optional[int] = None
+    title: Optional[str] = None
+    content: str = ""
+    parent_version_id: Optional[uuid.UUID] = None
+
+
+class UpdateChapterTitleRequest(BaseModel):
+    """人工更新章节标题，同时同步章级和当前目标版本标题。"""
+
+    title: str = ""
+    version_id: Optional[uuid.UUID] = None
+
+
+class DeriveVersionRequest(BaseModel):
+    """从指定版本派生一个人工编辑版本，保留原版本。"""
+
+    content: Optional[str] = None
+    title: Optional[str] = None
+
+
 class UpdateVersionRequest(BaseModel):
     """作者手动编辑正文后的自动保存负载：仅更新传入的字段（content/title 均可选）。
 
-    编辑为「就地修改当前选中版本」：不改 source / 不新建版本，评价仍绑定该版本 id，
-    由前端在正文改动后提示作者重新评价，使评价与最新内容对齐。
+    正文保存只允许更新人工编辑版本；AI 版本的第一次人工修改由前端先派生 user_edit 子版本。
     """
 
     content: Optional[str] = None
