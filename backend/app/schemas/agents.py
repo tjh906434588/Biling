@@ -620,18 +620,18 @@ class ChapterPlanDimensionOption(BaseModel):
 
 
 class ChapterPlanDimension(BaseModel):
-    """一个可独立选择的维度：恰好 5 个候选选项，作者选其一或自定义输入。"""
+    """一个可独立选择的维度：恰好 3 个候选选项，作者选其一或自定义输入。"""
 
     key: str  # goal/pov/beats/ending_hook/entry/tone/protagonist_arc/core_conflict/satisfaction
     label: str  # 维度名（如 "本章目标/节奏"、"视角"）
     hint: str = ""  # 一句话说明该维度要定什么
-    options: list[ChapterPlanDimensionOption] = Field(..., min_length=5, max_length=5)
+    options: list[ChapterPlanDimensionOption] = Field(..., min_length=3, max_length=3)
 
 
 class ChapterPlanDimensionProposal(BaseModel):
     """章节规划师单次输出：只产出一个维度的候选选项。
 
-    逐维度流式生成：每次只让作者面对一个维度（5 个固定不重复选项 + 1 个自定义输入），
+    逐维度流式生成：每次只让作者面对一个维度（3 个固定不重复选项 + 1 个自定义输入），
     作者选定/输入后，规划师带着前面已定维度再生成下一个维度——而非一次性预生成全部。
     """
 

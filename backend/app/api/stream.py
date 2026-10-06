@@ -575,7 +575,7 @@ async def _propose_chapter_plan(
     """正文生成前置：逐维度咨询作者「本章规划」（大纲+章节合并方案）。
 
     章节规划师把本章规划拆成 3 个维度（核心事件/叙事方案/执行收尾）。**一次只生成一个维度**的
-    5 个固定不重复候选选项（+ 前端 1 个自定义输入），作者选定/输入后，把前面的选择作为上下文
+    3 个固定不重复候选选项（+ 前端 1 个自定义输入），作者选定/输入后，把前面的选择作为上下文
     再生成下一个维度，共 3 轮。作者任一轮跳过/超时 → 中断咨询返回 None（novelist 按既有方式
     续写，不阻断）。全部定完后组合成完整 plan dict（title/goal/chapter_function/pov/beats/
     ending_hook + 写法要点），由调用方落库为 approved 大纲（轻量版）并注入 novelist 参数据此
@@ -664,9 +664,9 @@ async def _propose_chapter_plan(
             o for o in (dim_data.get("options") or [])
             if isinstance(o, dict) and o.get("id") and str(o.get("text", "")).strip()
         ]
-        if len(options) != 5:
+        if len(options) != 3:
             logger.warning(
-                "novel_id=%s 第 %s 个维度（%s）候选数不是 5（%s），中断逐维度咨询",
+                "novel_id=%s 第 %s 个维度（%s）候选数不是 3（%s），中断逐维度咨询",
                 novel_id, idx + 1, key, len(options),
             )
             return None
@@ -721,9 +721,9 @@ async def _propose_chapter_plan(
                 o for o in (dim_data.get("options") or [])
                 if isinstance(o, dict) and o.get("id") and str(o.get("text", "")).strip()
             ]
-            if len(retry_options) != 5:
+            if len(retry_options) != 3:
                 logger.warning(
-                    "novel_id=%s 第 %s 个维度（%s）重试候选数不是 5（%s），沿用上一轮选项",
+                    "novel_id=%s 第 %s 个维度（%s）重试候选数不是 3（%s），沿用上一轮选项",
                     novel_id, idx + 1, key, len(retry_options),
                 )
                 options = fallback_repair_options(key, options, [reason])
@@ -746,7 +746,7 @@ async def _propose_chapter_plan(
             if sl:
                 uniq = sorted(set(sl))
                 slice_note = (
-                    f"。5 个候选锚定时间切片：{' / '.join(uniq)}（可选一致，也可在自定义框改切片）"
+                    f"。3 个候选锚定时间切片：{' / '.join(uniq)}（可选一致，也可在自定义框改切片）"
                     if len(uniq) == 1
                     else f"。注意：候选声明了不同时间切片：{' / '.join(uniq)}，请按同一切片比较"
                 )
@@ -1386,6 +1386,49 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
             except Exception:
                 logger.exception("novel_id=%s 大纲方向提案异常（不阻断生成）", payload.novel_id)
 
+        # 正文前置规划（approved 大纲）回滚快照：正文整体失败时恢复该章大纲原状——
+        # persist_chapter_plan 会插入新 approved 大纲并把同章旧 approved 降回 draft，
+        # 若正文生成失败而大纲残留，作者会看到「正文失败但大纲却显示已批准/旧版被降级」的错位。
+        # 必须在下面的 novelist 前置规划（_snapshot_chapter_plans 调用）之前定义，
+        # 否则调用发生在 def 执行前会抛 UnboundLocalError，导致已确认的本章规划不落库。
+        plan_snapshot: dict | None = None
+        plan_outline_id: str | None = None
+
+        def _snapshot_chapter_plans() -> None:
+            """拍下本章大纲各版本当前状态，供正文失败时回滚（persist_chapter_plan 会插入/降级版本）。"""
+            nonlocal plan_snapshot
+            from app.db.models import Outline
+
+            chapter_no = payload.params.get("chapter_no")
+            rows = task_db.query(Outline).filter(
+                Outline.novel_id == payload.novel_id, Outline.chapter_no == chapter_no
+            ).all()
+            plan_snapshot = {str(r.id): r.status for r in rows}
+
+        def _restore_chapter_plans() -> None:
+            """正文整体失败时恢复本章大纲：删除本次新插入的 approved 版，恢复被降级的旧批准版。"""
+            if plan_snapshot is None:
+                return
+            from app.db.models import Outline
+
+            chapter_no = payload.params.get("chapter_no")
+            rows = task_db.query(Outline).filter(
+                Outline.novel_id == payload.novel_id, Outline.chapter_no == chapter_no
+            ).all()
+            # ① 删除本次前置规划新插入的 approved 大纲
+            if plan_outline_id:
+                for r in rows:
+                    if str(r.id) == plan_outline_id:
+                        task_db.delete(r)
+                        break
+            # ② 恢复被 persist_chapter_plan 降级为 draft 的旧批准版
+            for r in task_db.query(Outline).filter(
+                Outline.novel_id == payload.novel_id, Outline.chapter_no == chapter_no
+            ).all():
+                if plan_snapshot.get(str(r.id)) == "approved" and r.status != "approved":
+                    r.status = "approved"
+            task_db.commit()
+
         # 正文生成前置：咨询作者「本章规划」（大纲+章节合并方案）。
         # 章节规划师基于与大纲师同一套素材把本章规划拆成 3 个维度（核心事件/叙事方案/执行收尾），
         # 作者逐项选择或自定义，组合的方案落库为 approved 大纲（轻量版）并注入 novelist 参数据此写正文；
@@ -1453,47 +1496,6 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
             n.era_research = prereq_snapshot["era_research"]
             n.background_type = prereq_snapshot["background_type"]
             n.genres = prereq_snapshot["genres"]
-            task_db.commit()
-
-        # 正文前置规划（approved 大纲）回滚快照：正文整体失败时恢复该章大纲原状——
-        # persist_chapter_plan 会插入新 approved 大纲并把同章旧 approved 降回 draft，
-        # 若正文生成失败而大纲残留，作者会看到「正文失败但大纲却显示已批准/旧版被降级」的错位。
-        plan_snapshot: dict | None = None
-        plan_outline_id: str | None = None
-
-        def _snapshot_chapter_plans() -> None:
-            """拍下本章大纲各版本当前状态，供正文失败时回滚（persist_chapter_plan 会插入/降级版本）。"""
-            nonlocal plan_snapshot
-            from app.db.models import Outline
-
-            chapter_no = payload.params.get("chapter_no")
-            rows = task_db.query(Outline).filter(
-                Outline.novel_id == payload.novel_id, Outline.chapter_no == chapter_no
-            ).all()
-            plan_snapshot = {str(r.id): r.status for r in rows}
-
-        def _restore_chapter_plans() -> None:
-            """正文整体失败时恢复本章大纲：删除本次新插入的 approved 版，恢复被降级的旧批准版。"""
-            if plan_snapshot is None:
-                return
-            from app.db.models import Outline
-
-            chapter_no = payload.params.get("chapter_no")
-            rows = task_db.query(Outline).filter(
-                Outline.novel_id == payload.novel_id, Outline.chapter_no == chapter_no
-            ).all()
-            # ① 删除本次前置规划新插入的 approved 大纲
-            if plan_outline_id:
-                for r in rows:
-                    if str(r.id) == plan_outline_id:
-                        task_db.delete(r)
-                        break
-            # ② 恢复被 persist_chapter_plan 降级为 draft 的旧批准版
-            for r in task_db.query(Outline).filter(
-                Outline.novel_id == payload.novel_id, Outline.chapter_no == chapter_no
-            ).all():
-                if plan_snapshot.get(str(r.id)) == "approved" and r.status != "approved":
-                    r.status = "approved"
             task_db.commit()
 
         # 蓝图生成前置：首次自动研究「年代×行业」（运行时按需，替代内置知识包）。

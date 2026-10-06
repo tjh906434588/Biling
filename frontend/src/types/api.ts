@@ -456,7 +456,7 @@ export interface StreamEventData {
 }
 
 /** 作者确认请求里的一个候选选项（radio 卡片）。
- * 章节规划采用「逐维度流式咨询」：每次确认只带一个维度的 5 个选项，
+ * 章节规划采用「逐维度流式咨询」：每次确认只带一个维度的 3 个选项，
  * 选项用 text 展示（选中后作为该维度取值）；作者也可自定义输入该维度。 */
 export interface AuthorConfirmOption {
   id: string;
