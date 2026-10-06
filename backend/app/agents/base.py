@@ -123,7 +123,6 @@ class Agent(ABC, Generic[T]):
                 else (route.temperature if route.temperature is not None else (ctx.temperature or self.temperature))
             ),
             max_tokens=ctx.max_tokens,
-            mock_output=None,
             db=self.db,
             on_reason=on_reason,
         )

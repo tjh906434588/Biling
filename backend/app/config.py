@@ -30,10 +30,6 @@ class Settings(BaseSettings):
     default_setting_model: str = "deepseek/deepseek-chat"
     default_chronicle_model: str = "deepseek/deepseek-chat"
 
-    # 未配置任何 API Key 时是否允许 Mock 流式输出（默认关闭）。
-    # 关闭：未接入模型时 AI 功能直接报错并引导去「模型」页配置；仅开发调试需要时设 true。
-    allow_mock_without_key: bool = False
-
     # 日志级别：DEBUG / INFO / WARNING / ERROR（控制日志音量，默认 INFO）
     log_level: str = "INFO"
 

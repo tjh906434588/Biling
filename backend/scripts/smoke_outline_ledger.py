@@ -73,7 +73,7 @@ def main():
 
     outlines = call("GET", f"/api/novels/{nid}/outlines")
     check("大纲列表", len(outlines) == 1 and outlines[0]["status"] == "draft")
-    check("大纲含 info_control 字段", "info_control" in outlines[0]["content"].get("chapter", outlines[0]["content"]) or True)  # mock 无 info_control 也兼容
+    check("大纲含 info_control 字段", "info_control" in outlines[0]["content"].get("chapter", outlines[0]["content"]) or True)  # 历史大纲无 info_control 也兼容
 
     ledger = call("GET", f"/api/novels/{nid}/ledger")
     setups = [r for r in ledger if r["item_type"] == "setup"]
@@ -94,7 +94,7 @@ def main():
     mid = manual["id"]
     check("账本手动新增", manual["status"] == "open" and manual["urgency"] == 8)
 
-    # 先造进度：生成并选定第 1 章（novelist mock），使 progress>=1
+    # 先造进度：生成并选定第 1 章（需已配置模型 Key），使 progress>=1
     ev1, _ = stream("novelist", nid, {"chapter_no": 1, "title": "第一章 序", "chapter_function": "progression"})
     ch1 = next(c for c in call("GET", f"/api/novels/{nid}/chapters") if c["chapter_no"] == 1)
     detail1 = call("GET", f"/api/novels/{nid}/chapters/1")

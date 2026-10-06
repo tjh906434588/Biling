@@ -590,7 +590,7 @@ def _pick_fallback_default(db: Session, exclude: tuple[str, str | None]) -> Opti
 
 @router.delete("/keys/{provider}", status_code=204)
 def delete_provider_key(provider: str, db: Session = Depends(get_db)):
-    """删除服务商级兜底 Key（回落环境变量 / Mock）。
+    """删除服务商级兜底 Key（回落环境变量）。
 
     已接入模型各自持有独立 Key，不受影响（各负责各）。
     默认模型若既无模型专属 Key、服务商级 Key 又被删除、且无环境变量兜底，

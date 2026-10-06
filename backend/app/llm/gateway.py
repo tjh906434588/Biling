@@ -1,8 +1,7 @@
-"""LiteLLM 网关封装：流式 completion + 无 Key 时 Mock 兜底（默认关闭，BILING_ALLOW_MOCK_WITHOUT_KEY=true 开启，仅开发调试）。
+"""LiteLLM 网关封装：流式 completion。未配置 API Key 时直接报错，无 Mock 演示。
 
 API Key 优先级：页面配置（provider_keys 表）→ 环境变量。页面保存后实时生效，无需重启。
 """
-import asyncio
 import logging
 import os
 import time
@@ -16,13 +15,10 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
 from app.db.models import AppPreference, ProviderKey
 from app.llm.routes import RouteConfig
 
 logger = logging.getLogger(__name__)
-
-settings = get_settings()
 
 # 推理模型（deepseek 系）思考与正文共享输出 token 预算：max_tokens 缺省时部分服务端
 # 会用很小的默认上限，思考过程一旦吃光预算就只思考不输出正文（正文为空）。
@@ -149,42 +145,12 @@ def has_key_for(provider: str, db: Optional[Session] = None) -> bool:
     return False
 
 
-async def _mock_stream(
-    messages: list[dict], route: RouteConfig, delta: float = 0.02, mock_output: str | None = None
-) -> AsyncIterator[str]:
-    """Mock 流：无 Key 时用于验证 SSE 链路与前端打字机效果。"""
-    if mock_output:
-        # 有合法样例：按 agent schema 输出，校验/入库链路也能完整演示
-        for chunk in _chunk(mock_output, size=40):
-            yield chunk
-            await asyncio.sleep(delta)
-        return
-    header = (
-        f"[Mock·演示模式：未配置 {route.provider} API Key（BILING_ALLOW_MOCK_WITHOUT_KEY=true）] "
-        f"任务={route.task_type} 模型={route.full_model}\n\n"
-    )
-    body = (
-        "这是笔灵的 Mock 演示输出（仅开发调试用）。配置对应 provider 的 API Key 后，"
-        "LiteLLM 网关会自动切换为真实模型流式生成。\n\n"
-        "演示内容不落库、不代表真实质量，正式使用请到「模型」页填入 API Key。"
-    )
-    for chunk in _chunk(header + body, size=40):
-        yield chunk
-        await asyncio.sleep(delta)
-
-
-def _chunk(text: str, size: int) -> list[str]:
-    """按固定长度把文本切成若干块（Mock 流按块模拟流式输出效果）。"""
-    return [text[i : i + size] for i in range(0, len(text), size)]
-
-
 async def stream_completion(
     messages: list[dict],
     route: RouteConfig,
     *,
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
-    mock_output: str | None = None,
     db: Optional[Session] = None,
     on_reason: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> AsyncIterator[str]:
@@ -199,10 +165,6 @@ async def stream_completion(
 
     logger.info("[gateway] stream_completion enter provider=%s model=%s", route.provider, route.model)
     if not has_usable_key(route.provider, route.model, db):
-        if settings.allow_mock_without_key:
-            async for piece in _mock_stream(messages, route, mock_output=mock_output):
-                yield piece
-            return
         raise RuntimeError(
             f"AI 模型未接入：当前请求使用 {route.provider}/{route.model}，但该模型尚未配置 API Key。"
             f"请到「模型」页添加模型并填入 API Key（也可在弹窗内测试连接），配置后再使用 AI 功能。"
