@@ -2,6 +2,7 @@
 
 API Key 优先级：页面配置（provider_keys 表）→ 环境变量。页面保存后实时生效，无需重启。
 """
+import asyncio
 import logging
 import os
 import time
@@ -145,6 +146,141 @@ def has_key_for(provider: str, db: Optional[Session] = None) -> bool:
     return False
 
 
+class LLMError(RuntimeError):
+    """LLM 调用失败：统一分类 + 用户可读中文提示。
+
+    category ∈ {no_key, quota, rate_limit, timeout, auth, connection,
+                bad_request, server, other}
+    friendly：面向作者的中文提示（含下一步指引）；__str__ 返回 friendly，
+    使 pipeline / stream 的 str(e) 自动透传友好文案（任务 error、stream_error 事件同源）。
+    """
+
+    def __init__(self, category: str, friendly: str, original: str = ""):
+        super().__init__(friendly)
+        self.category = category
+        self.friendly = friendly
+        self.original = original
+
+    def __str__(self) -> str:  # type: ignore[override]
+        return self.friendly
+
+
+# 额度/套餐耗尽信号词（用于 429/400 错误里区分"额度问题"与"普通限流/参数问题"）
+_QUOTA_WORDS = (
+    "quota", "insufficient", "exhausted", "balance", "arrear",
+    "accountarrearage", "资源包", "额度", "套餐", "欠费", "已用尽", "充值",
+)
+# 超长输入信号词（BadRequest 里区分"超上下文"与其它参数错误）
+_LENGTH_WORDS = ("context", "length", "token limit", "prompt too long", "超长", "长度", "超出")
+
+
+def _quota_hint(is_plan: bool) -> str:
+    if is_plan:
+        return (
+            "模型的订阅套餐额度/次数已用尽或已到期，请求被拒绝。"
+            "请到服务商控制台续费/升级套餐后重试，或切换到其他已接入的模型继续生成。"
+        )
+    return (
+        "模型账户的 API 额度/余额已用尽或欠费，请求被拒绝。"
+        "请到服务商控制台充值或开通额度后重试，或切换到其他已接入的模型继续生成。"
+    )
+
+
+def _friendly_llm_error(e: Exception, provider: str) -> LLMError:
+    """把 litellm / 底层网络异常翻译成带分类的中文提示（后端统一在此处"说人话"）。
+
+    顺序敏感：InsufficientQuotaError 继承自 RateLimitError，必须最先判断；
+    400/429 里先按关键词区分「额度耗尽」再落普通限流/参数错误。
+    """
+    name = type(e).__name__
+    status = getattr(e, "status_code", None) or getattr(e, "status", None)
+    msg = str(e)
+    low = msg.lower()
+    is_plan = provider in ("volcengine-coding", "volcengine-agent")
+
+    def hit(words: tuple[str, ...]) -> bool:
+        return any(w in low for w in words)
+
+    def is_rate() -> bool:
+        # 普通限流信号：优先归 rate_limit，避免与配额超限（同样含 limit/exceeded）混淆
+        return "rate limit" in low or "too many" in low or "requests per" in low
+
+    def hit_quota() -> bool:
+        if is_rate():
+            return False
+        return hit(_QUOTA_WORDS) or "exceeded" in low or "capacity" in low
+
+    try:  # litellm 异常类（惰性导入，避免顶层 import 触发模型成本表联网）
+        from litellm.exceptions import (  # noqa: F401
+            APIConnectionError, APITimeoutError, AuthenticationError,
+            BadRequestError, InsufficientQuotaError, InternalServerError,
+            RateLimitError, Timeout,
+        )
+        classes_ok = True
+    except Exception:
+        classes_ok = False
+
+    if classes_ok and isinstance(e, InsufficientQuotaError):
+        return LLMError("quota", _quota_hint(is_plan), msg)
+    if classes_ok and isinstance(e, RateLimitError):
+        if hit_quota():
+            return LLMError("quota", _quota_hint(is_plan), msg)
+        return LLMError(
+            "rate_limit",
+            "请求触发限流（429），请稍等片刻后重试；若持续限流，可降低并发或联系服务商提升限额。",
+            msg,
+        )
+    if status == 429:
+        if hit_quota():
+            return LLMError("quota", _quota_hint(is_plan), msg)
+        return LLMError(
+            "rate_limit",
+            "请求触发限流（429），请稍等片刻后重试；若持续限流，可降低并发或联系服务商提升限额。",
+            msg,
+        )
+    if (classes_ok and isinstance(e, AuthenticationError)) or status == 401:
+        return LLMError(
+            "auth",
+            "模型 API Key 无效或无权限（401），请到「模型」页检查并更新该模型的 API Key 后重试。",
+            msg,
+        )
+    if status == 403:
+        if hit(_QUOTA_WORDS):
+            return LLMError("quota", _quota_hint(is_plan), msg)
+        return LLMError(
+            "auth",
+            "模型访问被拒绝（403），请检查该模型的 API Key 是否有权限调用当前模型。",
+            msg,
+        )
+    if (classes_ok and isinstance(e, (APITimeoutError, Timeout, asyncio.TimeoutError))) or "timeout" in low:
+        return LLMError(
+            "timeout",
+            "模型响应超时（网络或服务端繁忙），请稍后重试；若反复超时，可切换到更快的模型。",
+            msg,
+        )
+    if (classes_ok and isinstance(e, APIConnectionError)) or "connection" in name.lower() or hit(
+        ("connecterror", "connectionerror", "network", "unreachable", "getaddrinfo", "econnrefused", "name or service")
+    ):
+        return LLMError(
+            "connection",
+            "无法连接到模型服务（网络异常或服务不可达），请检查网络后重试。",
+            msg,
+        )
+    if status == 400 or (classes_ok and isinstance(e, BadRequestError)):
+        if hit(_LENGTH_WORDS):  # 先判超上下文：最常见且提示最明确
+            return LLMError(
+                "bad_request",
+                "输入内容超出模型上下文上限，请精简内容（或分段处理）后重试。",
+                msg,
+            )
+        if hit_quota():
+            return LLMError("quota", _quota_hint(is_plan), msg)
+        return LLMError("bad_request", f"请求被模型服务拒绝（400）：{msg[:200]}", msg)
+    if status is not None and isinstance(status, int) and 500 <= status < 600:
+        return LLMError("server", "模型服务端暂时不可用（5xx），请稍后重试。", msg)
+    return LLMError("other", f"模型调用失败：{msg[:300]}", msg)
+
+
 async def stream_completion(
     messages: list[dict],
     route: RouteConfig,
@@ -177,35 +313,41 @@ async def stream_completion(
     litellm_model = litellm_model_name(route.provider, route.model)
     t0 = time.time()
     logger.info("[gateway] acompletion start model=%s api_base=%s", litellm_model, api_base)
-    response = await acompletion(
-        model=litellm_model,
-        messages=messages,
-        temperature=temp,
-        max_tokens=tokens,
-        stream=True,
-        api_base=api_base or route.api_base,
-        api_key=api_key,
-        timeout=LLM_REQUEST_TIMEOUT_SECONDS,  # 防止请求挂起时后台任务永久 running
-    )
+    try:
+        response = await acompletion(
+            model=litellm_model,
+            messages=messages,
+            temperature=temp,
+            max_tokens=tokens,
+            stream=True,
+            api_base=api_base or route.api_base,
+            api_key=api_key,
+            timeout=LLM_REQUEST_TIMEOUT_SECONDS,  # 防止请求挂起时后台任务永久 running
+        )
+    except Exception as e:  # 连接/鉴权/限流/额度/超时等，统一分类成中文提示
+        raise _friendly_llm_error(e, route.provider) from e
     logger.info("[gateway] acompletion returned in %.1fs", time.time() - t0)
     yielded_any = False
     finish_reason: Optional[str] = None
-    async for chunk in response:
-        choices = chunk.choices or []
-        if not choices:
-            continue
-        delta = choices[0].delta
-        # 推理过程文字（deepseek 系模型）：单独回调，供前端滚动展示"思考中"，避免用户干等
-        reason = getattr(delta, "reasoning_content", None)
-        if reason and on_reason is not None:
-            await on_reason(reason)
-        content = getattr(delta, "content", None)
-        if content:
-            yielded_any = True
-            yield content
-        fr = choices[0].finish_reason
-        if fr:
-            finish_reason = fr
+    try:
+        async for chunk in response:
+            choices = chunk.choices or []
+            if not choices:
+                continue
+            delta = choices[0].delta
+            # 推理过程文字（deepseek 系模型）：单独回调，供前端滚动展示"思考中"，避免用户干等
+            reason = getattr(delta, "reasoning_content", None)
+            if reason and on_reason is not None:
+                await on_reason(reason)
+            content = getattr(delta, "content", None)
+            if content:
+                yielded_any = True
+                yield content
+            fr = choices[0].finish_reason
+            if fr:
+                finish_reason = fr
+    except Exception as e:  # 流式中途断连/服务端错误，同样分类
+        raise _friendly_llm_error(e, route.provider) from e
     if not yielded_any:
         # 空输出诊断：推理模型偶发只思考不输出正文（服务端截断/预算耗尽），
         # 记录 finish_reason（length=思考吃光输出预算；stop=模型主动停）供排查。
