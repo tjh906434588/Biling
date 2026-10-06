@@ -81,34 +81,6 @@ suggestion 铁律（最重要）：作者选「按建议处理」时，这条建
 class BlueprintPrecheckerAgent(Agent[BlueprintPrecheck]):
     task_type = "check"
     temperature = 0.2
-    mock_output = {
-        "issues": [
-            {
-                "type": "conflict",
-                "item": "背景类型×文档设定",
-                "issue": "项目世界背景类型为 realistic（现实），但导入文档写的是主角绑定修炼系统、宗门林立、御剑飞行，属于纯架空世界，二者冲突。",
-                "source": "「觉醒修炼系统后，他踏入青云宗山门，御剑而行」",
-                "suggestion": "若文档才是真正想要的设定，请在项目设置把背景类型改为 pure_fantasy；若坚持现实背景，则改写为：『入职第一天，他意外觉醒一套天赋洞察系统，只要接触档案就能看见该生与生俱来的禀赋分布（逻辑思维/动手实操/艺术感悟等九维），无需主动触发。』",
-                "options": ["apply", "delegate"],
-            },
-            {
-                "type": "conflict",
-                "item": "主角入职时间",
-                "issue": "前文说 2000 年入职江城人才信息服务部，后文又说 2010 年入职，时间线打架。",
-                "source": "「2000年入职」「直到2010年才进入…」",
-                "suggestion": "统一为前文的 2000 年入职，后文改为 2010 年离职创业。",
-                "options": ["apply", "delegate"],
-            },
-            {
-                "type": "vague",
-                "item": "主角金手指",
-                "issue": "只写了主角有特殊能力，但没有写清具体是什么、怎么触发。",
-                "source": "「他拥有某种特殊的能力」",
-                "suggestion": "改写为：『入职第一天，他意外觉醒一套天赋洞察系统，只要接触考生档案，就能看见该生与生俱来的禀赋分布（逻辑思维/动手实操/艺术感悟等九维），无需主动触发。』",
-            },
-        ]
-    }
-
     def __init__(self, db: Session):
         super().__init__(db)
 

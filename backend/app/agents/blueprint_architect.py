@@ -123,28 +123,6 @@ IMPORT_MAX_TOKENS = 16384
 class BlueprintArchitectAgent(Agent[Blueprint]):
     task_type = "setting"
     temperature = 0.3
-    mock_output = {
-        "title": "《灰烬与晨星》",
-        "logline": "一个记忆被篡改的占卜师之子，为找回真实的自己踏上旅途。",
-        "theme": "记忆与身份的代价",
-        "core_conflict": "主角必须忘记爱人才能拯救世界",
-        "total_word_count": "240万—260万字",
-        "total_chapters": "800章",
-        "chapter_word_count": "3000字/章",
-        "world_rules": [{"name": "魔法消耗寿命", "detail": "每次施法扣减寿命", "constraints": ["无法逆转"]}],
-        "character_arcs": [{"character": "岚", "personality": "冷漠坚韧", "start": "冷漠的占卜师", "end": "为守护而自我牺牲", "turning_points": ["第2卷发现身世"]}],
-        "volumes": [{"no": 1, "name": "灰烬", "focus": "结识与背叛", "chapters_range": "1-20", "word_count": "25万字", "chapter_count": "85章"}],
-        "opening_anchor": {"first_chapter_slice": "穿越次日", "golden_finger_reveal_chapter": 1},
-        "foreshadowing_plan": [{"plant_chapter": 5, "payoff_chapter": 38, "desc": "主角左手的印记"}],
-        "subplots": ["秘史组织沿主线暗中追踪主角"],
-        "timeline": [
-            {"period": "2000年—2010年", "year": 2000, "entity": "主角", "event": "进入江城人才信息服务部打工", "status": "established"},
-            {"period": "2010年至今", "year": 2010, "entity": "主角", "event": "离开打工单位，自主创业", "status": "changed"},
-        ],
-        "notes": ["文风基调：冷峻克制，少抒情（示例）"],
-        "blueprint_conflicts": [],
-    }
-
     def __init__(self, db: Session):
         super().__init__(db)
 

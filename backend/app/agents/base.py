@@ -64,7 +64,6 @@ class Agent(ABC, Generic[T]):
     # 温度是否固定用本 agent 默认值（不走路由配置）。默认 False = 路由配置的温度优先；
     # 少数任务（如修订师，需稳定输出）设 True，避免被同 task_type 的高温（如创作 0.8）带偏。
     temperature_fixed: bool = False
-    mock_output: dict | None = None  # 无 Key 时 Mock 流的合法 JSON 样例（演示完整链路）
 
     def __init__(self, db: Session):
         self.db = db
@@ -124,7 +123,7 @@ class Agent(ABC, Generic[T]):
                 else (route.temperature if route.temperature is not None else (ctx.temperature or self.temperature))
             ),
             max_tokens=ctx.max_tokens,
-            mock_output=json.dumps(self.mock_output, ensure_ascii=False) if self.mock_output else None,
+            mock_output=None,
             db=self.db,
             on_reason=on_reason,
         )

@@ -53,22 +53,6 @@ SYSTEM_PROMPT = """你是「提取师」，把成稿章节压缩为结构化记�
 class ExtractorAgent(Agent[StoryStateExtract]):
     task_type = "extract"
     temperature = 0.15
-    mock_output = {
-        "summary": "主角发现自己的记忆可能是伪造的，决定前往旧档案馆查证出生记录。",
-        "key_events": [{"event": "主角左手印记再次发光", "importance": "high"}, {"event": "主角决定调查身世", "importance": "high"}],
-        "character_states": [{"character": "主角", "state": "开始怀疑记忆真实性", "confidence": "high"}],
-        "world_state_changes": [],
-        "new_foreshadowing": [{"desc": "旧档案馆里有一份本不该存在的出生记录", "hint": "指向主角身世真相", "suggested_payoff_chapter": None}],
-        "resolved_foreshadowing": [],
-        "advanced_foreshadowing": [{"ledger_id": "00000000-0000-0000-0000-000000000001", "note": "主角确认左手印记与旧档案馆的关联"}],
-        "unresolved_hooks": [{"hook": "岚的真实身份", "since_chapter": 1}],
-        "relations": [{"source": "主角", "relation": "追查", "target": "旧档案馆", "confidence": "high"}],
-        "superseded_relations": [],
-        "entity_detail_updates": [{"entity": "旧档案馆", "facts": {"地点": "旧王城西区"}, "source": "旧档案馆位于旧王城西区", "confidence": "high"}],
-        "new_characters": [{"name": "老掌柜", "aliases": ["掌柜"], "role_rank": "minor", "description": "旧王城西区一家旧书店的掌柜，帮主角辨认旧档案上的字迹", "personality": ["谨慎"], "appearance": "", "role_in_story": "为主角提供查证线索", "relations_to_main": "与主角初识，因档案查证结缘", "source_quote": "柜台后的老掌柜眯着眼看了半天"}],
-        "next_chapter_implications": ["主角将潜入旧档案馆"],
-    }
-
     def __init__(self, db: Session):
         super().__init__(db)
 

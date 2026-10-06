@@ -77,51 +77,6 @@ SCENE_PROPOSAL_PROMPT = """你是「场景规划师」（提案模式）。作�
 class ScenePlannerAgent(Agent[ScenePlanProposal]):
     task_type = "planning"
     temperature = 0.4
-    mock_output = {
-        "scenes": [
-            {
-                "scene_index": 1,
-                "fields": [
-                    {"field": "location", "label": "地点", "hint": "…", "options": [
-                        {"id": "s1_location_1", "text": "拍卖行二楼包厢"},
-                        {"id": "s1_location_2", "text": "拍卖行大厅竞价区"},
-                        {"id": "s1_location_3", "text": "拍卖行后台寄存处"},
-                        {"id": "s1_location_4", "text": "拍卖行走廊休息角"},
-                        {"id": "s1_location_5", "text": "拍卖行大门外台阶"},
-                    ]},
-                    {"field": "participants", "label": "出场人物", "hint": "…", "options": [
-                        {"id": "s1_participants_1", "text": "主角、拍卖师、神秘买家"},
-                        {"id": "s1_participants_2", "text": "主角、拍卖师"},
-                        {"id": "s1_participants_3", "text": "主角、神秘买家、侍应"},
-                        {"id": "s1_participants_4", "text": "主角、同行竞拍者"},
-                        {"id": "s1_participants_5", "text": "主角、拍卖行经理、鉴定师"},
-                    ]},
-                    {"field": "goal", "label": "目标", "hint": "…", "options": [
-                        {"id": "s1_goal_1", "text": "主角想低调拍下那件赝品"},
-                        {"id": "s1_goal_2", "text": "主角确认赝品是否在场"},
-                        {"id": "s1_goal_3", "text": "主角试探神秘买家的底细"},
-                        {"id": "s1_goal_4", "text": "主角在预算内拿下目标拍品"},
-                        {"id": "s1_goal_5", "text": "主角先按兵不动观察局势"},
-                    ]},
-                    {"field": "conflict", "label": "冲突", "hint": "…", "options": [
-                        {"id": "s1_conflict_1", "text": "神秘买家突然抬价，主角资金不足"},
-                        {"id": "s1_conflict_2", "text": "拍卖师报错起拍价，现场起哄"},
-                        {"id": "s1_conflict_3", "text": "鉴定师当众质疑拍品来源"},
-                        {"id": "s1_conflict_4", "text": "主角被人认出，身份将暴露"},
-                        {"id": "s1_conflict_5", "text": "有人抢先以底价拿走了拍品"},
-                    ]},
-                    {"field": "outcome", "label": "结果", "hint": "…", "options": [
-                        {"id": "s1_outcome_1", "text": "主角放弃竞价，却发现神秘买家是自己人"},
-                        {"id": "s1_outcome_2", "text": "主角借势压价成功拿下拍品"},
-                        {"id": "s1_outcome_3", "text": "主角按兵不动，记住神秘买家"},
-                        {"id": "s1_outcome_4", "text": "主角暴露身份，被请进贵宾室"},
-                        {"id": "s1_outcome_5", "text": "主角空手离场，但拿到关键线索"},
-                    ]},
-                ],
-            }
-        ]
-    }
-
     def __init__(self, db: Session):
         super().__init__(db)
 

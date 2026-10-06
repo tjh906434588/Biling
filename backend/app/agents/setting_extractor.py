@@ -102,25 +102,6 @@ class SettingExtractorAgent(Agent[ConceptExtraction]):
     # 提取类：从正文/文档提取设定实体，归入 extract 档（轻量），不吃创作档高温
     task_type = "extract"
     temperature = 0.3
-    mock_output = {
-        "concepts": [
-            {
-                "type": "character",
-                "name": "岚",
-                "raw_quote": "女主是个占卜师",
-                "extracted": {
-                    "description": "银发红瞳的占卜师，冷静隐忍，是故事的女主。",
-                    "appearance": "银发红瞳",
-                    "personality": ["冷静", "隐忍"],
-                    "role_in_story": "女主",
-                },
-                "conflicts_with_existing": [],
-                "questions_to_ask": ["她的魔法来源是什么？"],
-            }
-        ],
-        "follow_up_questions": [],
-    }
-
     def __init__(self, db: Session):
         super().__init__(db)
 

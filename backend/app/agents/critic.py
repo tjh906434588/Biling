@@ -128,63 +128,6 @@ SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + PLATFORM_SIGNING_HEADER + "\n\n" + PLAT
 class CriticAgent(Agent[ReviewOutput]):
     task_type = "review"
     temperature = 0.3
-    mock_output = {
-        "overall_score": 78,
-        "rubric": {
-            "blueprint_adherence": {
-                "score": 80,
-                "comment": "主冲突推进符合蓝图第三卷走向",
-                "evidence": "原文引用：'他握紧了那份契约'，对应伏笔账本条目#3",
-            },
-            "consistency": {
-                "score": 75,
-                "comment": "与上一章故事状态一致，无矛盾",
-                "evidence": "原文引用：'晨雾散去'，衔接上一章结尾的雨天",
-            },
-            "character_voice": {
-                "score": 70,
-                "comment": "主角口吻基本稳定，略有说教感",
-                "evidence": "原文引用：'你不懂，这不一样'",
-            },
-            "pacing": {
-                "score": 85,
-                "comment": "符合 chapter_function=buildup 的渐进节奏",
-                "evidence": "原文引用：'脚步声由远及近，越来越快'",
-            },
-            "style_compliance": {
-                "score": 76,
-                "comment": "语言自然，个别句子偏书面",
-                "evidence": "原文引用：'他望向远方'",
-            },
-            "foreshadowing_accountability": {
-                "score": 72,
-                "comment": "成功回收一条伏笔，新埋一条",
-                "evidence": "原文引用：'那枚铜币滚落在地'，对应账本条目的 payoff",
-            },
-            "reader_retention": {
-                "score": 74,
-                "comment": "开篇直接进冲突（追债人破门），章末断在信封上的红字悬念，期待感尚可",
-                "evidence": "原文引用：'门被一脚踹开'",
-            },
-            "retention_hooks": {
-                "opening_hook": 85,
-                "ending_hook": 68,
-                "tension": 75,
-                "anticipation": 78,
-            },
-        },
-        "issues": [
-            {
-                "severity": "low",
-                "type": "pacing",
-                "desc": "第二章中段节奏稍缓",
-                "suggested_fix": "压缩环境描写段落",
-            }
-        ],
-        "strengths": ["对话推进冲突自然", "伏笔回收清晰"],
-        "revision_hints": ["减少'他望向远方'类空镜", "加强配角存在感"],
-    }
-
     def __init__(self, db: Session):
         super().__init__(db)
 

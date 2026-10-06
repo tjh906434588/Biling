@@ -78,25 +78,6 @@ FUNC_LABELS = {
 class OutlinerAgent(Agent[ChapterOutline]):
     task_type = "setting"
     temperature = 0.3
-    mock_output = {
-        "chapter": {
-            "no": 3,
-            "title": "灰烬来信",
-            "goal": "揭示主角身份并触发与岚的第一次冲突",
-            "chapter_function": "revelation",
-            "pov": "岚",
-            "beats": [
-                {"beat_no": 1, "type": "scene", "pov": "岚", "content": "占卜房收到署名不明的信", "length_hint": "1200字", "emotion": "不安"}
-            ],
-            "characters": ["岚", "主角"],
-            "locations": ["旧王城·占卜房"],
-            "conflicts": [{"type": "external", "with": "主角", "stakes": "身份暴露"}],
-            "plant_foreshadowing": [{"desc": "信的落款只有半枚印记", "payoff_hint": "与主角左手印记呼应", "latest_payoff_chapter": 20}],
-            "resolve_foreshadowing": [],
-            "thread_updates": [{"thread": "岚的伪装", "new_state": "被主角看穿破绽"}],
-        }
-    }
-
     def __init__(self, db: Session):
         super().__init__(db)
 

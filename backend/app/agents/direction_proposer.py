@@ -38,14 +38,6 @@ SYSTEM_PROMPT = """你是「大纲方向提案师」。在大纲师正式写某�
 class DirectionProposerAgent(Agent[DirectionProposal]):
     task_type = "setting"
     temperature = 0.4
-    mock_output = {
-        "directions": [
-            {"id": "a", "label": "正面推进主线", "desc": "兑现账本里紧迫度最高的伏笔，让主角与对手正面交锋"},
-            {"id": "b", "label": "引入新变数", "desc": "一个新角色/新线索搅动当前局面，打破僵局"},
-            {"id": "c", "label": "深化人物关系", "desc": "借日常场景推进主角与关键人物的关系，埋下后续转折"},
-        ]
-    }
-
     def __init__(self, db: Session):
         super().__init__(db)
 

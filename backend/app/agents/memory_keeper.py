@@ -46,16 +46,6 @@ class MemoryKeeperAgent(Agent[ChronicleOutput]):
     # 归入 creation 会被创作档的高温（如 0.8）带偏，归入 extract 会与正文提取挤同一模型。
     task_type = "chronicle"
     temperature = 0.3
-    mock_output = {
-        "main_line": "主角在第 10 章追查身世真相，正前往旧档案馆（编年师 Mock）。",
-        "volumes_progress": [{"name": "主线", "status": "推进中", "progress": "身世线索：档案馆"}, {"name": "权谋线", "status": "搁置", "progress": "尚未展开"}],
-        "character_goals": [{"character": "主角", "goal": "查明身世", "progress": "已发现记忆伪造，去档案馆"}],
-        "active_foreshadowing": [{"desc": "主角左手印记发光", "since_chapter": 1, "hint": "指向血脉真相"}],
-        "established_world": ["本世界存在旧档案馆，保存出生记录"],
-        "open_threads": ["岚的真实身份"],
-        "next_direction": "主角潜入旧档案馆查找记录",
-    }
-
     def __init__(self, db: Session):
         super().__init__(db)
 

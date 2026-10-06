@@ -615,30 +615,6 @@ def _normalize_chars(text: str) -> list[str]:
 class ChapterPlannerAgent(Agent[ChapterPlanDimensionProposal]):
     task_type = "planning"
     temperature = 0.4
-    mock_output = {
-        "dimension": {
-            "key": "goal",
-            "label": "核心事件",
-            "hint": "这一章发生的最核心的一件事（谁/做什么/结果，一句话）。事件要同时给出『冲突落点』与『主角反应弧』",
-            "options": [
-                {
-                    "id": "goal_1",
-                    "time_slice": "入职第一天",
-                    "core_conflict": "主角想验证天赋清单真伪，却被『新人别乱插话』的现实摁住，冲突落在要不要开口提醒家长的那场戏",
-                    "protagonist_arc": "从『当透明新人』到『忍不住开始观察、试探验证』",
-                    "text": "报到时老板递来一摞待联系考生档案，主角翻开第一页浮出该考生的天赋清单，适配推荐却是短横线，他揉眼再看字迹未消",
-                },
-                {
-                    "id": "goal_2",
-                    "time_slice": "入职第一天",
-                    "core_conflict": "主角看到考生天赋卓越而家长却说孩子没出息，冲突落在『说还是不说』",
-                    "protagonist_arc": "从『张不开口』到『心里埋下验证的念头』",
-                    "text": "前台接待咨询家长时，主角视野里突然叠加半透明面板，男孩空间想象卓越，家长却说他没出息",
-                },
-            ],
-        }
-    }
-
     def __init__(self, db: Session):
         super().__init__(db)
 
