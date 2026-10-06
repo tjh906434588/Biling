@@ -18,12 +18,14 @@ export async function getChapter(novelId: string, chapterNo: number): Promise<Ch
   return res.json();
 }
 
-/** 作者手动编辑正文后的就地自动保存：就地更新当前选中版本（不新建版本），返回更新后的版本。 */
+/** 作者手动编辑正文后的就地自动保存：就地更新当前选中版本（不新建版本），返回更新后的版本。
+ *  format_only=true 为「格式化排版」专用保存：允许对任意版本（含 AI 版本）原地写回格式化正文，
+ *  不派生新版本、不触发确认式版本化。 */
 export async function updateChapterVersion(
   novelId: string,
   chapterNo: number,
   versionId: string,
-  data: { content?: string; title?: string },
+  data: { content?: string; title?: string; format_only?: boolean },
 ): Promise<ChapterVersion> {
   const res = await fetch(`${BASE}/novels/${novelId}/chapters/${chapterNo}/versions/${versionId}`, {
     method: "PATCH",

@@ -47,11 +47,14 @@ export interface InfoDraft {
   hint_only: string;
 }
 
-/** 二次确认弹窗（定稿 / 提取记忆层）配置：kind 区分语义，savedText 为定稿/提取前已落盘的正文。 */
+/** 二次确认弹窗（定稿 / 提取记忆层 / AI 版本未保存编辑）配置：kind 区分语义。
+ *  savedText 为定稿/提取前已落盘的正文；onResolve 为「AI 版本有未保存编辑」三选一的回传通道。 */
 export interface ConfirmDialogState {
-  kind: "finalize" | "finalize-force" | "extract";
+  kind: "finalize" | "finalize-force" | "extract" | "unsaved-edits";
   /** 定稿前已落盘保存的正文（flushSave 结果）；null=无编辑或保存失败 */
-  savedText: string | null;
+  savedText?: string | null;
+  /** kind=unsaved-edits：用户选择 存为新版本 / 放弃修改 / 取消 后回传 */
+  onResolve?: (choice: "save" | "discard" | "cancel") => void;
 }
 
 /** 面板统一提示回调签名：success/warning/error 三级，走全局 message API。 */

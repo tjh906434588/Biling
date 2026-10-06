@@ -75,7 +75,7 @@ export function ChapterContent({
                     value={titleDraft}
                     onChange={(e) => setTitleDraft(e.target.value)}
                     onClick={(e) => e.stopPropagation()}
-                    className="ml-1 w-40 rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-xs dark:border-zinc-600 dark:bg-zinc-800"
+                    className="ml-1 w-40 rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-xs outline-none dark:border-zinc-600 dark:bg-zinc-800"
                     placeholder="默认章节"
                     aria-label="章节标题"
                   />

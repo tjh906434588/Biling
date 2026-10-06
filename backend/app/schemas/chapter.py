@@ -81,10 +81,13 @@ class UpdateVersionRequest(BaseModel):
     """作者手动编辑正文后的自动保存负载：仅更新传入的字段（content/title 均可选）。
 
     正文保存只允许更新人工编辑版本；AI 版本的第一次人工修改由前端先派生 user_edit 子版本。
+    format_only=True 表示「格式化排版」专用保存：格式化只整理排版、不改文字内容，
+    因此允许直接原地写回任意类型版本（含 AI 版本），不派生新版本、不触发确认式版本化。
     """
 
     content: Optional[str] = None
     title: Optional[str] = None
+    format_only: bool = False
 
 
 class ReviewRead(BaseModel):

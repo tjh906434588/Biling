@@ -223,15 +223,27 @@ export default function WritingPanel({ novelId }: Props) {
   const selectedIsFinal = selectedVersion?.is_active ?? false;
   const activeChapter = chapters.find((c) => c.chapter_no === activeNo) ?? null;
 
-  // ── 正文就地编辑机制（镜像 ref + 防抖落盘 + 切版本/卸载兜底 + 确认式版本化），详见 use-chapter-editor ──
+  // ── 二次确认弹窗（定稿/提取记忆层/AI 版本未保存编辑）──
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  /** AI 版本有未保存编辑时的三选一确认：返回 Promise，由弹窗按钮回传选择（存/弃/取消）。 */
+  const askUnsavedEdits = useCallback((): Promise<"save" | "discard" | "cancel"> => {
+    return new Promise((resolve) => {
+      setConfirmDialog({ kind: "unsaved-edits", onResolve: resolve });
+    });
+  }, []);
+
+  // ── 正文就地编辑机制（镜像 ref + 防抖落盘 + 切版本/卸载兜底 + AI 版本确认式保存），详见 use-chapter-editor ──
   const {
     editText,
     setEditText,
     saveState,
     flushSave,
     saveAsNewVersion,
+    saveFormattedText,
+    handleUserEdit,
     editTextRef,
     editTargetRef,
+    lastDerivedVersionIdRef,
   } = useChapterEditor({
     novelId,
     selectedVersion,
@@ -239,6 +251,7 @@ export default function WritingPanel({ novelId }: Props) {
     setDetail,
     setSelectedVersionId,
     showToast,
+    onAskUnsavedEdits: askUnsavedEdits,
   });
 
   /** 当前 AI 版本上有未确认的临时修改 → 显示「存为新版本」按钮；改回原样时自动隐藏。 */
@@ -252,23 +265,25 @@ export default function WritingPanel({ novelId }: Props) {
     }
   }, [saveAsNewVersion]);
 
-  /** 「格式化排版」：纯文本排版整理（首行缩进/段落空行，不调 AI、不改文字），随后走正常保存流程。 */
-  const handleFormat = useCallback(() => {
+  /**
+   * 「格式化排版」：纯文本排版整理（首行缩进/段落空行，不调 AI、不改文字），整理后立即原地
+   * 保存到当前版本（含 AI 版本，不派生新版本、不触发确认式版本化与其他流程）。
+   */
+  const handleFormat = useCallback(async () => {
     const formatted = formatChapterText(editText);
     if (formatted === editText) {
       showToast("正文排版已符合格式，无需调整。", "success");
       return;
     }
     setEditText(formatted);
-    showToast("已完成排版格式化。", "success");
-  }, [editText, setEditText]);
+    if (await saveFormattedText(formatted)) {
+      showToast("已完成排版格式化。", "success");
+    }
+  }, [editText, setEditText, saveFormattedText, showToast]);
 
   // 弹窗开关：新增章节 / 信息控制 仍用弹窗；评价与优化、版本树已改为右侧常驻内联面板（见下方）
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
-  /** 二次确认弹窗（定稿 / 提取记忆层）：用页面内自定义弹窗替代 window.confirm，
-   *  规避 IDE 内嵌浏览器对原生 confirm 对话框的处理异常（原生弹窗挂起会导致页面卡死/跳转报错）。 */
-  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   /** 评价栏占正文区域剩余宽度的比例：窄/中/宽三档预设，xl 起生效。 */
   const [reviewRatio, setReviewRatio] = useState(REVIEW_RATIO_DEFAULT);
 
@@ -672,11 +687,21 @@ export default function WritingPanel({ novelId }: Props) {
     setUseOutline(on);
   }
 
-  /** 点版本 tab = 仅本地预览选中（不请求、不激活）。
-   *  定稿操作统一走顶部「定稿」按钮（handleFinalizeSelected），这里不做任何激活切换。 */
-  function handleSelectVersion(versionId: string) {
+  /** 点版本节点 = 本地预览选中（不请求、不激活）。
+   *  AI 版本上有未保存修改时先弹三选一确认（存为新版本 / 放弃修改 / 取消），再执行切换；
+   *  「放弃」由切换 effect 丢弃 AI 版本编辑，「存」先派生人工子版本再切到目标版本。 */
+  async function handleSelectVersion(versionId: string) {
     if (!detail) return;
     if (!detail.versions.some((v) => v.id === versionId)) return;
+    if (hasVersionEdits) {
+      const choice = await askUnsavedEdits();
+      if (choice === "cancel") return;
+      if (choice === "save") {
+        const ok = await saveAsNewVersion(versionId);
+        if (!ok) return;
+      }
+      // discard：直接切换，切换 effect 会丢弃 AI 版本上的编辑
+    }
     setSelectedVersionId(versionId);
   }
 
@@ -701,6 +726,7 @@ export default function WritingPanel({ novelId }: Props) {
     flushSave,
     editTextRef,
     editTargetRef,
+    lastDerivedVersionIdRef,
     form,
     creationMode,
     useOutline,
@@ -771,7 +797,17 @@ export default function WritingPanel({ novelId }: Props) {
         genIsRegenerate={generating && genIsRegenerate}
         showToast={showToast}
         onAdd={openAddModal}
-        onSelectChapter={(no) => {
+        onSelectChapter={async (no) => {
+          if (hasVersionEdits) {
+            const choice = await askUnsavedEdits();
+            if (choice === "cancel") return;
+            if (choice === "save") {
+              // 派生人工子版本但先不切换，继续走切章流程
+              const ok = await saveAsNewVersion(null);
+              if (!ok) return;
+            }
+            // discard：直接切章，切换 effect 会丢弃 AI 版本上的编辑
+          }
           setActiveNo(no);
           setReviews(null);
           setSelectedVersionId(null);
@@ -783,11 +819,7 @@ export default function WritingPanel({ novelId }: Props) {
           setCreationMode("ai");
         }}
         onExpand={() => {
-          // AI 扩写基于后端版本内容：有未确认修改时先拦下，提示用户先存为新版本
-          if (hasVersionEdits) {
-            showToast("正文有未保存的修改：请先在「本章操作」点「存为新版本」，或把内容改回原样。", "warning");
-            return;
-          }
+          // 扩写前由 handleExpand 内部 flushSave 处理未保存编辑：人工版本落盘、AI 版本弹三选一确认
           void handleExpand(flowCtx);
         }}
         hasVersionEdits={hasVersionEdits}
@@ -823,7 +855,7 @@ export default function WritingPanel({ novelId }: Props) {
           selectedVersion={selectedVersion}
           selectedIsFinal={selectedIsFinal}
           editText={editText}
-          onEditText={setEditText}
+          onEditText={handleUserEdit}
           saveState={saveState}
           versionOpen={versionOpen}
           onToggleVersionOpen={() => setVersionOpen((o) => !o)}

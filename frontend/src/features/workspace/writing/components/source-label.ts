@@ -29,6 +29,7 @@ export function sourceLabel(source: string): string {
       manual_rewrite: "人工",
       expanded: "AI 扩写",
       merged: "手动合并",
+      snapshot: "扩写前原稿",
     } as Record<string, string>)[source] ??
     "未知来源"
   );

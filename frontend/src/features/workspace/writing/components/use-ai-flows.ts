@@ -46,6 +46,8 @@ export interface FlowCtx {
   flushSave: () => Promise<string | null>;
   editTextRef: MutableRefObject<string>;
   editTargetRef: MutableRefObject<{ chapterNo: number; versionId: string; source: string } | null>;
+  /** 最近一次「存为新版本」派生出的版本 id（读后应清空）：确认「存为新版本」后拿最新选中版本 */
+  lastDerivedVersionIdRef: MutableRefObject<string | null>;
   // ── 只读状态 ──
   form: GenForm;
   creationMode: "ai" | "manual" | "manual_rewrite";
@@ -114,9 +116,19 @@ export async function handleManualRewrite(ctx: FlowCtx) {
   }
 }
 
-/** 基于当前版本发起 AI 扩写：使用 novelist + mode=expand，结果由后端落为 expanded 子版本。 */
+/** 基于当前版本发起 AI 扩写：使用 novelist + mode=expand，后端统一落为 expanded 子版本，
+ *  完成后自动切到新生成的扩写版本。扩写前先处理未保存编辑（人工版本落盘；AI 版本弹三选一确认）。 */
 export async function handleExpand(ctx: FlowCtx) {
-  const { detail, selectedVersion, novelId, liveNovelRef, mountedRef } = ctx;
+  const { detail: detailCtx, selectedVersion: selectedCtx, novelId, liveNovelRef, mountedRef } = ctx;
+  // 扩写前先落盘未保存编辑 / 弹确认（存为新版本则派生人工子版本并切过去）；取消或失败则中止
+  const savedText = await ctx.flushSave();
+  if (savedText == null && ctx.editTargetRef.current != null) return;
+  // 确认「存为新版本」后选中已切到新版本：从派生 id 解析最新选中版本作为扩写源
+  const baseId = ctx.lastDerivedVersionIdRef.current ?? selectedCtx?.id ?? null;
+  ctx.lastDerivedVersionIdRef.current = null;
+  const detail = detailCtx;
+  const selectedVersion =
+    (baseId ? detail?.versions.find((v) => v.id === baseId) : null) ?? selectedCtx ?? null;
   if (!detail || !selectedVersion) {
     ctx.showToast("请先选择要扩写的正文版本", "warning");
     return;
@@ -146,7 +158,9 @@ export async function handleExpand(ctx: FlowCtx) {
       if (ev.event === "stream_delta" && d.delta) ctx.setGenRun((r) => r ? { ...r, output: r.output + d.delta } : r);
       if (ev.event === "stream_error") ctx.showToast(d.message ?? "AI 扩写出错，请稍后重试。", "error");
     });
-    if (liveNovelRef.current === novelId && mountedRef.current) ctx.showToast("AI 扩写完成，已生成新的草稿子版本。", "success");
+    if (liveNovelRef.current === novelId && mountedRef.current) {
+      ctx.showToast("AI 扩写完成，已生成新的草稿子版本。", "success");
+    }
   } catch (e) {
     if (liveNovelRef.current === novelId && mountedRef.current) ctx.showToast((e as Error).message, "error");
   } finally {

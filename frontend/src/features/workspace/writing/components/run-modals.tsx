@@ -110,27 +110,66 @@ export function RunModals({
       />
 
       {/* ── 二次确认弹窗（定稿 / 提取记忆层）：页面内自定义弹窗替代 window.confirm ── */}
-      <ConfirmDialog
-        open={confirmDialog != null}
-        title={
-          confirmDialog?.kind === "finalize-force"
-            ? "强制定稿（有红线或抄袭风险）"
-            : confirmDialog?.kind === "finalize"
-              ? "确认定稿"
-              : "确认提取到记忆层"
-        }
-        message={
-          confirmDialog?.kind === "finalize-force"
-            ? "这一版有红线或抄袭风险，不能直接定稿。\n\n强制定稿会把有问题的正文作为本章正式正文，请先按 AI 的修改建议改一下，或确认风险后继续。\n\n仍要强制定稿吗？"
-            : confirmDialog?.kind === "finalize"
-              ? `确认把第${selectedVersion?.version_no ?? "?"}版（${sourceLabel(selectedVersion?.source ?? "")}）作为本章正式正文？\n\n之前定稿的那版会自动变回草稿（一章只能有一个正式版）。`
-              : "确认提取本章到记忆层？\n\n会把本章摘要、角色当前状态、新埋伏笔等写入记忆层，下一章生成时小说家会自动读到。\n\n每写完一章记得提取一次，否则下一章可能「忘了」刚才发生了什么。"
-        }
-        confirmText={confirmDialog?.kind === "finalize-force" ? "仍要强制定稿" : "确认"}
-        tone={confirmDialog?.kind === "finalize-force" ? "danger" : "primary"}
-        onConfirm={onConfirm}
-        onCancel={onCancel}
-      />
+      {confirmDialog?.kind !== "unsaved-edits" && (
+        <ConfirmDialog
+          open={confirmDialog != null}
+          title={
+            confirmDialog?.kind === "finalize-force"
+              ? "强制定稿（有红线或抄袭风险）"
+              : confirmDialog?.kind === "finalize"
+                ? "确认定稿"
+                : "确认提取到记忆层"
+          }
+          message={
+            confirmDialog?.kind === "finalize-force"
+              ? "这一版有红线或抄袭风险，不能直接定稿。\n\n强制定稿会把有问题的正文作为本章正式正文，请先按 AI 的修改建议改一下，或确认风险后继续。\n\n仍要强制定稿吗？"
+              : confirmDialog?.kind === "finalize"
+                ? `确认把第${selectedVersion?.version_no ?? "?"}版（${sourceLabel(selectedVersion?.source ?? "")}）作为本章正式正文？\n\n之前定稿的那版会自动变回草稿（一章只能有一个正式版）。`
+                : "确认提取本章到记忆层？\n\n会把本章摘要、角色当前状态、新埋伏笔等写入记忆层，下一章生成时小说家会自动读到。\n\n每写完一章记得提取一次，否则下一章可能「忘了」刚才发生了什么。"
+          }
+          confirmText={confirmDialog?.kind === "finalize-force" ? "仍要强制定稿" : "确认"}
+          tone={confirmDialog?.kind === "finalize-force" ? "danger" : "primary"}
+          onConfirm={onConfirm}
+          onCancel={onCancel}
+        />
+      )}
+
+      {/* ── AI 版本有未保存编辑：三选一确认（存为新版本 / 放弃修改 / 取消）── */}
+      {confirmDialog?.kind === "unsaved-edits" && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">有未保存的修改</h3>
+            <div className="mt-2 whitespace-pre-line text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+              当前是 AI 生成的版本，正文有未保存的修改。离开后若不保存，修改将直接丢弃、恢复原样。
+              {"\n\n"}如何处理？
+            </div>
+            <div className="mt-5 flex flex-col gap-2">
+              <button
+                className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+                onClick={() => confirmDialog.onResolve?.("save")}
+              >
+                存为新版本（人工版本，保留修改）
+              </button>
+              <button
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                onClick={() => confirmDialog.onResolve?.("discard")}
+              >
+                放弃修改（恢复原样）
+              </button>
+              <button
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                onClick={() => confirmDialog.onResolve?.("cancel")}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

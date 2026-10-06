@@ -368,16 +368,6 @@ export function ChapterSidebar({
                 存为新版本
               </button>
             )}
-            {/* 格式化排版：纯文本整理（首行缩进/段落空行），不调 AI、不改文字内容 */}
-            <button
-              type="button"
-              onClick={onFormat}
-              disabled={activeNo == null || aiBusy || !canFormat}
-              className="btn btn-ghost w-full"
-              title="把正文整理成 AI 生成稿的排版：每段首行缩进两格、段落之间空一行（不改文字内容）"
-            >
-              格式化排版
-            </button>
             {/* 重写正文：统一人工重写与 AI 重新生成入口，在抽屉内选择方式。 */}
             <button
               type="button"
@@ -388,15 +378,31 @@ export function ChapterSidebar({
             >
               重写正文
             </button>
-            <button
-              type="button"
-              onClick={onExpand}
-              disabled={activeNo == null || aiBusy || !selectedVersion || !selectedVersion.content.trim()}
-              className="btn btn-ghost w-full"
-              title="基于当前正文调用 AI 扩写，生成一个子版本"
-            >
-              AI 扩写
-            </button>
+            {/* AI 扩写：仅人工版本且正文非空时展示（AI 生成内容可直接评价优化派生，不走扩写） */}
+            {selectedVersion?.source === "user_edit" && !!selectedVersion.content.trim() && (
+              <button
+                type="button"
+                onClick={onExpand}
+                disabled={activeNo == null || aiBusy}
+                className="btn btn-ghost w-full"
+                title="基于当前人工版本正文调用 AI 扩写，生成一个 AI 子版本"
+              >
+                AI 扩写
+              </button>
+            )}
+            {/* 格式化排版：仅人工版本展示（AI 生成内容自带规范排版，无需格式化）；
+                纯文本整理（首行缩进/段落空行），不调 AI、不改文字内容 */}
+            {selectedVersion?.source === "user_edit" && (
+              <button
+                type="button"
+                onClick={onFormat}
+                disabled={activeNo == null || aiBusy || !canFormat}
+                className="btn btn-ghost w-full"
+                title="把正文整理成 AI 生成稿的排版：每段首行缩进两格、段落之间空一行（不改文字内容）"
+              >
+                格式化排版
+              </button>
+            )}
             {/* 定稿：把当前选中的草稿版本定稿激活（同一时间只能定稿一个版本）；选中已定稿版本时隐藏 */}
             {!selectedIsFinal && (
               <button
@@ -417,17 +423,6 @@ export function ChapterSidebar({
                 }
               >
                 定稿
-              </button>
-            )}
-            {/* 信息控制：仅选中章节时显示；查看本章已填写的信息控制（谁知道了什么），修改需重新生成时调整 */}
-            {activeNo != null && selectedVersion?.source !== "user_edit" && (
-              <button
-                type="button"
-                onClick={onViewInfo}
-                className="btn btn-ghost w-full"
-                title="查看本章已填写的信息控制（正文可不体现，但绝不能与它们冲突）"
-              >
-                信息控制
               </button>
             )}
             {/* 评价入口统一在右侧「评价与优化」，本章操作只保留提取与复制 */}
@@ -472,6 +467,17 @@ export function ChapterSidebar({
                 </InfoTip>
               </span>
             </button>
+            {/* 信息控制：仅选中章节时显示；查看本章已填写的信息控制（谁知道了什么），修改需重新生成时调整 */}
+            {activeNo != null && selectedVersion?.source !== "user_edit" && (
+              <button
+                type="button"
+                onClick={onViewInfo}
+                className="btn btn-ghost w-full"
+                title="查看本章已填写的信息控制（正文可不体现，但绝不能与它们冲突）"
+              >
+                信息控制
+              </button>
+            )}
             <button
               type="button"
               onClick={onCopy}

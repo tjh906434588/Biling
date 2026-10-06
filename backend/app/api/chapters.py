@@ -265,7 +265,7 @@ def update_version(
     if target is None or target.chapter_id != chapter.id:
         raise HTTPException(404, "版本不存在")
 
-    if target.source != "user_edit":
+    if target.source != "user_edit" and not payload.format_only:
         raise HTTPException(409, "AI 版本不能直接修改，请先派生人工编辑版本")
     if payload.content is not None:
         target.content = payload.content

@@ -234,6 +234,7 @@ def _build_source_labels() -> dict[str, str]:
         "user_edit": "人工",
         "expanded": "AI 扩写",
         "merged": "手动合并",
+        "snapshot": "扩写前原稿",
     }
 
 
