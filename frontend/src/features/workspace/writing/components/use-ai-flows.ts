@@ -273,17 +273,20 @@ export async function handleGenerate(
         action?: string;
       };
       if (ev.event === "auto_revising") {
-        // 生成侧强制：后端本地检测命中 AI 味句式，自动调修订师修一轮
+        // 生成侧强制：后端本地检测命中 AI 味句式，自动调修订师修一轮。
+        // 加分隔线 + 放行后续流式正文：修订过程也滚动显示（计数/吸底持续更新），避免界面像卡死。
         autoRevising = true;
+        ctx.setGenRun((r) =>
+          r ? { ...r, output: `${r.output}\n\n———— 自动修订中（消除 AI 味句式）————\n\n` } : r,
+        );
         ctx.showToast(d.message ?? "检测到 AI 味句式，正在自动修订一轮…", "success");
       } else if (ev.event === "notify" && d.message) {
         // 自动修订失败 / 空输出自动重试等后端提示
         ctx.showToast(d.message, "warning");
       } else if (ev.event === "thinking_delta" && d.delta) {
-        // 自动修订的思考/正文不拼进主草稿展示框（避免初稿+修订稿拼接），只提示最终结果
-        if (!autoRevising) ctx.setGenRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
+        ctx.setGenRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
       } else if (ev.event === "stream_delta" && d.delta) {
-        if (!autoRevising) ctx.setGenRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
+        ctx.setGenRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
       } else if (ev.event === "stored") {
         const action = d.action as string | undefined;
         if (action === "alert") {
