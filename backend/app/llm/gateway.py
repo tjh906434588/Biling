@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 # 推理模型（deepseek 系）思考与正文共享输出 token 预算：max_tokens 缺省时部分服务端
 # 会用很小的默认上限，思考过程一旦吃光预算就只思考不输出正文（正文为空）。
 # 显式给一个宽松默认值，保证正文有足够预算产出；模型自行 stop，不会强制写满。
-DEFAULT_GENERATION_MAX_TOKENS = 8192
+# 2026-10 调至 16384：deepseek-v4-pro 等推理模型的思考常吃掉 6-8k，评价师等大 JSON 输出
+# （八维评分+逐条 issues+证据引文）在 8192 下会被截断导致 schema 校验失败（finish_reason=length）。
+DEFAULT_GENERATION_MAX_TOKENS = 16384
 
 # 单次 LLM 请求总超时（秒）：流式生成可能较长（长思考期 + 长正文），
 # 但必须有个上限——否则网络/服务端挂起时请求永不返回，后台任务永久 running，
