@@ -228,7 +228,15 @@ export default function WritingPanel({ novelId }: Props) {
   /** AI 版本有未保存编辑时的三选一确认：返回 Promise，由弹窗按钮回传选择（存/弃/取消）。 */
   const askUnsavedEdits = useCallback((): Promise<"save" | "discard" | "cancel"> => {
     return new Promise((resolve) => {
-      setConfirmDialog({ kind: "unsaved-edits", onResolve: resolve });
+      setConfirmDialog({
+        kind: "unsaved-edits",
+        // 选择后先关闭弹窗再 resolve：裸弹窗（run-modals 手写三选一）自身不负责关闭，
+        // 若不在这里清空 confirmDialog，弹窗会一直挂着关不掉
+        onResolve: (choice) => {
+          setConfirmDialog(null);
+          resolve(choice);
+        },
+      });
     });
   }, []);
 
@@ -424,9 +432,10 @@ export default function WritingPanel({ novelId }: Props) {
         );
       } catch (e) {
         if (req !== loadDetailReqRef.current) return;
-        const msg = (e as Error).message;
-        // 章节正文尚未生成（如大纲已批准但正文还没生成/上次生成未落库）→ 静默，不报红色错误
-        if (msg.includes("404")) {
+        const err = e as Error & { status?: number };
+        const msg = err.message ?? "";
+        // 章节正文尚未生成（如大纲已批准但正文还没生成/上次生成未落库/新增章节生成中）→ 静默，不报红色错误
+        if (err.status === 404 || msg.includes("404") || msg.includes("章节不存在")) {
           setDetail(null);
         } else {
           // 章节详情加载失败不内联显示，走顶部悬浮框提示
@@ -511,7 +520,11 @@ export default function WritingPanel({ novelId }: Props) {
           goal: typeof i.params.goal === "string" ? i.params.goal : f.goal,
         }));
         setRegenerateNo(isRegenerate ? chapterNo : null);
-      void loadDetail(chapterNo);
+        // 仅「重新生成/扩写」这类章节已存在时加载详情恢复编辑器；
+        // 新增章节正文还没生成（要等生成完成才创建），此时加载必然 404，跳过、等完成事件再刷新
+        if (isRegenerate || isExpand) {
+          void loadDetail(chapterNo);
+        }
       }
       setShowAddModal(!isExpand);
       setGenStartAt(i.startedAt);

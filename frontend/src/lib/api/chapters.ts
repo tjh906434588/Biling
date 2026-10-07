@@ -14,7 +14,13 @@ export async function listChapters(novelId: string): Promise<ChapterListItem[]> 
 
 export async function getChapter(novelId: string, chapterNo: number): Promise<ChapterDetail> {
   const res = await fetch(`${BASE}/novels/${novelId}/chapters/${chapterNo}`);
-  if (!res.ok) throw new Error("加载章节详情失败");
+  if (!res.ok) {
+    // 附加 HTTP 状态码：调用方（loadDetail 等）据此区分「404 章节未生成」与其它错误——
+    // 404 应静默处理（详情置空等生成完成刷新），其余才弹错误提示
+    const err = new Error(res.status === 404 ? "章节不存在" : "加载章节详情失败") as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
