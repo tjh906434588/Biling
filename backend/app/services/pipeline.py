@@ -2186,7 +2186,7 @@ def _confirm_to_dict(row, novel_titles: Optional[dict] = None) -> dict:
         "allow_custom": bool(row.allow_custom),
         "answer": row.answer,
         "answer_meta": row.answer_meta,
-        "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
 

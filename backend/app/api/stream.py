@@ -1021,10 +1021,10 @@ async def _propose_scene_plan(
     return scene_plan
 
 
-def _iso_utc(dt) -> str | None:
-    """数据库 DateTime 由 SQLite CURRENT_TIMESTAMP 写入，为 UTC 且无时区标记；
-    序列化时补 Z，前端 new Date() 才能按正确时区解析（否则会按本地时区解析，偏差 8 小时）。"""
-    return dt.isoformat() + "Z" if dt else None
+def _iso_local(dt) -> str | None:
+    """数据库 DateTime 存的是本地时间（无时区标记）；序列化保持无 Z，
+    前端 new Date() 按本地时区解析即正确（若补 Z 会被当作 UTC，反而偏差 8 小时）。"""
+    return dt.isoformat() if dt else None
 
 
 def _update_progress(task_id: uuid.UUID, sse_text: str) -> None:
@@ -1157,8 +1157,8 @@ def stream_status(novel_id: uuid.UUID, db: Session = Depends(get_db)):
             "msg": t.msg,
             "error": t.error,
             "chapter_no": (t.params or {}).get("chapter_no"),
-            "started_at": _iso_utc(t.created_at),
-            "updated_at": _iso_utc(t.updated_at),
+            "started_at": _iso_local(t.created_at),
+            "updated_at": _iso_local(t.updated_at),
         }
 
     return {
@@ -1176,8 +1176,8 @@ def _task_to_dict(task: AgentTask) -> dict:
         "params": task.params or {},
         "msg": task.msg,
         "error": task.error,
-        "started_at": _iso_utc(task.created_at),
-        "updated_at": _iso_utc(task.updated_at),
+        "started_at": _iso_local(task.created_at),
+        "updated_at": _iso_local(task.updated_at),
         "progress": PROGRESS.get(str(task.id), {"thinking": "", "draft": ""}),
     }
 

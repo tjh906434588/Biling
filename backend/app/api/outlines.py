@@ -174,9 +174,9 @@ def _inject_outline_characters(db: Session, novel_id: uuid.UUID, outline: Outlin
     return injected
 
 
-def _iso_utc(dt) -> str | None:
-    """数据库 DateTime 由 SQLite CURRENT_TIMESTAMP 写入，为 UTC 且无时区标记；序列化时补 Z。"""
-    return dt.isoformat() + "Z" if dt else None
+def _iso_local(dt) -> str | None:
+    """数据库 DateTime 存的是本地时间（无时区标记）；序列化保持无 Z，前端 new Date() 按本地时区解析即正确。"""
+    return dt.isoformat() if dt else None
 
 
 def _finish_approval(
@@ -232,8 +232,8 @@ def outline_approval_status(novel_id: uuid.UUID, db: Session = Depends(get_db)):
             "msg": task.msg,
             "error": task.error,
             "injected_characters": params.get("injected_characters") or [],
-            "started_at": _iso_utc(task.created_at),
-            "updated_at": _iso_utc(task.updated_at),
+            "started_at": _iso_local(task.created_at),
+            "updated_at": _iso_local(task.updated_at),
         },
     }
 
