@@ -19,7 +19,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
   - **双层字典（用户可自定义的枚举，如题材）**：内置枚举在 `DICT_BUILDERS` 代码里只读；允许用户新增/删除的 key 加入 `CUSTOMIZABLE_KEYS`，用户自定义项存 `meta_dict_items` 表（**存库而非代码 → 升级版本不重置**），`GET /api/meta` 合并下发（自定义项带 `custom: True` 标记供前端区分）、`POST /api/meta/{key}/items` 新增、`DELETE /api/meta/{key}/items/{value}` 删除（内置项不可删）。前端增删后调 `lib/meta-dict.ts` 的 `invalidateMetaDict(key)` 失效缓存再重拉。题材即此模式：输入即正式入库（无临时态），删除走删除接口。后端侧需要程序化登记自定义项时复用 `meta.py::_upsert_custom_items`（如蓝图导入 AI 新增题材自动入库）。
 - **doc 与 code 镜像属例外**：规则文档（如 `rules/fanqie_rules.md`）与运行时代码（`platform_rules.py`）是同一内容的两种形态；文档为人类可读源、代码为运行时事实源，通过 skill 流程保证同步，不另立第三份。
 - **反 AI 味规则单一维护源（自动执行）**：标点/句式级反 AI 味约束与检测的归属固定，新增这类规则只改对应单一源，不另起；三者分工是「L1 管别写（提示词软约束）→ detector 管写了就标出来（确定性硬检测）→ 评价师管强制逐句回应」，改一处时保持分工一致：
-  - 生成侧硬约束（破折号限频与禁后置解说、禁像字套壳比喻、禁甩尾句式、禁解说型旁白等）→ `backend/app/agents/l1.py` 的 `L1_ANTI_AI_CONSTRAINTS`（novelist/reviser 共享注入，全系统所有小说生效，不按题材）；
+  - 生成侧硬约束（破折号限频与禁后置解说、禁像字套壳比喻、禁甩尾句式、禁解说型旁白、叙述经济性/禁无落点空镜等）→ `backend/app/agents/l1.py` 的 `L1_ANTI_AI_CONSTRAINTS`（novelist/reviser 共享注入，全系统所有小说生效，不按题材）；
   - 确定性检测正则（评价师/修订师逐句核对的程序依据）→ `backend/app/services/detector.py` 的 `_AI_SENTENCE_PATTERNS`（新增类目自动流入 critic/reviser 的核对清单，无需改 agent 代码）；
   - 平台级核查清单（评价师判定的典型 AI 腔句式示例）→ `backend/app/agents/platform_rules.py` 的 `PLATFORM_SIGNING_REVIEW`。
 - 发现重复 → 合并回单一源，并在源文件注释里说明"谁从这里派生"。
