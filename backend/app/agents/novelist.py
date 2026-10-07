@@ -42,7 +42,7 @@ from app.agents.platform_rules import (
     format_genre_storytelling_rules,
 )
 from app.schemas.agents import NovelChapter
-from app.services.detector import detect
+from app.services.detector import detect, lint_ai_sentences
 from app.services.entity_checker import format_hard_facts_snapshot
 from app.services.era_industry import format_era_research_for_prompt
 
@@ -221,11 +221,13 @@ class NovelistAgent(Agent[NovelChapter]):
             if era_block:
                 l3 += " 结合【年代×行业背景研究】与蓝图时间线（timeline）判断本章所处的故事年份，只用该年份已存在的事物（其中红线带时间前提，只拦时间错位）。"
 
-        # L3 反 AI 味：把上一章的实测统计交给模型，避免它模仿自己上一章的节奏
-        # （续写最容易出的问题：越写句长越均匀，AI 检测分数逐章恶化）
+        # L3 反 AI 味：把上一章的实测统计 + 被判 AI 腔的具体句子交给模型，
+        # 既避免它模仿上一章的节奏，也打断「上一章有 AI 味句式 → 本章照抄」的自强化循环
+        # （续写最容易出的问题：越写句长越均匀、越写越沿用同一套句式，AI 检测分数逐章恶化）
         if chapters:
             try:
-                det = detect(chapters[0].content or "")
+                prev_text = chapters[0].content or ""
+                det = detect(prev_text)
                 bits: list[str] = []
                 if det.burstiness is not None:
                     bits.append(f"句长变异系数 {det.burstiness}（人类写作一般 ≥0.7，<0.45 偏平）")
@@ -239,6 +241,22 @@ class NovelistAgent(Agent[NovelChapter]):
                         f"\n【L3·反 AI 味·上一章实测（第 {chapters[0].chapter_no} 章）】"
                         + "、".join(bits)
                         + "。本章不要延续上一章的句子节奏，要明显更有起伏。"
+                    )
+                # 反馈回路：上一章被判 AI 腔的具体句子逐句列出，本章不得再出现同类句式。
+                # 这是生成侧第一次就写好的关键一环——模型有「仿写上一章腔调」的倾向，
+                # 把上一章踩过的坑点名给它，比笼统的"避免 AI 腔"有效得多。
+                prev_findings = lint_ai_sentences(prev_text)
+                if prev_findings:
+                    shown = "\n".join(
+                        f"- [{f['category']}]「{f['sentence']}」" for f in prev_findings[:8]
+                    )
+                    l3 += (
+                        f"\n【L3·反 AI 味·上一章 AI 腔句式（第 {chapters[0].chapter_no} 章，"
+                        f"共 {len(prev_findings)} 处，逐句标出，前 {min(len(prev_findings), 8)} 处）】\n"
+                        f"{shown}\n"
+                        "以上是上一章被判 AI 腔的具体句子。本章写作时禁止再出现同类句式"
+                        "（破折号后置解说/像字套壳比喻/甩尾句式/解说式旁白等）；"
+                        "若确需类似表达，换更具体、更口语的写法。"
                     )
             except Exception:  # 统计失败不影响写作主流程
                 pass
