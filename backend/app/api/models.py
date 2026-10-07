@@ -843,7 +843,8 @@ async def refresh_catalog_models(payload: CatalogRefresh, db: Session = Depends(
     """「刷新模型列表」：用 Key 拉取该服务商账号下的真实模型并缓存，替代静态种子目录。
 
     返回 {provider, models, updated_at, source}：models 为真实列表（含 label 回退），
-    source 为 "live"（GET /models 拉到）或 "chat"（订阅端点，仅保留验证通过的模型）。
+    source 为 "live"（GET /models 拉到，可缓存覆盖）或 "chat"（订阅端点仅验证连通，
+    不缓存、不覆盖预置清单，避免单个模型挤掉整份清单）。
     无 Key 无法调用（需 Key 才能验证账号可用模型），静态目录永远作为兜底。
     """
     base_url = (payload.base_url or "").strip()
@@ -879,7 +880,10 @@ async def refresh_catalog_models(payload: CatalogRefresh, db: Session = Depends(
         except httpx.HTTPError as e:
             raise HTTPException(502, f"连接失败：无法访问 {base_url}（{type(e).__name__}）")
 
-        # 2) 用给定模型发最小 chat 请求验证（订阅套餐端点仅支持 /chat/completions）
+        # 2) 用给定模型发最小 chat 请求验证（订阅套餐端点仅支持 /chat/completions）。
+        # 这类端点无法列举账号模型：只做"验证连通"，不写 live 缓存——
+        # 若把单个验证通过的模型当作"账号全部模型"写入缓存，会把静态预置清单（
+        # 如火山 Agent Plan 的 13 个模型）整体挤成 1 个，导致「模型变成一个了」。
         if payload.model:
             body = {
                 "model": payload.model,
@@ -890,12 +894,10 @@ async def refresh_catalog_models(payload: CatalogRefresh, db: Session = Depends(
             resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=body)
             if resp.status_code not in (200, 201):
                 raise HTTPException(resp.status_code, f"连接失败：{resp.text[:200]}")
-            models = [{"id": payload.model, "label": payload.model}]
-            _set_live_models(db, payload.provider, models)
             return {
                 "provider": payload.provider,
-                "models": models,
-                "updated_at": _get_live_models(db)[payload.provider]["updated_at"],
+                "models": [{"id": payload.model, "label": payload.model}],
+                "updated_at": None,
                 "source": "chat",
             }
 

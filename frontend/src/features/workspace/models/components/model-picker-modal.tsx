@@ -228,11 +228,20 @@ export default function ModelPickerModal({ open, defaultModel, initialProvider, 
         modeBaseUrl,
         modelId.trim() || undefined,
       );
-      setLiveOverride({ provider: activeProvider.provider, models: r.models, updatedAt: r.updated_at });
-      setModelId(r.models[0]?.id ?? "");
       setUseOther(false);
-      setConnected(true);
-      message.success(`已更新：账号可用 ${r.models.length} 个模型（已记住，下次打开自动使用）`);
+      if (r.source === "live") {
+        // 真实列举（服务商支持 GET /models）：覆盖预置下拉并记住，下次打开自动使用
+        setLiveOverride({ provider: activeProvider.provider, models: r.models, updatedAt: r.updated_at });
+        setModelId(r.models[0]?.id ?? "");
+        setConnected(true);
+        message.success(`已更新：账号可用 ${r.models.length} 个模型（已记住，下次打开自动使用）`);
+      } else {
+        // 订阅套餐端点（chat 验证）：无法列举账号模型，保留预置清单，只确认连通，
+        // 否则单个验证通过的模型会把整份预置清单挤成 1 个
+        setLiveOverride(null);
+        setConnected(true);
+        message.success("连接验证通过（该端点不支持自动列举模型，已保留预置清单）");
+      }
       onSaved();
     } catch (e) {
       message.error((e as Error).message);
