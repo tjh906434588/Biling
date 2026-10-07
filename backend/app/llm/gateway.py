@@ -2,7 +2,6 @@
 
 API Key 优先级：页面配置（provider_keys 表）→ 环境变量。页面保存后实时生效，无需重启。
 """
-import asyncio
 import logging
 import os
 import time
@@ -212,25 +211,17 @@ def _friendly_llm_error(e: Exception, provider: str) -> LLMError:
 
     try:  # litellm 异常类（惰性导入，避免顶层 import 触发模型成本表联网）
         from litellm.exceptions import (  # noqa: F401
-            APIConnectionError, APITimeoutError, AuthenticationError,
-            BadRequestError, InsufficientQuotaError, InternalServerError,
-            RateLimitError, Timeout,
+            APIConnectionError, AuthenticationError, BadRequestError,
+            ContextWindowExceededError, InternalServerError, PermissionDeniedError,
+            RateLimitError, ServiceUnavailableError, Timeout,
         )
         classes_ok = True
     except Exception:
         classes_ok = False
 
-    if classes_ok and isinstance(e, InsufficientQuotaError):
-        return LLMError("quota", _quota_hint(is_plan), msg)
-    if classes_ok and isinstance(e, RateLimitError):
-        if hit_quota():
-            return LLMError("quota", _quota_hint(is_plan), msg)
-        return LLMError(
-            "rate_limit",
-            "请求触发限流（429），请稍等片刻后重试；若持续限流，可降低并发或联系服务商提升限额。",
-            msg,
-        )
-    if status == 429:
+    # 429 类：限流与配额耗尽共用状态码，按信号词区分（InsufficientQuota 在 litellm 里
+    # 无独立类，统一落 RateLimitError / 429 关键词判断）
+    if (classes_ok and isinstance(e, RateLimitError)) or status == 429:
         if hit_quota():
             return LLMError("quota", _quota_hint(is_plan), msg)
         return LLMError(
@@ -244,15 +235,17 @@ def _friendly_llm_error(e: Exception, provider: str) -> LLMError:
             "模型 API Key 无效或无权限（401），请到「模型」页检查并更新该模型的 API Key 后重试。",
             msg,
         )
-    if status == 403:
-        if hit(_QUOTA_WORDS):
+    # 403：额度不足（Insufficient Quota）或权限拒绝
+    if (classes_ok and isinstance(e, PermissionDeniedError)) or status == 403:
+        if hit_quota():
             return LLMError("quota", _quota_hint(is_plan), msg)
         return LLMError(
             "auth",
             "模型访问被拒绝（403），请检查该模型的 API Key 是否有权限调用当前模型。",
             msg,
         )
-    if (classes_ok and isinstance(e, (APITimeoutError, Timeout, asyncio.TimeoutError))) or "timeout" in low:
+    # 超时（litellm.Timeout 继承 openai.APITimeoutError）
+    if (classes_ok and isinstance(e, Timeout)) or "timeout" in low:
         return LLMError(
             "timeout",
             "模型响应超时（网络或服务端繁忙），请稍后重试；若反复超时，可切换到更快的模型。",
@@ -266,8 +259,9 @@ def _friendly_llm_error(e: Exception, provider: str) -> LLMError:
             "无法连接到模型服务（网络异常或服务不可达），请检查网络后重试。",
             msg,
         )
+    # 400 类：超上下文 → 额度 → 其它参数错误
     if status == 400 or (classes_ok and isinstance(e, BadRequestError)):
-        if hit(_LENGTH_WORDS):  # 先判超上下文：最常见且提示最明确
+        if (classes_ok and isinstance(e, ContextWindowExceededError)) or hit(_LENGTH_WORDS):
             return LLMError(
                 "bad_request",
                 "输入内容超出模型上下文上限，请精简内容（或分段处理）后重试。",
@@ -278,6 +272,8 @@ def _friendly_llm_error(e: Exception, provider: str) -> LLMError:
         return LLMError("bad_request", f"请求被模型服务拒绝（400）：{msg[:200]}", msg)
     if status is not None and isinstance(status, int) and 500 <= status < 600:
         return LLMError("server", "模型服务端暂时不可用（5xx），请稍后重试。", msg)
+    if classes_ok and isinstance(e, ServiceUnavailableError):
+        return LLMError("server", "模型服务端暂时不可用（503），请稍后重试。", msg)
     return LLMError("other", f"模型调用失败：{msg[:300]}", msg)
 
 
