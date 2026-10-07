@@ -18,6 +18,10 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - **枚举字典统一收敛（自动执行，无需用户提醒）**：会变动的枚举/字典数据——**文案、数据列表、下拉选项、预置集合等一切枚举性质数据**——统一在后端 `app/api/meta.py` 的 `DICT_BUILDERS` 注册（一个 key 一个构建函数），经 `GET /api/meta?keys=...` 按 key 下发——**不一个枚举一个接口**；前端统一经 `lib/meta-dict.ts` 的 `loadMetaDict(key)` 拉取（模块缓存 + TTL 过期自动重拉，命中未过期不请求），各业务 loader 从它取值并做失败兜底。**固定死文案前端写死；会变动的枚举/字典数据（文案或数据列表）一律走字典接口**（枚举变化不再导致前端文案或选项过时）。**新增枚举：后端 `meta.py` 的 `DICT_BUILDERS` 加一项即可；前端需类型约束时补静态 key 清单（如 `task-types.ts` 的 `TASK_TYPES`），无需另起接口**。
   - **双层字典（用户可自定义的枚举，如题材）**：内置枚举在 `DICT_BUILDERS` 代码里只读；允许用户新增/删除的 key 加入 `CUSTOMIZABLE_KEYS`，用户自定义项存 `meta_dict_items` 表（**存库而非代码 → 升级版本不重置**），`GET /api/meta` 合并下发（自定义项带 `custom: True` 标记供前端区分）、`POST /api/meta/{key}/items` 新增、`DELETE /api/meta/{key}/items/{value}` 删除（内置项不可删）。前端增删后调 `lib/meta-dict.ts` 的 `invalidateMetaDict(key)` 失效缓存再重拉。题材即此模式：输入即正式入库（无临时态），删除走删除接口。后端侧需要程序化登记自定义项时复用 `meta.py::_upsert_custom_items`（如蓝图导入 AI 新增题材自动入库）。
 - **doc 与 code 镜像属例外**：规则文档（如 `rules/fanqie_rules.md`）与运行时代码（`platform_rules.py`）是同一内容的两种形态；文档为人类可读源、代码为运行时事实源，通过 skill 流程保证同步，不另立第三份。
+- **反 AI 味规则单一维护源（自动执行）**：标点/句式级反 AI 味约束与检测的归属固定，新增这类规则只改对应单一源，不另起；三者分工是「L1 管别写（提示词软约束）→ detector 管写了就标出来（确定性硬检测）→ 评价师管强制逐句回应」，改一处时保持分工一致：
+  - 生成侧硬约束（破折号限频与禁后置解说、禁像字套壳比喻、禁甩尾句式、禁解说型旁白等）→ `backend/app/agents/l1.py` 的 `L1_ANTI_AI_CONSTRAINTS`（novelist/reviser 共享注入，全系统所有小说生效，不按题材）；
+  - 确定性检测正则（评价师/修订师逐句核对的程序依据）→ `backend/app/services/detector.py` 的 `_AI_SENTENCE_PATTERNS`（新增类目自动流入 critic/reviser 的核对清单，无需改 agent 代码）；
+  - 平台级核查清单（评价师判定的典型 AI 腔句式示例）→ `backend/app/agents/platform_rules.py` 的 `PLATFORM_SIGNING_REVIEW`。
 - 发现重复 → 合并回单一源，并在源文件注释里说明"谁从这里派生"。
 
 ## 1. 技术栈与目录（分层固定）
@@ -67,6 +71,9 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - 配置走 pydantic-settings（`backend/app/config.py`），环境变量前缀 `BILING_`，字段用小写蛇形。
 - **模型 API Key 一律存数据库**（`provider_keys` / `app_preference`），页面「AI 设置」填写；禁止硬编码 Key、禁止运行时依赖 `.env` 才能工作。
 - 新增表：改 `backend/app/db/models.py`；兼容旧库用 `app/db/migrate.py` 的幂等补列；schema 大改再考虑 alembic。
+- **时间存储约定（本地时间，自动执行）**：所有时间列（`created_at`/`updated_at`/`answered_at`/`deleted_at` 等）一律存**本地时间**，模型默认值用 Python 侧 `default=datetime.now`（`onupdate=datetime.now`）。**禁止** `server_default=func.now()` / `datetime.utcnow()` / `datetime.now(timezone.utc)`——SQLite `CURRENT_TIMESTAMP` 返回 UTC 且无时区标记，直读数据库会误判、前端 `new Date()` 又会把无时区字符串当本地解析，两头偏 8 小时。配套规则：
+  - 后端序列化时间输出**无时区标记**的 ISO（如 `2026-10-07T10:36:38`，**不拼 `Z`**），前端 `new Date()` 按本地解析即正确；时间序列化辅助函数一律命名 `_iso_local`（**不是** `_iso_utc`，也不要 `isoformat() + "Z"`）。
+  - 存量 UTC 历史数据由 `migrate.py::ensure_timestamps_local` 启动时幂等换算为本地时间（标记位 `__timestamps_local_migrated_v1`，换算后不再重复）；旧库/恢复的备份首次启动会自动换算。
 
 ## 3. 后端代码风格
 
