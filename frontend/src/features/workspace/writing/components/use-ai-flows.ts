@@ -218,6 +218,10 @@ export async function handleGenerate(
   ctx.setGenerating(true);
   // 写后设定自检：本次生成收集到的疑似漏项（SSE setting_warning），完成后弹右上角告警通知
   let collectedGaps: SettingGap[] = [];
+  // 生成侧强制·自动修订：后端在初稿落库后本地检测命中 AI 味句式会再调修订师跑一轮，
+  // 期间发送 auto_revising 事件 + 一次修订版 stored；用该标志区分「初稿」与「自动修订稿」的提示，
+  // 并避免把修订过程的流式正文拼进主草稿展示框。
+  let autoRevising = false;
   ctx.setGenStartAt(Date.now());
   // 记录本次生成模式：新增章节 or 重新生成正文（弹窗关闭后 regenerateNo 会重置，按钮禁用方向靠它判断）
   ctx.setGenIsRegenerate(regenerateNo != null);
@@ -268,10 +272,18 @@ export async function handleGenerate(
         message?: string;
         action?: string;
       };
-      if (ev.event === "thinking_delta" && d.delta) {
-        ctx.setGenRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
+      if (ev.event === "auto_revising") {
+        // 生成侧强制：后端本地检测命中 AI 味句式，自动调修订师修一轮
+        autoRevising = true;
+        ctx.showToast(d.message ?? "检测到 AI 味句式，正在自动修订一轮…", "success");
+      } else if (ev.event === "notify" && d.message) {
+        // 自动修订失败 / 空输出自动重试等后端提示
+        ctx.showToast(d.message, "warning");
+      } else if (ev.event === "thinking_delta" && d.delta) {
+        // 自动修订的思考/正文不拼进主草稿展示框（避免初稿+修订稿拼接），只提示最终结果
+        if (!autoRevising) ctx.setGenRun((r) => (r ? { ...r, thinking: r.thinking + d.delta } : r));
       } else if (ev.event === "stream_delta" && d.delta) {
-        ctx.setGenRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
+        if (!autoRevising) ctx.setGenRun((r) => (r ? { ...r, output: r.output + d.delta } : r));
       } else if (ev.event === "stored") {
         const action = d.action as string | undefined;
         if (action === "alert") {
@@ -280,16 +292,26 @@ export async function handleGenerate(
             "error",
           );
         } else if (action !== "dry_run") {
-          ctx.showToast(
-            `第 ${f.chapter_no} 章已生成草稿（新版本），可在版本列表切换预览，满意后手动定稿。`,
-            "success",
-          );
+          if (autoRevising) {
+            // 本次 stored 是自动修订版（后端在初稿落库后又跑了一轮修订）
+            ctx.showToast(
+              `第 ${f.chapter_no} 章已自动修订一轮（消除 AI 味句式），可切换版本对比初稿与修订稿。`,
+              "success",
+            );
+            autoRevising = false;
+          } else {
+            ctx.showToast(
+              `第 ${f.chapter_no} 章已生成草稿（新版本），可在版本列表切换预览，满意后手动定稿。`,
+              "success",
+            );
+          }
         }
       } else if (ev.event === "setting_warning") {
         const items = (ev.data as { items?: SettingGap[] }).items ?? [];
         collectedGaps = items.length ? items : [];
       } else if (ev.event === "stream_error") {
-        ctx.showToast(d.message ?? "AI 生成出错，请稍后重试。", "error");
+        // 自动修订阶段的 stream_error 不弹错误（初稿已落库成功，失败由后端 notify 提示）
+        if (!autoRevising) ctx.showToast(d.message ?? "AI 生成出错，请稍后重试。", "error");
       }
     });
   } catch (e) {

@@ -32,6 +32,7 @@ from app.db.models import (
     Setting,
     StoryState,
 )
+from app.services.detector import lint_ai_sentences
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,9 @@ SSE_POLL_INTERVAL = 0.25
 # AgentTask 心跳写入间隔（秒）：后台生成任务存活期间定期刷新 updated_at。
 # 请求入口的懒清理据此判死——running 且长时间无心跳的任务视为僵尸，自动标 error 释放并发位。
 HEARTBEAT_INTERVAL_SECONDS = 30
+# 生成侧强制·自动修订触发阈值：正文落库后本地检测命中 ≥ 该值的 AI 味句式，
+# 就自动调修订师修一轮（第 2 次 LLM）。detector 是本地正则、零成本，不额外调模型。
+AUTO_REVISE_MIN_HITS = 2
 
 
 class SchemaValidationError(Exception):
@@ -274,6 +278,45 @@ async def _stream_single(
             # 蓝图落库后不再自动抽取设定/文风：设定抽取（setting_extractor）与文风提炼（style_extractor）
             # 改为「设为生效中」时触发（见 blueprints.activate_blueprint），新增/生成蓝图一律不注入。
             yield _event("stored", stored)
+            # 【生成侧强制·自动修订】正文生成（novelist 初稿 / regenerate 再稿）落库后，
+            # 本地正则检测 AI 味句式（零成本、不调模型）；命中达到阈值即自动调修订师修一轮
+            # （第 2 次 LLM），产出 source=reviser 子版本（挂在本次版本下）供作者对比；
+            # 干净则仍只 1 次 LLM。扩写（expand）不触发；reviser 产出的版本不再递归自动修订（防死循环）。
+            if (
+                agent_name == "novelist"
+                and not dry_run
+                and not (params.get("mode") == "expand" or params.get("writing_mode") == "expand")
+            ):
+                content = getattr(parsed, "content", "") or ""
+                findings = lint_ai_sentences(content)
+                if len(findings) >= AUTO_REVISE_MIN_HITS:
+                    try:
+                        yield _event("auto_revising", {
+                            "count": len(findings),
+                            "message": f"检测到 {len(findings)} 处 AI 味句式，正在自动修订一轮…",
+                        })
+                        reviser_agent = get_agent(db, "reviser")
+                        revise_params = {
+                            **params,
+                            "chapter_text": content,
+                            "parent_version_id": stored.get("version_id"),
+                            "title": stored.get("title") or getattr(parsed, "title", None),
+                            "review": {},
+                            # 修订落库 source 固定为 reviser：清掉 regenerate 标志，
+                            # 防止 _persist_novelist 把修订版误标成 regenerate
+                            "regenerate": None,
+                        }
+                        reviser_ctx = reviser_agent.build_context(novel_id, revise_params)
+                        # 复用单版本流式：修订的思考/增量/stored 事件继续下发，
+                        # 心跳随事件刷新（修订 LLM 期间有 thinking_delta/ping 保活）。
+                        async for sse in _stream_single(
+                            db, reviser_agent, reviser_ctx, "reviser", novel_id, revise_params, dry_run=False
+                        ):
+                            yield sse
+                    except Exception:
+                        # 自动修订失败不影响已落库的原稿（保持「生成成功」，仅提示）
+                        logger.exception("novel_id=%s 自动修订失败（原稿已落库，不影响）", novel_id)
+                        yield _event("notify", {"message": "自动修订失败，已保留原稿。"})
     else:
         _alert_schema_error(db, agent_name, novel_id, error=last_error)
         yield _event("stored", {"action": "alert", "detail": "schema_error"})
@@ -1591,7 +1634,7 @@ def _persist_novelist(
         novel_title = novel_row.title if novel_row else None
         if novel_title and title and title.strip() == novel_title.strip():
             title = chapter.title
-    db.add(ChapterVersion(
+    ver = ChapterVersion(
         chapter_id=chapter.id,
         version_no=ver_no,
         source=ver_source,
@@ -1602,7 +1645,8 @@ def _persist_novelist(
         parent_version_id=uuid.UUID(str(parent_version_id)) if parent_version_id is not None else None,
         is_active=False,
         info_control=params.get("info_control"),
-    ))
+    )
+    db.add(ver)
     # 意见持久化：作者在「评价优化」时提交的批注（review.author_note）落库到本章指令，
     # 后续重新生成/规划/续写本章时由 novelist/chapter_planner 注入（防止"说过突兀还照写"）。
     # 只持久化 author_note（通用修改要求）；disagreements 针对当次评价的建议，一次性不落库。
@@ -1624,6 +1668,9 @@ def _persist_novelist(
         "table": "chapter_versions",
         "chapter_no": chapter_no,
         "source": source,
+        # 新版本 id + 标题：供生成侧自动修订把本版作为 parent_version_id（修订版挂到被修订版本下）
+        "version_id": str(ver.id),
+        "title": title,
         # 写后自检：命中即回传，由 SSE 以 setting_warning 事件告警给前端
         "setting_warnings": _check_setting_gaps(db, novel_id, parsed.content),
     }

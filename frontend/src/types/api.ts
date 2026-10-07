@@ -437,6 +437,7 @@ export type StreamEvent =
   | "stored"
   | "notify"
   | "author_confirm"
+  | "auto_revising"
   | "stream_error";
 
 /** 设定写后自检命中的疑似漏项（SSE setting_warning）。 */
