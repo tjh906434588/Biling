@@ -3,7 +3,9 @@
 Base.metadata.create_all 只会新建缺失的【表】，不会为已存在的表补列。
 此处对历次新增的 nullable 列做幂等 ALTER TABLE ADD COLUMN。
 """
+import json
 import logging
+from datetime import datetime
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
@@ -133,3 +135,47 @@ def ensure_prompts_schema(engine: Engine) -> None:
     table = Base.metadata.tables["prompts"]
     table.drop(bind=engine, checkfirst=True)
     table.create(bind=engine)
+
+
+def ensure_timestamps_local(engine: Engine) -> None:
+    """旧库时间换算：历史 created_at/updated_at 等此前存的是 UTC
+    （server_default=func.now()，SQLite CURRENT_TIMESTAMP 返回 UTC），
+    一次性换算为本地时间（SQLite datetime(col, 'localtime') 按机器时区转换）。
+    models 的时间默认值已统一为本地时间（datetime.now()），此迁移只为对齐存量数据。
+
+    幂等：以 app_preferences 的标记键为准，换算完成写入标记，重复启动不重复换算。
+    只处理 DATETIME/DATE 类型列，跳过 NULL/空串/不可解析值，不触碰其它类型列。
+    """
+    marker_key = "__timestamps_local_migrated_v1"
+    with engine.connect() as conn:
+        tables = {
+            r[0]
+            for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        }
+        if not tables or "app_preferences" not in tables:
+            return
+        done = conn.execute(
+            text("SELECT 1 FROM app_preferences WHERE key = :k"), {"k": marker_key}
+        ).fetchone()
+    if done:
+        return
+    logger.info("迁移：历史时间列由 UTC 换算为本地时间（一次性，仅旧库有数据时生效）")
+    with engine.begin() as conn:
+        for table in tables:
+            cols = conn.execute(text(f'PRAGMA table_info("{table}")')).fetchall()
+            dt_cols = [
+                r[1] for r in cols if str(r[2]).upper() in ("DATETIME", "DATE")
+            ]
+            for col in dt_cols:
+                conn.execute(text(
+                    f'UPDATE "{table}" SET "{col}" = datetime("{col}", "localtime") '
+                    f'WHERE "{col}" IS NOT NULL AND "{col}" != "" '
+                    f'AND datetime("{col}") IS NOT NULL'
+                ))
+        conn.execute(
+            text(
+                "INSERT INTO app_preferences (key, value, updated_at) "
+                "VALUES (:k, :v, :ts) ON CONFLICT(key) DO NOTHING"
+            ),
+            {"k": marker_key, "v": json.dumps({"done": True}), "ts": datetime.now().isoformat(timespec="seconds")},
+        )

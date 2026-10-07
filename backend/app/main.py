@@ -38,7 +38,12 @@ setup_logging(
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 from app.db.base import Base
-from app.db.migrate import ensure_columns, ensure_novel_background_type_nullable, ensure_prompts_schema
+from app.db.migrate import (
+    ensure_columns,
+    ensure_novel_background_type_nullable,
+    ensure_prompts_schema,
+    ensure_timestamps_local,
+)
 from app.db.session import engine
 
 
@@ -53,6 +58,8 @@ async def lifespan(app: FastAPI):
     ensure_prompts_schema(engine)
     # 兼容旧库：novels.background_type 改可空（旧库 NOT NULL 无法表示「未选择」）——重建该表
     ensure_novel_background_type_nullable(engine)
+    # 兼容旧库：历史时间列由 UTC 换算为本地时间（models 时间默认值已统一为本地时间）
+    ensure_timestamps_local(engine)
     # 启动时预导入 litellm：把其首次 import 的开销（本地模型成本表加载等）放到启动阶段，
     # 避免第一个流式请求被 import 阻塞。
     try:

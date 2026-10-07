@@ -1,7 +1,7 @@
 """小说项目 + 设定条目路由。"""
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 from urllib.parse import quote
 
@@ -240,9 +240,9 @@ def delete_setting(novel_id: uuid.UUID, setting_id: uuid.UUID, db: Session = Dep
     setting = db.get(Setting, setting_id)
     if setting is None or setting.novel_id != novel_id or setting.deleted_at is not None:
         raise HTTPException(404, "设定不存在")
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    setting.deleted_at = datetime.now(timezone.utc)
+    setting.deleted_at = datetime.now()
     db.commit()
 
 
@@ -254,7 +254,7 @@ def export_novel(novel_id: uuid.UUID, db: Session = Depends(get_db)):
         raise HTTPException(404, "项目不存在")
     zip_bytes = build_zip(db, novel_id, novel.title)
     safe = re.sub(r'[\\/:*?"<>|\s]+', "_", novel.title) or "book"
-    filename = f"biling-{safe}-{datetime.now(timezone.utc):%Y%m%d}.zip"
+    filename = f"biling-{safe}-{datetime.now():%Y%m%d}.zip"
     return Response(
         zip_bytes,
         media_type="application/zip",

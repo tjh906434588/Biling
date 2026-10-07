@@ -3,12 +3,20 @@
 说明：
 - UUID 主键用 SQLAlchemy 2.0 原生 Uuid 类型（SQLite/PG 通用）。
 - JSONB 用 sa.JSON 表达：SQLite 原生支持，PG 部署可换 JSONB。
+
+时间存储约定（2026-10 统一）：
+- 所有时间列一律存【本地时间】（Python 侧 datetime.now()，桌面单机场景下与系统时钟一致，
+  肉眼/脚本直读数据库即可识别，无需换算时区）。
+- 旧库历史数据为 UTC（此前 server_default=func.now()，SQLite CURRENT_TIMESTAMP 返回 UTC），
+  由 migrate.ensure_timestamps_local 在启动时一次性换算为本地时间（幂等，标记位防重复）。
+- 后端序列化仍输出无时区标记的 ISO（如 2026-10-07T10:36:38），前端 new Date() 按本地时间解析，
+  显示正确。
 """
 import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -40,8 +48,8 @@ class Novel(Base):
     # 知识断层」穿帮；存 {reader_knows, protagonist_knows, must_hide, hint_only}，可留空。
     # 每章生成时若传 info_control，可覆盖对应字段（前端当前只维护全局这一份）。
     info_control: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class AgentTask(Base):
@@ -59,8 +67,8 @@ class AgentTask(Base):
     params: Mapped[Optional[dict]] = mapped_column(JSON)  # 生成入参（含 import_source / doc_name 等）
     msg: Mapped[Optional[str]] = mapped_column(Text)  # 最近状态提示（如已落库）
     error: Mapped[Optional[str]] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class AuthorConfirm(Base):
@@ -90,7 +98,7 @@ class AuthorConfirm(Base):
     # 作者提交的答案：命中选项存选项 id；自定义输入存原文；dismissed 存 NULL
     answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     answer_meta: Mapped[Optional[dict]] = mapped_column(JSON)  # {label, note} 选中的选项 label + 作者补充说明
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     answered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
@@ -117,8 +125,8 @@ class Setting(Base):
     is_constitution: Mapped[bool] = mapped_column(Boolean, default=False)  # 小说宪法标记：不可变硬约束，评价师硬依据
     # 关键信息固化（C）：AI 判定为关键时置 True；注入时不受设定库数量上限影响，永远进窗口（防止早期关键设定被新设定挤出）
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     aliases: Mapped[Optional[list]] = mapped_column(JSON)  # 别名表（检索/抽取按别名归一）
     merged_into_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, nullable=True)  # 分身合并：指向主条目
@@ -133,7 +141,7 @@ class ConceptCard(Base):
     raw_text: Mapped[str] = mapped_column(Text)  # 用户原话
     extracted: Mapped[Optional[dict]] = mapped_column(JSON)  # 结构化抽取结果
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|confirmed|rejected|integrated
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class Blueprint(Base):
@@ -149,7 +157,7 @@ class Blueprint(Base):
     # 导入模式：生成该版本时使用的导入文档全文 + 文件名（校验比对 / 溯源用；非导入生成则为 NULL）
     source_doc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     doc_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class BlueprintStyle(Base):
@@ -166,7 +174,7 @@ class BlueprintStyle(Base):
     )
     novel_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("novels.id"), index=True)
     directive: Mapped[Optional[str]] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class Outline(Base):
@@ -181,7 +189,7 @@ class Outline(Base):
     title: Mapped[Optional[str]] = mapped_column(String(255))
     content: Mapped[dict] = mapped_column(JSON)  # goal/chapter_function/beats/pov/characters/locations/conflicts/plant/resolve/thread_updates
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|approved（同章最多一个 approved）
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class PlotLedger(Base):
@@ -204,7 +212,7 @@ class PlotLedger(Base):
     # 关键信息固化（C）：大纲师判定 importance=high 的伏笔置 True；注入时不受账本 20 条上限影响，
     # 永远进窗口（防止早期重要伏笔被挤出——账本超上限时最先被丢掉的就是最老的一批）
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     since_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 本条状态生效起始章
     invalidated_at_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 失效章（as-of 查询用）
     # 数据来源（隐形字段，不展示界面）：outline（大纲批准时注入，按来源版本切换显示/隐藏）| extractor（提取师）| manual（手动登记）
@@ -234,8 +242,8 @@ class Chapter(Base):
     # must_hide, hint_only}，可空。不可事后单独编辑——只能重写本章时覆盖/清空。
     # 生效规则：某章生成时注入「已定稿章节的信息控制按章号顺序合并 + 本章自己填的」，同名后者覆盖。
     info_control: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class ChapterVersion(Base):
@@ -262,7 +270,7 @@ class ChapterVersion(Base):
     # 签约未过签标记：最新评价存在 severity=high 的签约红线类 issue（内容红线/抄袭）时为 True，
     # 定稿（select_version）默认拒绝；评价更新后自动重算，通过后自动解除
     signing_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class StoryState(Base):
@@ -285,7 +293,7 @@ class StoryState(Base):
     next_chapter_implications: Mapped[Optional[list]] = mapped_column(JSON)
     since_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 快照生效起始章
     invalidated_at_chapter: Mapped[Optional[int]] = mapped_column(Integer)  # 失效章（as-of 查询用，不删除）
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class NovelMemory(Base):
@@ -306,8 +314,8 @@ class NovelMemory(Base):
     # 结构化编年：{main_line, volumes_progress, character_goals, active_foreshadowing,
     #   established_world, open_threads, next_direction}
     content: Mapped[dict] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class EntityRelation(Base):
@@ -332,7 +340,7 @@ class EntityRelation(Base):
     superseded_by_version: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("chapter_versions.id"), nullable=True
     )  # 取代者提取时所在的正文版本（切回旧版本时据此「复活」被取代的旧关系，消除取代链跨版本空档）
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class QualityReview(Base):
@@ -347,7 +355,7 @@ class QualityReview(Base):
     issues: Mapped[Optional[list]] = mapped_column(JSON)  # [{severity, type, desc, suggested_fix, ledger_ref?}]
     strengths: Mapped[Optional[list]] = mapped_column(JSON)
     revision_hints: Mapped[Optional[list]] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class ModelRoute(Base):
@@ -362,7 +370,7 @@ class ModelRoute(Base):
     max_tokens: Mapped[Optional[int]] = mapped_column(Integer)
     context_window: Mapped[Optional[int]] = mapped_column(Integer)  # token 预算器按此动态装配
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class ProviderKey(Base):
@@ -376,7 +384,7 @@ class ProviderKey(Base):
     provider: Mapped[str] = mapped_column(String(64), primary_key=True)  # deepseek/openai/qwen/...
     api_key: Mapped[str] = mapped_column(Text)
     base_url: Mapped[Optional[str]] = mapped_column(Text)  # 可选：自定义网关 / 中转地址
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class AppPreference(Base):
@@ -386,7 +394,7 @@ class AppPreference(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[Optional[dict]] = mapped_column(JSON)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class PromptTemplate(Base):
@@ -398,7 +406,7 @@ class PromptTemplate(Base):
     key: Mapped[str] = mapped_column(String(64), index=True)  # system_writing_l1 / novelist / critic...
     scope: Mapped[str] = mapped_column(String(16), default="global")  # global|novel:{novel_id}
     content: Mapped[str] = mapped_column(Text)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class MetaDictItem(Base):
@@ -416,4 +424,4 @@ class MetaDictItem(Base):
     dict_key: Mapped[str] = mapped_column(String(32), index=True)  # 对应 DICT_BUILDERS 的 key（如 genre_presets）
     value: Mapped[str] = mapped_column(String(32))
     label: Mapped[str] = mapped_column(String(32))
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)

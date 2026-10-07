@@ -1065,7 +1065,7 @@ def _sweep_stale_tasks(db: Session, novel_id: uuid.UUID, agent: str | None = Non
     )
     if agent is not None:
         q = q.where(AgentTask.agent == agent)
-    stale_until = datetime.utcnow() - timedelta(seconds=STALE_RUNNING_AFTER_SECONDS)
+    stale_until = datetime.now() - timedelta(seconds=STALE_RUNNING_AFTER_SECONDS)
     rows = db.execute(q).scalars().all()
     cleaned = False
     for t in rows:

@@ -12,7 +12,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import AsyncIterator, Optional
 
 from pydantic import BaseModel, ValidationError
@@ -94,7 +94,7 @@ async def run_agent_stream(
         try:
             t = db.get(AgentTask, uuid.UUID(str(task_id)))
             if t is not None and t.status == "running":
-                t.updated_at = datetime.utcnow()
+                t.updated_at = datetime.now()
                 db.commit()
         except Exception:
             db.rollback()  # 心跳失败不影响生成，仅失去心跳（下次懒清理可能判死该任务）
@@ -1614,7 +1614,7 @@ def _persist_novelist(
             directives.append({
                 "text": author_note,
                 "version_no": ver_no,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now().isoformat(),
             })
             chapter.author_directives = directives
     db.commit()
@@ -2263,7 +2263,7 @@ def answer_author_confirm(
     场景写法提案「都不满意，重新生成」时 answer 为 __regenerate__（调用方重新生成再弹）；
     场景卡片确认（多字段）时 answer 为 __fields__，各字段取值在 field_answers（字段→选定文本）。
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from app.db.models import AuthorConfirm
 
@@ -2281,7 +2281,7 @@ def answer_author_confirm(
         "regenerate": answer == "__regenerate__",
         "fields": field_answers or None,  # 场景卡片确认的字段答案（字段→选定文本）
     }
-    row.answered_at = datetime.now(timezone.utc)
+    row.answered_at = datetime.now()
     db.commit()
     return _confirm_to_dict(row)
 
@@ -2397,7 +2397,7 @@ async def request_author_confirmation(
                     try:
                         t = db.get(AgentTask, task_id)
                         if t is not None and t.status == "running":
-                            t.updated_at = datetime.utcnow()
+                            t.updated_at = datetime.now()
                             db.commit()
                     except Exception:
                         db.rollback()  # 心跳失败不影响等待，仅失去心跳

@@ -454,14 +454,14 @@ def delete_blueprint(novel_id: uuid.UUID, blueprint_id: uuid.UUID, db: Session =
 
     删除时连同该蓝图导入的设定（软删）与按版本存的文风一并清除。
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from app.db.models import BlueprintStyle, Setting
 
     bp = _get_blueprint(novel_id, blueprint_id, db)
     if bp.status == "active":
         raise HTTPException(400, "当前生效中的蓝图不可删除，请先激活其他蓝图")
-    now = datetime.now(timezone.utc)
+    now = datetime.now()
     # 软删该蓝图导入的设定（保留手动/批量设定）
     db.execute(
         Setting.__table__.update()
