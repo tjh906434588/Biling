@@ -1,4 +1,5 @@
 """评价师（Critic）：对照蓝图与账本评价章节质量，反哺小说家。"""
+import logging
 import re
 import uuid
 from typing import Optional
@@ -125,6 +126,8 @@ SYSTEM_PROMPT = """你是「评价师」，一位严苛的小说编辑。对照�
 
 # 系统级固定段：平台签约标准（全系统最高优先级，任何写作指令/风格画像/蓝图/设定库都不得覆盖、削弱或删除）
 SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + PLATFORM_SIGNING_HEADER + "\n\n" + PLATFORM_SIGNING_REVIEW
+
+logger = logging.getLogger(__name__)
 
 
 class CriticAgent(Agent[ReviewOutput]):
@@ -364,6 +367,11 @@ class CriticAgent(Agent[ReviewOutput]):
 
     _QUOTE_RE = re.compile(r"[“\"「『]([^”\"」』]{2,40})[”\"」』]")  # 匹配「」“”等引号内的 2-40 字引文片段
     _GENERIC_WORDS = ("写得好", "很好", "不错", "优秀", "自然", "流畅", "较好", "整体")  # 无引文时的套话词表（判"泛泛而谈"）
+    # 疑似编造引文的容忍阈值：引文对不上语料的处数 < 该值 → 记日志放行（有评价总比没有评价有用）；
+    # ≥ 该值 → 判"大面积编造"打回重写（仍拦截系统性编造的报告）。
+    # 背景：deepseek-v4-pro 等评价模型常把正文转述成引文（非逐字），严格"任一引文不符即打回"
+    # 会让评价反复失败。与提示词的"逐字复制"要求配合：偶发转述放行，系统性编造仍拦。
+    FABRICATION_TOLERANCE = 3
 
     @staticmethod
     def _norm_text(s: str) -> str:
@@ -384,14 +392,16 @@ class CriticAgent(Agent[ReviewOutput]):
     def host_validate(self, parsed: ReviewOutput, params: dict, meta: Optional[dict] = None) -> None:
         """评价产出确定性校验（不靠 LLM，纯字面比对）：
 
-        1. 编造引文：rubric.evidence 与 issues[].desc 中出现的「引号内原文」必须真实存在于
-           上下文语料（本章正文 + 最近章节全文 + 伏笔账本 + 关系图谱 + 设定库 + 本章大纲），
-           否则判为编造，抛 ValueError 打回重写；
+        1. 编造引文：rubric.evidence 中出现的「引号内原文」必须真实存在于上下文语料
+           （本章正文 + 最近章节全文 + 伏笔账本 + 关系图谱 + 设定库 + 本章大纲）。
+           容忍阈值 FABRICATION_TOLERANCE=3：对不上语料的引文 < 3 处 → 记日志放行（保留评价，
+           有评价总比没有评价有用；deepseek-v4-pro 等模型常把正文转述成引文，严格打回会让评价
+           反复失败）；≥ 3 处 → 判"大面积编造"，抛 ValueError 打回重写（仍拦截系统性编造）；
         2. 泛泛而谈：rubric 维度 evidence 无任何引文、且内容短、且为套话 → 判为无证据，
-           抛 ValueError 打回重写。
+           抛 ValueError 打回重写（此条保持严格）。
 
-        与 SYSTEM_PROMPT 的「evidence 强制非空 / 必须对照证据打分」配套，把提示词软约束
-        变成确定性门禁：评价引用一假，整份报告重写。
+        与 SYSTEM_PROMPT 的「evidence 强制非空 / 必须对照证据打分 / 引文逐字复制」配套，
+        把提示词软约束变成确定性门禁：系统性编造整份重写，偶发转述放行并留痕。
         """
         corpus = ((meta or {}).get("corpus") or "").strip()
         if not corpus:
@@ -399,6 +409,7 @@ class CriticAgent(Agent[ReviewOutput]):
         corpus_norm = self._norm_text(corpus)
 
         errors: list[str] = []
+        fabricated: list[tuple[str, str]] = []  # (where, quote) 引文对不上语料的记录
 
         def check(text: str, where: str) -> None:
             quotes = [q for q in self._QUOTE_RE.findall(text or "") if q.strip()]
@@ -412,7 +423,7 @@ class CriticAgent(Agent[ReviewOutput]):
                 return
             for q in quotes:
                 if not self._quote_in_corpus(q, corpus_norm):
-                    errors.append(f"{where} 引文「{q}」在上下文中不存在（疑似编造）")
+                    fabricated.append((where, q))
 
         # 仅校验 rubric 各维度 evidence 的引文真实性（这是防编造的主防线）。
         # issues[].desc 是评价师的自由分析文字，引号多用于强调/转述，不要求逐字命中语料，
@@ -421,6 +432,20 @@ class CriticAgent(Agent[ReviewOutput]):
             if not dim:  # reader_retention 可空（旧输出/旧记录兼容），跳过
                 continue
             check(dim.get("evidence") or "", f"rubric.{name}")
+
+        if len(fabricated) >= self.FABRICATION_TOLERANCE:
+            errors.append(
+                "疑似编造引文 "
+                + str(len(fabricated))
+                + f" 处（≥{self.FABRICATION_TOLERANCE} 判大面积编造）："
+                + "；".join(f"{w}「{q}」" for w, q in fabricated[:6])
+            )
+        elif fabricated:
+            logger.warning(
+                "评价引文 %d 处未逐字命中（< 容忍阈值 %d，已放行保留评价）：%s",
+                len(fabricated), self.FABRICATION_TOLERANCE,
+                "；".join(f"{w}「{q}」" for w, q in fabricated[:5]),
+            )
 
         if errors:
             raise ValueError(
