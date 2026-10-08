@@ -18,11 +18,21 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 - **枚举字典统一收敛（自动执行，无需用户提醒）**：会变动的枚举/字典数据——**文案、数据列表、下拉选项、预置集合等一切枚举性质数据**——统一在后端 `app/api/meta.py` 的 `DICT_BUILDERS` 注册（一个 key 一个构建函数），经 `GET /api/meta?keys=...` 按 key 下发——**不一个枚举一个接口**；前端统一经 `lib/meta-dict.ts` 的 `loadMetaDict(key)` 拉取（模块缓存 + TTL 过期自动重拉，命中未过期不请求），各业务 loader 从它取值并做失败兜底。**固定死文案前端写死；会变动的枚举/字典数据（文案或数据列表）一律走字典接口**（枚举变化不再导致前端文案或选项过时）。**新增枚举：后端 `meta.py` 的 `DICT_BUILDERS` 加一项即可；前端需类型约束时补静态 key 清单（如 `task-types.ts` 的 `TASK_TYPES`），无需另起接口**。
   - **双层字典（用户可自定义的枚举，如题材）**：内置枚举在 `DICT_BUILDERS` 代码里只读；允许用户新增/删除的 key 加入 `CUSTOMIZABLE_KEYS`，用户自定义项存 `meta_dict_items` 表（**存库而非代码 → 升级版本不重置**），`GET /api/meta` 合并下发（自定义项带 `custom: True` 标记供前端区分）、`POST /api/meta/{key}/items` 新增、`DELETE /api/meta/{key}/items/{value}` 删除（内置项不可删）。前端增删后调 `lib/meta-dict.ts` 的 `invalidateMetaDict(key)` 失效缓存再重拉。题材即此模式：输入即正式入库（无临时态），删除走删除接口。后端侧需要程序化登记自定义项时复用 `meta.py::_upsert_custom_items`（如蓝图导入 AI 新增题材自动入库）。
 - **doc 与 code 镜像属例外**：规则文档（如 `rules/fanqie_rules.md`）与运行时代码（`platform_rules.py`）是同一内容的两种形态；文档为人类可读源、代码为运行时事实源，通过 skill 流程保证同步，不另立第三份。
-- **反 AI 味规则单一维护源（自动执行）**：标点/句式级反 AI 味约束与检测的归属固定，新增这类规则只改对应单一源，不另起；三者分工是「L1 管别写（提示词软约束）→ detector 管写了就标出来（确定性硬检测）→ 评价师管强制逐句回应」，改一处时保持分工一致：
-  - 生成侧硬约束（破折号限频与禁后置解说、禁像字套壳比喻、禁甩尾句式、禁解说型旁白、叙述经济性/禁无落点空镜等）→ `backend/app/agents/l1.py` 的 `L1_ANTI_AI_CONSTRAINTS`（novelist/reviser 共享注入，全系统所有小说生效，不按题材）；
-  - 确定性检测正则（评价师/修订师逐句核对的程序依据）→ `backend/app/services/detector.py` 的 `_AI_SENTENCE_PATTERNS`（新增类目自动流入 critic/reviser 的核对清单，无需改 agent 代码）；
-  - 平台级核查清单（评价师判定的典型 AI 腔句式示例）→ `backend/app/agents/platform_rules.py` 的 `PLATFORM_SIGNING_REVIEW`。
-- 发现重复 → 合并回单一源，并在源文件注释里说明"谁从这里派生"。
+- **写作规则唯一源归属（自动执行）**：所有写入提示词的约束/限制，归属是**固定的**——新增任何限制，先对照下方归属表，去对应文件改，**禁止四处写**（同一规则在多个文件维护 = 改一处漏一处 + 同一段内容被重复注入提示词，白白占用 LLM 上下文 token）。三者分工是「L1 管别写（提示词软约束）→ detector 管写了就标出来（确定性硬检测）→ 评价师管强制逐句回应」，改一处时保持分工一致：
+  - 通用写作硬约束（网文定位/叙述经济性/标点句式/禁 AI 腔句式等，全系统所有小说生效、不按题材）→ `backend/app/agents/l1.py` 的 `L1_ANTI_AI_CONSTRAINTS`（novelist/reviser 共享注入）；
+  - 平台签约口味（开篇进戏/章末钩子/打脸/爽点/红线等）→ `backend/app/agents/platform_rules.py` 的 `PLATFORM_SIGNING_*` 段（BLUEPRINT/OUTLINE/NOVEL/REVIEW 各角色自引对应段）；
+  - 身份一致·反套话·反标签化（含能力展示反标签化、写后自检）→ `backend/app/agents/platform_rules.py` 的 `PLATFORM_ANTI_CLICHE`（正文侧唯一权威段，novelist/reviser 引用它，不再内联清单）；
+  - 背景类型核查/生成口径（realistic/alternate/pure_fantasy）→ `backend/app/agents/platform_rules.py` 的 `BACKGROUND_TYPE_SCOPE` / `BACKGROUND_TYPE_GENERATION`；
+  - 题材方向与题材族注册表（GENRE_DIRECTIONS、GENRE_FAMILY_REGISTRY、GENRE_STORYTELLING_*、GENRE_RHYTHM_*、format 函数）→ `backend/app/agents/platform_rules.py`（题材注册表必须与题材段同文件，保持内聚）；
+  - 确定性检测正则（评价师/修订师逐句核对的程序依据）→ `backend/app/services/detector.py` 的 `_AI_SENTENCE_PATTERNS`（新增类目自动流入 critic/reviser 核对清单，无需改 agent 代码；检测正则不入提示词文件）；
+  - 平台级核查清单（评价师判定的典型 AI 腔/注水句式示例）→ `backend/app/agents/platform_rules.py` 的 `PLATFORM_SIGNING_REVIEW`。
+  - **agent 提示词内不得再内联上述任何一段的清单正文**——只允许引用（如 `{PLATFORM_ANTI_CLICHE}`）或一句话指向。新增"别写 X"类约束去 l1.py、新增"检测 X"类正则去 detector.py、新增"评价 X"类清单去 PLATFORM_SIGNING_REVIEW，职责不越界。
+- **发现重复的处理流程（自动执行）**：改动或新增时若发现同一规则在两处维护——先**排查原因**（是三层分工的刻意覆盖？还是内容重复？），再处理：
+  - 三层分工（L1 别写 / detector 标出 / 评价师核查）对同一规则的三种落地形态**不算重复**，属设计，保留；
+  - 多角色各引对应段（蓝图/大纲/正文/评价各写相关条款）属设计，保留；
+  - **同一段清单正文在多个文件/多处维护 = 真重复** → 合并回单一源（按上方归属表），并在源文件注释里说明"谁从这里派生"；agent 内联的重复清单删除、改引用；
+  - **同一段内容被重复注入同一份提示词**（如 f-string 里把整段求值两次、或引用文字写成 `{变量名}` 被求值）→ 是 bug，会白白占用上下文 token，必须修正（引用文字不得含会被 f-string 求值的占位符）。
+- 禁止为同一限制在 l1.py、platform_rules.py、detector.py 之外另开文件存放提示词约束（检测逻辑例外：见 detector.py）。
 
 ## 1. 技术栈与目录（分层固定）
 
