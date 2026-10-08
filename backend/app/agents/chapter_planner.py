@@ -369,9 +369,11 @@ _POV_MARKERS = ["第一人称", "第三人称", "人称", "全知", "限知", "�
 # 否则说明没同时给出「节奏档位 + 开场切入方式」这两个要素，只是干巴巴描述事件/场景（抢了 goal 的活）。
 _PACE_LEVEL_MARKERS = [
     "慢", "中", "快", "平缓", "收紧", "高张力", "舒缓", "紧张", "急促", "松弛",
+    "平稳", "徐缓", "紧凑", "迅捷", "渐进", "明快", "轻快", "沉稳", "舒缓", "从容",
 ]
 _PACE_OPENING_MARKERS = [
     "悬念", "冷开场", "日常", "环境", "铺陈", "危机", "切入", "开场", "起笔", "入手",
+    "白描", "开门见山", "代入", "起手", "开篇", "落笔", "闪回", "倒叙", "写起", "点",
 ]
 
 # fix6「前序已定自相矛盾」检测词典：已定核心事件的走向，必须与叙事配置/执行收尾一致。
@@ -438,11 +440,11 @@ def dimension_compliance_check(key: str, options: list[dict], prev_goal: str = "
         落点）与 protagonist_arc（主角反应弧）字段——候选必须是『事件+冲突+反应弧』的完整方案；
         且 text 与两个字段合并后要真含冲突与反应表达（冲突/反应可由 text 或字段任一承载）；
       - narrative（叙事方案）：每个选项必须五要素字段齐备（pace/chapter_function/pov/tone/
-        entry），pace 字段必须同时含节奏档位词与开场切入词；且必须锚定【前序已定】核心事件
-        （prev_goal 非空时，候选文本须命中已定事件的锚定 n-gram，禁止另写新事件/新场景）；
-        事件走向明确时，tone/pace 配置不得与事件走向相反（温情事件配冷酷压抑/冲突事件配温馨）；
+        entry），pace 字段必须给出节奏/开场信息（含节奏档位词或开场切入词即可）；且必须锚定
+        【前序已定】核心事件（prev_goal 非空时，候选须命中已定事件的强锚定词——剔除高频词与
+        主角名后的场景/实体/冲突词，禁止另写新事件/新场景）；
       - execution（执行收尾）：每个选项必须带 beats（3-4 个非空一句话节拍）+ ending_hook +
-        satisfaction；且节拍必须建立在已定核心事件上推进（prev_goal 非空时同样校验锚定）；
+        satisfaction；且节拍必须建立在已定核心事件上推进（prev_goal 非空时同样校验强锚定）；
         温情走向事件的收尾不得配惨败/崩溃类结局。
     """
     if key == "goal":
@@ -458,17 +460,19 @@ def dimension_compliance_check(key: str, options: list[dict], prev_goal: str = "
         return _time_slice_conflict(options)
     if key == "narrative":
         direction = _goal_resolution_direction(prev_goal) if prev_goal else ""
+        # 强锚定词（剔除高频词/主角名后的场景·实体·冲突词）：候选必须命中其一才算"建立在已定事件上"
+        anchor_terms = _extract_anchor_terms(prev_goal) if prev_goal else None
         for o in options:
-            if prev_goal and not _anchored_on_event(_option_full_text(key, o), prev_goal):
-                return "narrative 维度存在选项未锚定【前序已定】的核心事件（候选文本不含已定事件的场景/实体词）——3 个候选必须全部建立在已定事件之上，只变化节奏/开场/视角/风格/进入，严禁另写一个新事件或把已定事件换成另一个场景"
+            if prev_goal and not _anchored_on_event(_option_full_text(key, o), prev_goal, anchor_terms):
+                return "narrative 维度存在选项未锚定【前序已定】的核心事件（候选需命中至少 2 个已定事件的场景/实体/冲突词）——3 个候选必须全部建立在已定事件之上，只变化节奏/开场/视角/风格/进入，严禁另写一个新事件或把已定事件换成另一个场景"
             if direction and (conflict := _narrative_mood_conflict(direction, o)):
                 return "narrative 维度存在选项与【前序已定】核心事件自相矛盾：" + conflict + "——同一事件的叙事方案应与事件本身走向一致，不能温情和解配冷酷压抑、冲突对峙配温馨轻快"
             pace_txt = str(o.get("pace") or "").strip()
-            if not (
+            if len(pace_txt) < 3 or not (
                 any(m in pace_txt for m in _PACE_LEVEL_MARKERS)
-                and any(m in pace_txt for m in _PACE_OPENING_MARKERS)
+                or any(m in pace_txt for m in _PACE_OPENING_MARKERS)
             ):
-                return "narrative 维度存在选项的 pace 字段没有同时给出「节奏档位」与「开场切入」两个要素（需各含一个档位词如慢/中/快、平缓/收紧，和一个切入词如悬念开场/冷开场/日常切入）"
+                return "narrative 维度存在选项的 pace 字段没有给出节奏/开场信息（需含节奏档位词如慢/中/快、平缓/收紧，或开场切入词如悬念开场/冷开场/日常切入）"
             if str(o.get("chapter_function") or "").strip() not in _VALID_CHAPTER_FUNCTIONS:
                 return "narrative 维度存在选项缺少合法的 chapter_function"
             if not any(m in str(o.get("pov") or "") for m in _POV_MARKERS):
@@ -480,9 +484,10 @@ def dimension_compliance_check(key: str, options: list[dict], prev_goal: str = "
         return None
     if key == "execution":
         direction = _goal_resolution_direction(prev_goal) if prev_goal else ""
+        anchor_terms = _extract_anchor_terms(prev_goal) if prev_goal else None
         for o in options:
-            if prev_goal and not _anchored_on_event(_option_full_text(key, o), prev_goal):
-                return "execution 维度存在选项未锚定【前序已定】的核心事件（节拍不含已定事件的场景/实体词）——节拍必须建立在已锁定核心事件上推进，不能把节拍写成另一个事件的流程"
+            if prev_goal and not _anchored_on_event(_option_full_text(key, o), prev_goal, anchor_terms):
+                return "execution 维度存在选项未锚定【前序已定】的核心事件（节拍需命中至少 2 个已定事件的场景/实体/冲突词）——节拍必须建立在已锁定核心事件上推进，不能把节拍写成另一个事件的流程"
             if direction and (conflict := _execution_mood_conflict(direction, o)):
                 return "execution 维度存在选项与【前序已定】核心事件自相矛盾：" + conflict + "——执行收尾应与事件本身走向一致，不能温情和解配惨烈失败收尾"
             beats = o.get("beats")
@@ -559,12 +564,99 @@ _NON_SEMANTIC_CHARS = set(
     "于为到往和叫做像如但然而因为所以虽然如果就是还是可以应该可能似乎好像那么"
 )
 
+# 强锚定词剔除集合：出现在已定核心事件里的高频/通用词。任何候选（哪怕是「另写的新事件」）
+# 都必然写到这些词，拿它们做锚定没有任何区分度——必须剔除，否则"另写新事件"靠主角名/
+# 系统/天赋/入职这类词就能蒙混通过锚定校验（真实问题：narrative 3 个候选全是"系统激活"的
+# 新事件变体，但都因命中高频 2-gram 被误判"锚定成功"）。
+_ANCHOR_STOPWORDS = frozenset([
+    # 系统/金手指/设定通用词
+    "系统", "金手指", "外挂", "面板", "天赋", "弹出", "显示", "激活", "觉醒", "触发",
+    "绑定", "提示", "任务", "奖励", "属性", "等级", "技能", "界面", "窗口", "浮出", "亮起",
+    "骤弹",  # "骤然弹出"的分词碎片
+    # 时间/阶段/场景通用词
+    "第一", "一天", "第二天", "次日", "当天", "早上", "中午", "下午", "晚上", "上班",
+    "下班", "入职", "报到", "回到", "来到", "走进", "走出", "坐在", "公司", "家里",
+    # 高频动作/情绪/连接词（归一化后仍可能成词）
+    "突然", "骤然", "猛地", "赶紧", "连忙", "终于", "看到", "看见", "发现", "知道",
+    "心里", "觉得", "时候", "转身", "抬头", "低头", "开口", "愣住", "怔住", "回过神",
+    "主角", "自己", "对方", "这个", "那个",
+    # 人物关系/称呼泛词：任何"家庭冲突"剧情都会写，无锚定区分度
+    "家长", "孩子", "男孩", "女孩", "儿子", "女儿", "父母", "父子", "母子", "父亲",
+    "母亲", "老婆", "老公", "爱人", "长辈", "晚辈",
+])
+
+# 常见姓氏（中文人名启发式识别用）：任何候选都会写主角名，主角名（及其前后组合的 n-gram）
+# 不能当锚定词。从已定核心事件里识别出"常见姓开头"的人名片段后整体抹掉再取锚定词。
+_CN_SURNAMES = frozenset(
+    "王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾肖田董袁潘于"
+    "蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦付方白邹孟熊秦邱江尹薛"
+    "闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤"
+)
+
+
+def _mask_person_names(chars: list[str]) -> list[str]:
+    """把字符流里「常见姓氏开头的 2-3 字人名片段」整体抹掉。
+
+    否则主角名（林砚秋）及其前后组合出的 n-gram（天林砚/砚秋在…）会成为锚定词，
+    任何候选都写"入职第一天，林砚秋…"即可通过锚定校验——锚定形同虚设。
+    误删对结果无碍：最多少几个锚定词，不会错误放行"另写新事件"。
+    """
+    text = "".join(chars)
+    masked = text
+    for i, ch in enumerate(chars):
+        if ch not in _CN_SURNAMES:
+            continue
+        for n in (3, 2):  # 优先最长
+            seg = "".join(chars[i:i + n])
+            if len(seg) == n and seg in masked:
+                masked = masked.replace(seg, "")
+                break
+    return list(masked)
+
+
+# 惰性加载的中文分词器（jieba）：首次 cut 需建词典缓存，之后复用；只在 narrative/execution
+# 生成与校验时用到，放模块级避免每次导入 chapter_planner 都加载词典。
+_jieba_cut = None
+
+
+def _cut_zh(text: str):
+    global _jieba_cut
+    if _jieba_cut is None:
+        import jieba  # 轻量纯 Python 分词：网文/中文词级切分够用
+
+        _jieba_cut = jieba.cut
+    return _jieba_cut(text)
+
+
+def _extract_anchor_terms(goal_text: str) -> list[str]:
+    """从已定核心事件提取「强锚定词」（jieba 分词取 ≥2 字实义词，剔除高频通用词与主角名）。
+
+    供 narrative/execution 候选的「锚定已定事件」校验与提示词注入：候选（text/各字段/beats
+    合并全文）必须命中足够多的强锚定词，才说明它真正建立在已定事件之上（出现了已定事件的
+    场景/实体/冲突要素），而非借主角名/系统/天赋等高频词或字符滑动窗口碎片蒙混过关。
+    极端情况（抹掉人名后剩余不足 / 全被通用词覆盖）回退原 2/3-gram 字面校验（宽松兜底）。
+    """
+    chars = _normalize_chars(goal_text)
+    if len(chars) < 3:
+        return []
+    masked = "".join(_mask_person_names(chars))
+    if len(masked) < 3:  # 人名占了大半：回退原文，靠通用词剔除兜底
+        masked = "".join(chars)
+    words = [w for w in _cut_zh(masked) if len(w) >= 2]
+    terms = [w for w in words if not any(stop in w for stop in _ANCHOR_STOPWORDS)]
+    seen, out = set(), []
+    for t in terms:  # 去重保序
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
 
 def _extract_anchor_ngrams(text: str, n: int) -> set[str]:
     """从已定核心事件文本提取锚定 n-gram（去虚词后的连续实义片段，如"登记表/志愿/机械"）。
 
-    用于 narrative/execution 候选的「锚定已定事件」校验：候选只要命中至少一个锚定 n-gram，
-    就说明它建立在已定事件之上，而非另写新场景/新事件。
+    用于 narrative/execution 候选的「锚定已定事件」校验（_anchored_on_event 的宽松兜底）：
+    候选只要命中至少一个锚定 n-gram，就说明它建立在已定事件之上，而非另写新场景/新事件。
     """
     chars = _normalize_chars(text)
     if len(chars) < n:
@@ -572,8 +664,14 @@ def _extract_anchor_ngrams(text: str, n: int) -> set[str]:
     return {"".join(chars[i:i + n]) for i in range(len(chars) - n + 1)}
 
 
-def _anchored_on_event(candidate_text: str, goal_text: str) -> bool:
-    """候选文本是否命中已定核心事件的锚定词（3 字优先，2 字兜底）。
+def _anchored_on_event(candidate_text: str, goal_text: str, anchor_terms: list[str] | None = None) -> bool:
+    """候选文本是否锚定已定核心事件的强锚定词（场景/实体/冲突词）。
+
+    anchor_terms 由 _extract_anchor_terms 从 goal 提取（jieba 词级、剔除高频词与主角名）。
+    判据：候选全文须命中 **≥2 个不同强锚定词** 才算建立在已定事件上——"同场景/同人物但
+    另写新事件"只命中 1 个（如咨询室），会被拦下；围绕已定事件的候选会命中多个（咨询室+
+    拍板+语言表达+笔记本…）。锚定词不足 2 个（goal 过短）时退化为命中 1 个；为空/未提供
+    时回退原 2/3-gram 字面校验（宽松兜底）。
 
     goal_text 为空（goal 维度自身/无前序）时返回 True（不校验）。
     """
@@ -582,6 +680,9 @@ def _anchored_on_event(candidate_text: str, goal_text: str) -> bool:
     cand = "".join(_normalize_chars(candidate_text))
     if not cand:
         return False
+    if anchor_terms:
+        hits = [t for t in anchor_terms if t in cand]
+        return len(hits) >= (2 if len(anchor_terms) >= 2 else 1)
     if any(g in cand for g in _extract_anchor_ngrams(goal_text, 3)):
         return True
     return any(g in cand for g in _extract_anchor_ngrams(goal_text, 2))
@@ -709,6 +810,25 @@ class ChapterPlannerAgent(Agent[ChapterPlanDimensionProposal]):
             + forbidden_lines
         ) if forbidden_lines else ""
 
+        # 强锚定词注入（narrative/execution）：从已定核心事件里提取剔除高频词/主角名后的
+        # 场景·实体·冲突词，直接把清单喂给模型并要求候选命中其一——模型照着用、不用自己猜，
+        # 「另写新事件」被硬拦截（真实问题：narrative 候选写成"系统激活"的新事件变体也能
+        # 通过旧的字面 2-gram 锚定校验）。goal 维度自身无前序，不注入。
+        anchor_block = ""
+        if key in ("narrative", "execution"):
+            goal_txt = str(selections.get("goal") or "").strip()
+            if goal_txt:
+                anchor_terms = _extract_anchor_terms(goal_txt)
+                if anchor_terms:
+                    need = 2 if len(anchor_terms) >= 2 else 1
+                    anchor_block = (
+                        "\n\n【已定核心事件锚定词（硬约束）】"
+                        f"你的每个候选（text 与各结构化字段/beats 合并后）必须命中以下词中的至少 {need} 个"
+                        "（不同词），确保方案真正建立在已定核心事件之上——只写「场景/人物相同、事件却是另一个」"
+                        "不算合格。严禁另写新事件、严禁把已定事件换成另一个场景：\n"
+                        "（" + "、".join(anchor_terms) + "）"
+                    )
+
         # 节奏参照注入（主线二：内置题材族骨架模板 + 自己书节奏仪表盘）：
         # 规划本章前看到「全书节奏坐标」——已写章节的标签序列、连续过渡章告警、
         # 距上一个爽点/高潮的距离、题材族前 30 章骨架参考。让每章选项不只是"本章视角"，
@@ -753,7 +873,7 @@ class ChapterPlannerAgent(Agent[ChapterPlanDimensionProposal]):
 
 【前序已定】
 作者在前面维度已选定：
-{sel_lines}{directives_text}{retry_text}
+{sel_lines}{directives_text}{retry_text}{anchor_block}
 
 请基于素材并顺着上面已定取值，为「{dim['label']}」生成恰好 3 个相互区分、覆盖不同走向的候选选项，
 输出严格的 JSON：{{"dimension": {{"key": "{dim['key']}", "label": "{dim['label']}", "hint": "{dim['hint']}", "options": [3 个选项]}}}}。
