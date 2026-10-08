@@ -10,9 +10,11 @@ export interface RecoveryState {
   novelId: string | null;
   initialized: boolean;
   tasks: AgentTaskStatus[];
+  /** 最近一次任务（done/error，含 error）：任务从 running 消失时，消费方据此判断是否以 error 结束 */
+  recent: AgentTaskStatus | null;
 }
 
-const state: RecoveryState = { novelId: null, initialized: false, tasks: [] };
+const state: RecoveryState = { novelId: null, initialized: false, tasks: [], recent: null };
 const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 let stopped = true;
@@ -27,6 +29,7 @@ async function refresh(novelId: string): Promise<void> {
     if (stopped || state.novelId !== novelId) return;
     state.initialized = true;
     state.tasks = result.tasks;
+    state.recent = result.recent ?? null;
     emit();
   } catch (error) {
     log.errorFrom(`恢复 AI 任务失败（novel_id=${novelId}）`, error);
@@ -58,6 +61,7 @@ export function stopAgentTaskRecovery(): void {
   state.novelId = null;
   state.initialized = false;
   state.tasks = [];
+  state.recent = null;
   emit();
 }
 
@@ -73,4 +77,9 @@ export function getAgentTaskRecoverySnapshot(): RecoveryState {
 export function getRecoveryTask(agent: string, novelId: string): AgentTaskStatus | null {
   if (!state.initialized || state.novelId !== novelId) return null;
   return state.tasks.find((task) => task.agent === agent) ?? null;
+}
+
+/** 最近一次任务（done/error，含 error）：任务从 running 消失后消费方据此判断是否以 error 结束。 */
+export function getRecoveryRecent(): AgentTaskStatus | null {
+  return state.recent;
 }

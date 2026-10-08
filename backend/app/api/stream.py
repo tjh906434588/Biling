@@ -178,7 +178,7 @@ async def _ensure_era_research(
         logger.info("novel_id=%s 蓝图生成前自动研究年代×行业（material=%s 字）", novel_id, len(material or ""))
         params = {"material": material}
         result: dict | None = None
-        async for sse in run_agent_stream(db, "era_researcher", novel_id, params, dry_run=True):
+        async for sse in run_agent_stream(db, "era_researcher", novel_id, params, dry_run=True, task_id=task_id):
             ev = _parse_sse_event(sse)
             if on_stream and ev and ev["name"] == "thinking_delta":
                 on_stream(sse)  # 研究思考实时转发，生成弹窗里滚动展示
@@ -348,7 +348,7 @@ async def _ensure_blueprint_issues(
         return None  # 非导入模式不做质检
     result: dict | None = None
     try:
-        async for sse in run_agent_stream(db, "blueprint_prechecker", novel_id, params, dry_run=True):
+        async for sse in run_agent_stream(db, "blueprint_prechecker", novel_id, params, dry_run=True, task_id=task_id):
             ev = _parse_sse_event(sse)
             if on_stream and ev and ev["name"] == "thinking_delta":
                 on_stream(sse)  # 质检思考实时转发，生成弹窗里滚动展示
@@ -471,7 +471,7 @@ async def _propose_outline_direction(
     chapter_no = params.get("chapter_no")
     proposal: dict | None = None
     try:
-        async for sse in run_agent_stream(db, "direction_proposer", novel_id, params, dry_run=True):
+        async for sse in run_agent_stream(db, "direction_proposer", novel_id, params, dry_run=True, task_id=task_id):
             ev = _parse_sse_event(sse)
             if on_stream and ev and ev["name"] == "thinking_delta":
                 on_stream(sse)  # 提案思考实时转发，生成弹窗里滚动展示
@@ -644,7 +644,7 @@ async def _propose_chapter_plan(
         params["plan_selections"] = dict(selections)
         proposal: dict | None = None
         try:
-            async for sse in run_agent_stream(db, "chapter_planner", novel_id, params, dry_run=True):
+            async for sse in run_agent_stream(db, "chapter_planner", novel_id, params, dry_run=True, task_id=task_id):
                 ev = _parse_sse_event(sse)
                 if on_stream and ev and ev["name"] == "thinking_delta":
                     on_stream(sse)  # 规划思考实时转发，生成弹窗里滚动展示
@@ -738,7 +738,7 @@ async def _propose_chapter_plan(
             )
             params["_dim_retry"] = {"key": key, "reason": reason, "repair": _attempt == 2}
             try:
-                async for sse in run_agent_stream(db, "chapter_planner", novel_id, params, dry_run=True):
+                async for sse in run_agent_stream(db, "chapter_planner", novel_id, params, dry_run=True, task_id=task_id):
                     ev = _parse_sse_event(sse)
                     if on_stream and ev and ev["name"] == "thinking_delta":
                         on_stream(sse)
@@ -906,7 +906,7 @@ async def _propose_scene_plan(
     params["chapter_plan"] = plan
     proposal: dict | None = None
     try:
-        async for sse in run_agent_stream(db, "scene_planner", novel_id, params, dry_run=True):
+        async for sse in run_agent_stream(db, "scene_planner", novel_id, params, dry_run=True, task_id=task_id):
             ev = _parse_sse_event(sse)
             if on_stream and ev and ev["name"] == "thinking_delta":
                 on_stream(sse)  # 场景规划思考实时转发
@@ -1009,7 +1009,7 @@ async def _propose_scene_plan(
         for round_no in range(3):  # 「重新生成」最多 3 轮，防死循环
             prop_out: list[dict] = []
             try:
-                async for sse in run_agent_stream(db, "scene_planner", novel_id, params, dry_run=True):
+                async for sse in run_agent_stream(db, "scene_planner", novel_id, params, dry_run=True, task_id=task_id):
                     ev = _parse_sse_event(sse)
                     if on_stream and ev and ev["name"] == "thinking_delta":
                         on_stream(sse)
@@ -1237,9 +1237,18 @@ def running_tasks(novel_id: uuid.UUID, db: Session = Depends(get_db)):
         .where(AgentTask.novel_id == novel_id, AgentTask.status == "running")
         .order_by(AgentTask.created_at.asc())
     ).scalars().all()
+    # 顺带返回最近一次任务（done/error）：前端恢复轮询据此在任务从 running 消失时
+    # 判断是否以 error 结束（懒清理判死/生成失败），不再静默关弹窗
+    recent = db.execute(
+        select(AgentTask)
+        .where(AgentTask.novel_id == novel_id)
+        .order_by(AgentTask.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
     return {
         "tasks": [_task_to_dict(task) for task in tasks],
         "pending_confirms": get_pending_confirms(db, novel_id),
+        "recent": _task_to_dict(recent) if recent else None,
     }
 
 

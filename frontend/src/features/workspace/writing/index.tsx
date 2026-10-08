@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
+  friendlyTaskError,
   getActiveBlueprint,
   getChapter,
   getChapterInfoControl,
@@ -533,7 +534,10 @@ export default function WritingPanel({ novelId }: Props) {
       setGenRun({ thinking: i.thinking, output: i.output, running: true });
     },
     onProgress: (i) => setGenRun({ thinking: i.thinking, output: i.output, running: true }),
-    onEnd: () => {
+    onEnd: (error?: string) => {
+      // 任务以 error 结束且 SSE 仍在跑（generating 仍为 true = 错误未经流内 stream_error 提示）：
+      // 由这里补弹失败提示，避免任务异常中断时静默关弹窗；实时流自身已提示的不重复弹
+      const flowActive = generating;
       setGenerating(false);
       setGenRun((g) => (g ? { ...g, running: false } : g));
       setShowGenRun(false);
@@ -541,6 +545,9 @@ export default function WritingPanel({ novelId }: Props) {
       setShowAddModal(false);
       setRegenerateNo(null);
       setGenIsRegenerate(false);
+      if (error && flowActive) {
+        message.error(`生成失败：${friendlyTaskError(error, "任务异常中断")}`);
+      }
     },
   });
   useResumeAgentTask({
@@ -554,10 +561,14 @@ export default function WritingPanel({ novelId }: Props) {
       setReviseRun({ thinking: i.thinking, output: i.output, running: true });
     },
     onProgress: (i) => setReviseRun({ thinking: i.thinking, output: i.output, running: true }),
-    onEnd: () => {
+    onEnd: (error?: string) => {
+      const flowActive = revising;
       setRevising(false);
       setReviseRun((g) => (g ? { ...g, running: false } : g));
       setShowReviseRun(false);
+      if (error && flowActive) {
+        message.error(`优化失败：${friendlyTaskError(error, "任务异常中断")}`);
+      }
     },
   });
   useResumeAgentTask({
@@ -571,10 +582,14 @@ export default function WritingPanel({ novelId }: Props) {
       setReviewRun({ thinking: i.thinking, output: i.output, running: true });
     },
     onProgress: (i) => setReviewRun({ thinking: i.thinking, output: i.output, running: true }),
-    onEnd: () => {
+    onEnd: (error?: string) => {
+      const flowActive = reviewing;
       setReviewing(false);
       setReviewRun((g) => (g ? { ...g, running: false } : g));
       setShowReviewRun(false);
+      if (error && flowActive) {
+        message.error(`评价失败：${friendlyTaskError(error, "任务异常中断")}`);
+      }
     },
   });
 

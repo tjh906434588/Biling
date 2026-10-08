@@ -8,6 +8,7 @@
 import { useEffect, useRef } from "react";
 import {
   getAgentTaskRecoverySnapshot,
+  getRecoveryRecent,
   getRecoveryTask,
   subscribeAgentTaskRecovery,
 } from "../../components/agent-task-recovery";
@@ -23,7 +24,8 @@ interface UseResumeAgentTaskOptions {
     params: Record<string, unknown>;
   }) => void;
   onProgress: (info: { thinking: string; output: string }) => void;
-  onEnd: () => void;
+  /** 任务离开 running 后回调；error 非空 = 任务以 error 结束（懒清理判死/生成失败），供消费方弹失败提示 */
+  onEnd: (error?: string) => void;
 }
 
 export function useResumeAgentTask({ agent, novelId, onStart, onProgress, onEnd }: UseResumeAgentTaskOptions) {
@@ -61,7 +63,14 @@ export function useResumeAgentTask({ agent, novelId, onStart, onProgress, onEnd 
       }
       if (activeTaskId && !ended) {
         ended = true;
-        callbacks.current.onEnd();
+        // 任务刚离开 running：查最近一次任务是否以 error 结束（懒清理判死/生成失败），
+        // 是则把错误带给 onEnd，由发起页弹失败提示（不再静默关弹窗）
+        const droppedId = activeTaskId;
+        activeTaskId = null;
+        const recent = getRecoveryRecent();
+        const err =
+          recent && recent.id === droppedId && recent.status === "error" ? (recent.error ?? "任务已中断") : undefined;
+        callbacks.current.onEnd(err);
       }
     };
 

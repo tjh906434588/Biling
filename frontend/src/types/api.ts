@@ -264,6 +264,8 @@ export interface AgentRunningTaskResult {
 export interface RunningTasksResult {
   tasks: AgentTaskStatus[];
   pending_confirms: AuthorConfirm[];
+  /** 最近一次任务（done/error）：任务从 running 消失后据此判断是否以 error 结束 */
+  recent?: AgentTaskStatus | null;
 }
 
 export interface StreamTaskInfo {
