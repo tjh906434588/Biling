@@ -26,6 +26,8 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
   - 题材方向与题材族注册表（GENRE_DIRECTIONS、GENRE_FAMILY_REGISTRY、GENRE_STORYTELLING_*、GENRE_RHYTHM_*、format 函数）→ `backend/app/agents/platform_rules.py`（题材注册表必须与题材段同文件，保持内聚）；
   - 确定性检测正则（评价师/修订师逐句核对的程序依据）→ `backend/app/services/detector.py` 的 `_AI_SENTENCE_PATTERNS`（新增类目自动流入 critic/reviser 核对清单，无需改 agent 代码；检测正则不入提示词文件）；
   - 平台级核查清单（评价师判定的典型 AI 腔/注水句式示例）→ `backend/app/agents/platform_rules.py` 的 `PLATFORM_SIGNING_REVIEW`。
+  - 跨章节奏体检（评价师跨章核查：连续过渡 / 久无爽点 / 中高潮缺位 / 爽点量级递增）→ `backend/app/agents/critic.py` 的 `RHYTHM_REVIEW_ITEMS`（critic 专属段，依赖运行时注入的【节奏体检组件】，与静态的 PLATFORM_SIGNING_REVIEW 单章核查互补）；
+  - 全书节奏推导（章标签枚举 / 节奏仪表盘 / 阶段卡 / 骨架注入 / 硬校验信号）→ `backend/app/services/rhythm_service.py`（章节规划师、小说家、评价师共享调用，不在各 agent 内重复实现；章标签枚举 `RHYTHM_TAGS` 同时经 `meta.py` 的 `rhythm_tags` 字典下发前端）。
   - **agent 提示词内不得再内联上述任何一段的清单正文**——只允许引用（如 `{PLATFORM_ANTI_CLICHE}`）或一句话指向。新增"别写 X"类约束去 l1.py、新增"检测 X"类正则去 detector.py、新增"评价 X"类清单去 PLATFORM_SIGNING_REVIEW，职责不越界。
 - **发现重复的处理流程（自动执行）**：改动或新增时若发现同一规则在两处维护——先**排查原因**（是三层分工的刻意覆盖？还是内容重复？），再处理：
   - 三层分工（L1 别写 / detector 标出 / 评价师核查）对同一规则的三种落地形态**不算重复**，属设计，保留；
@@ -66,6 +68,7 @@ description: 笔灵（Biling）项目开发规范：新增功能与代码优化�
 | 伏笔账本 | ledger.py | ledger.py | — |
 | 实体图谱 | graph.py | graph.py | entity_checker.py / detector.py |
 | 风格画像 | style.py | style.py | — |
+| 全书节奏坐标（章标签/仪表盘/阶段卡） | — | — | rhythm_service.py |
 | 记忆审查 | memory.py | （内联/通用类型） | — |
 | 写作指令 | prompts.py | prompts.py | — |
 | 模型接入/路由 | models.py | （内联） | llm/（gateway.py + routes.py） |

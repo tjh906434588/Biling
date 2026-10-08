@@ -354,10 +354,10 @@ def _alert_schema_error(
 
 
 def _timeline_stages_for_entity(events: list[dict], blueprint: dict) -> list[str]:
-    """按时间线年份推导实体卡的生效阶段：年份 → 所在卷（focus 年份区间）→ 卷章范围 → 全书三等分。
+    """按时间线年份推导实体卡的生效阶段：年份 → 所在卷（focus 年份区间）→ 卷章范围 → 阶段。
 
-    与 derive_stage 的三等分口径一致（前 1/3=early、中 1/3=middle、后 1/3=late），
-    卷跨越两个阶段时并集标注。无法推导（无年份、无卷年份区间）返回空列表 = 不限制。
+    与 derive_stage 的按卷分阶段口径一致（卷按序号三等分：前 1/3 卷=early、中 1/3 卷=middle、
+    后 1/3 卷=late），卷跨越两个阶段时并集标注。无法推导（无年份、无卷年份区间）返回空列表 = 不限制。
     """
     import re as _re
 
@@ -1830,6 +1830,7 @@ def persist_chapter_plan(
                 "protagonist_arc": plan.get("protagonist_arc", ""),
                 "core_conflict": plan.get("core_conflict", ""),
                 "satisfaction": plan.get("satisfaction", ""),
+                "rhythm_tag": plan.get("rhythm_tag", ""),
             },
             "characters": [],
             "locations": [],

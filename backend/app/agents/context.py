@@ -293,14 +293,39 @@ STAGE_LABELS = {"early": "前期", "middle": "中期", "late": "后期"}
 def derive_stage(chapter_no: int, blueprint: dict | None) -> Optional[str]:
     """按当前章节号从蓝图分卷推导所处阶段（早期/中期/后期）。
 
-    以分卷 chapters_range（如 "1-20"）的最后一个结束章作为全书总章数，
-    三等分：前 1/3 = 前期，中 1/3 = 中期，后 1/3 = 后期。
-    无法推导（无蓝图或无章范围）时返回 None，调用方应跳过阶段过滤。
+    以分卷为阶段单元：把卷按序号三等分，阶段边界落在整卷上（卷是叙事阶段的最小单元，
+    避免阶段标签在卷内跳变——如 6 卷书 → 卷 1-2 前期 / 卷 3-4 中期 / 卷 5-6 后期）。
+    无法按卷定位（无蓝图 / 卷范围不覆盖该章 / 章范围缺失）时，回退总章数三等分（旧逻辑）。
     """
     if not blueprint or chapter_no <= 0:
         return None
+    vols = blueprint.get("volumes") or []
+    if not vols:
+        return None
+
+    # 优先：按卷序号三等分（阶段边界 = 卷边界）
+    idx: Optional[int] = None
+    for i, v in enumerate(vols, start=1):
+        rng = str(v.get("chapters_range") or "")
+        if "-" in rng:
+            try:
+                s, e = (int(x) for x in rng.split("-", 1))
+            except ValueError:
+                continue
+            if s <= chapter_no <= e:
+                idx = i
+                break
+    if idx is not None:
+        third = len(vols) / 3.0
+        if idx <= third:
+            return "early"
+        if idx <= third * 2:
+            return "middle"
+        return "late"
+
+    # 回退：总章数三等分（无法定位到具体卷时，按全书体量分）
     total = None
-    for v in blueprint.get("volumes") or []:
+    for v in vols:
         rng = str(v.get("chapters_range") or "")
         if "-" in rng:
             try:

@@ -478,6 +478,7 @@ export interface AuthorConfirmOption {
   protagonist_arc?: string; // 主角态度弧线
   core_conflict?: string; // 核心冲突具体形态
   satisfaction?: string; // 爽点/阅读回报类型
+  rhythm_tag?: string; // 节奏标签（爽点/冲突/过渡/钩子/高潮），全书节奏密度统计
 }
 
 /** 场景卡片确认里的一个字段（场景规划）：label + 5 个候选选项，作者逐字段单选/自定义。 */

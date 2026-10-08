@@ -16,7 +16,7 @@ import {
   type AuthorConfirm,
   type AuthorConfirmField,
 } from "@/lib/api";
-import { loadFunctionLabels } from "@/constants";
+import { loadFunctionLabels, loadRhythmTagLabels } from "@/constants";
 
 /** 内嵌进生成内容模块时的卡片外壳：色系与内容统一（灰阶），仅用更深的底色/边框
  * 与模块背景区分，配合上方的琥珀色标题突出"需要手动选择"。 */
@@ -67,8 +67,11 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
   const customRef = useRef<HTMLInputElement | null>(null);
   /** 章节功能 label 映射（枚举字典，后端单一源；拉取前显示原始 value）。 */
   const [fnLabels, setFnLabels] = useState<Record<string, string>>({});
+  /** 章节奏标签 label 映射（枚举字典，后端单一源；徽标悬浮说明用）。 */
+  const [rhythmLabels, setRhythmLabels] = useState<Record<string, string>>({});
   useEffect(() => {
     void loadFunctionLabels().then(setFnLabels);
+    void loadRhythmTagLabels().then(setRhythmLabels);
   }, []);
 
   // 每条确认打开时重置表单（放在条件返回之前，保证 hooks 调用顺序稳定）
@@ -235,6 +238,14 @@ export function ConfirmPanel({ confirm, onSettled, embedded = false }: ConfirmPa
                       <span className="block">
                         <span className="font-medium text-zinc-500">结尾钩子：</span>
                         {opt.ending_hook}
+                      </span>
+                    ) : null}
+                    {opt.rhythm_tag ? (
+                      <span
+                        title={rhythmLabels[opt.rhythm_tag] ?? opt.rhythm_tag}
+                        className="mt-1.5 inline-block rounded-full border border-seal/40 bg-seal/10 px-2 py-0.5 text-[11px] font-medium text-seal"
+                      >
+                        节奏标签：{opt.rhythm_tag}
                       </span>
                     ) : null}
                     {opt.entry || opt.tone || opt.satisfaction ? (

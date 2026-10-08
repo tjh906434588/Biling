@@ -34,6 +34,17 @@ export async function loadFunctionLabels(): Promise<Record<string, string>> {
   }
 }
 
+/** 章节奏标签 label 映射（由字典派生，供确认弹窗的节奏标签徽标悬浮说明用）；
+ * 失败回退空映射（徽标只显示 value，value 本身即"爽点/冲突/…"人话，可读）。 */
+export async function loadRhythmTagLabels(): Promise<Record<string, string>> {
+  try {
+    const list = await loadMetaDict<ChapterFunctionOption[]>("rhythm_tags");
+    return Object.fromEntries(list.map((f) => [f.value, f.label]));
+  } catch {
+    return {};
+  }
+}
+
 /** 视角角色按戏份分组（与设定库 role_rank 一致，方便区分主角 / 配角；枚举字典后端单一源）。 */
 export interface RoleRankOption {
   value: string;

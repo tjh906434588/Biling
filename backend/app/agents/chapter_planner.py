@@ -22,6 +22,7 @@ from app.agents.context import get_chapter_author_directives, get_novel
 from app.agents.outliner import OutlinerAgent
 from app.agents.platform_rules import format_blueprint_rhythm_rules, format_genre_storytelling_rules
 from app.schemas.agents import CHAPTER_FUNCTIONS, ChapterPlanDimensionProposal
+from app.services.rhythm_service import is_valid_rhythm_tag
 
 # 3 个维度的固定顺序与说明（stream.py 逐维度编排与 build_context 注入共用）。
 # 由 10 维度简化为 3 维度：约束链从 10 环减到 3 环，每个维度的候选都是「结构化方案」
@@ -56,7 +57,7 @@ PLAN_DIMENSIONS: list[dict] = [
     {
         "key": "execution",
         "label": "执行收尾",
-        "hint": "这一章怎么推进、怎么收尾——每个候选携带三要素：①beats（3-4 个一句话节拍，讲清发生什么与情绪，按顺序推进）②结尾钩子（四选一：具体可执行线索/情绪钩子/画面悬念/弱钩子·过渡式收尾，落到『下一章要解决的问题』，不写『留下悬念』空话）③爽点类型（小胜/推进感/新信息/关系升温/解气/铺垫，过渡章可为弱回报）。核心事件与叙事方案已由【前序已定】锁定，节拍必须建立在那套方案上推进，严禁另写任何新事件。",
+        "hint": "这一章怎么推进、怎么收尾——每个候选携带四要素：①beats（3-4 个一句话节拍，讲清发生什么与情绪，按顺序推进）②结尾钩子（四选一：具体可执行线索/情绪钩子/画面悬念/弱钩子·过渡式收尾，落到『下一章要解决的问题』，不写『留下悬念』空话）③爽点类型（小胜/推进感/新信息/关系升温/解气/铺垫，过渡章可为弱回报）④节奏标签 rhythm_tag（五选一：爽点/冲突/过渡/钩子/高潮——本章在整个故事节奏里的情绪功能，由节拍收束、钩子强度与爽点类型综合判定，用于全书爽点密度统计；弱回报且无冲突的衔接章=过渡，以悬念/新信息为核心=钩子，情绪峰值=高潮）。核心事件与叙事方案已由【前序已定】锁定，节拍必须建立在那套方案上推进，严禁另写任何新事件。",
         "forbidden": [
             "另写一个别的新事件（核心事件与叙事方案已由【前序已定】锁定，执行收尾只在其上排节拍/钩子/爽点）",
             "节奏档位词与整体开场判断（归「叙事方案」维度）",
@@ -95,7 +96,7 @@ SYSTEM_PROMPT = """你是「章节规划师」。在小说家正式写某一章�
 - 维度特化（三维度，每个候选都是一套结构化方案）：
   - goal（核心事件）的每个选项只描述一件核心事件（谁/做什么/结果），一句话讲完，并携带三个结构化字段："time_slice"（一句话标明该选项所处的时间切片，如"入职第一天"）、"core_conflict"（冲突双方+争的焦点+一个可演的场面）、"protagonist_arc"（主角态度从什么到什么）。**text 这句话本身就要织入冲突与反应弧**：同一句话里既出现冲突（谁对谁/争什么/哪句转折，如"却/拦/质问/拆穿/两难"），又出现主角的反应（态度变化或动作，如"忍不住/暗下决心/试探/盯着"）——不能 text 只写"事件+系统登场"、把冲突和反应孤零零塞进字段（那样作者看到的选项就是缺冲突缺反应弧的）。禁止用"开局/结尾/悬念"等技法词做总起标签，不得带 chapter_function（节奏归 narrative）；**蓝图 opening_anchor 若声明了第 1 章时间切片且本章就是第 1 章，3 个选项必须锚定该切片、time_slice 完全一致（后续章节按剧情推进自由切换切片，不受此约束）**；**蓝图 opening_anchor 若声明了金手指揭示章且 == 本章章号，"金手指登场/觉醒"就是本章核心事件本身**——3 个选项必须是锚定该事件、落在同一时间切片下的互斥变体（金手指首次显现的不同方式+主角当场的处境与反应），可以写"金手指首次现身+主角反应"；系统弹出的面板内容、天赋清单、操作细则等设定揭示细节归 narrative 的进入方式，goal 只写事件本身。**若本章不是金手指揭示章，goal 聚焦人物驱动的事件，系统在事件中的参与按 narrative 的进入方式安排，不得为凑"系统登场"而偏离核心事件**；
   - narrative（叙事方案）的每个选项 = 一套完整叙事方案，携带五个结构化字段："pace"（节奏档位+开场切入一句话，如"中速·收紧，悬念开场"）、"chapter_function"（progression|buildup|turning|climax|revelation|resolution|interlude）、"pov"（视角类型）、"tone"（风格基调词）、"entry"（进入方式：关键场面由谁/哪句话/哪个细节触发）。节奏档位用档位词（慢/中/快、平缓/收紧/高张力…），开场切入用切入手法词（日常切入/环境铺陈/悬念开场/冷开场/危机开场…），全书避免开场方式千篇一律——不得每章都用同一种切入方式。**narrative 禁止另写新事件（核心事件已由前序锁定），更禁止把已定事件换成"系统怎么激活"的另一个场景**——判断标准：去掉叙事方案后，作者仍知道"这一章发生了什么"（核心事件已定），只知道"怎么讲"——这才合格。**候选 text 与 entry 必须出现已定核心事件的场景/实体词（人物/地点/关键道具），逐项自查：如果某个候选整体读起来像"另一个事件/另一个场景"，必须重写。**narrative 选项一旦写成"某某场景/事件 + 系统被激活"即为不合格；**叙事配置要与已定事件的走向一致**：事件是温情和解/宽恕/重逢类的，就不配"黑暗/残酷/冷峻/压抑"的基调与惨烈张力；事件是决裂/对峙/惨烈冲突类的，就不配"温馨/甜蜜/轻松"的调性——同一事件的叙事方案应与事件本身同频；
-  - execution（执行收尾）的每个选项携带三个结构化字段："beats"（3-4 个一句话节拍，讲清发生什么与情绪，不要太长）、"ending_hook"（四选一，落到「下一章要解决的问题/悬念」上：①具体可执行线索 ②情绪钩子 ③画面悬念 ④弱钩子/过渡式收尾，不写"留下悬念"空话）、"satisfaction"（爽点类型，允许弱回报：若本章是铺垫/过渡章，回报可以是推进感、新信息、关系升温，不必章章强爽点）。execution 同样禁止另写新事件——节拍必须建立在已锁定的核心事件与叙事方案上推进，不能把节拍写成另一个事件的流程；**beats 必须出现已定核心事件的场景/实体词（同一人物/地点/关键道具在推进，而非凭空换了个场景）。**执行收尾与事件走向一致：温情和解类事件不得配惨败/崩溃/身败名裂式收尾与钩子。
+  - execution（执行收尾）的每个选项携带四个结构化字段："beats"（3-4 个一句话节拍，讲清发生什么与情绪，不要太长）、"ending_hook"（四选一，落到「下一章要解决的问题/悬念」上：①具体可执行线索 ②情绪钩子 ③画面悬念 ④弱钩子/过渡式收尾，不写"留下悬念"空话）、"satisfaction"（爽点类型，允许弱回报：若本章是铺垫/过渡章，回报可以是推进感、新信息、关系升温，不必章章强爽点）、"rhythm_tag"（节奏标签，五选一：爽点/冲突/过渡/钩子/高潮——由节拍收束、钩子强度与爽点类型综合判定本章在整个故事节奏里的情绪功能，用于全书爽点密度统计；弱回报且无对抗冲突的衔接/铺垫章=过渡，以悬念/新信息为核心功能=钩子，情绪峰值=高潮）。execution 同样禁止另写新事件——节拍必须建立在已锁定的核心事件与叙事方案上推进，不能把节拍写成另一个事件的流程；**beats 必须出现已定核心事件的场景/实体词（同一人物/地点/关键道具在推进，而非凭空换了个场景）。**执行收尾与事件走向一致：温情和解类事件不得配惨败/崩溃/身败名裂式收尾与钩子。
 - 素材不足以判断时，按素材里最明显的推进需求（如超期伏笔、主线冲突）给出选项，不要编造素材里不存在的设定。
 """
 
@@ -494,6 +495,11 @@ def dimension_compliance_check(key: str, options: list[dict], prev_goal: str = "
                 return "execution 维度存在选项缺少 ending_hook（结尾钩子：落到下一章要解决的问题/悬念）"
             if not str(o.get("satisfaction") or "").strip():
                 return "execution 维度存在选项缺少 satisfaction（爽点类型）"
+            if not is_valid_rhythm_tag(o.get("rhythm_tag")):
+                return (
+                    "execution 维度存在选项的 rhythm_tag 不是合法节奏标签（必须五选一："
+                    + "爽点/冲突/过渡/钩子/高潮）——每个候选必须携带本章的节奏标签"
+                )
         return None
     return None
 
@@ -517,6 +523,7 @@ _FALLBACK_FIELD_FILL: dict[str, dict] = {
         "beats": ["按已定核心事件推进的节拍（系统兜底补全，建议自定义）"],
         "ending_hook": "弱钩子·过渡式收尾（系统兜底补全）",
         "satisfaction": "推进感（系统兜底补全）",
+        "rhythm_tag": "过渡（系统兜底补全）",
     },
 }
 
@@ -702,6 +709,40 @@ class ChapterPlannerAgent(Agent[ChapterPlanDimensionProposal]):
             + forbidden_lines
         ) if forbidden_lines else ""
 
+        # 节奏参照注入（主线二：内置题材族骨架模板 + 自己书节奏仪表盘）：
+        # 规划本章前看到「全书节奏坐标」——已写章节的标签序列、连续过渡章告警、
+        # 距上一个爽点/高潮的距离、题材族前 30 章骨架参考。让每章选项不只是"本章视角"，
+        # 而是落在全书节奏密度里（对应拆书教程"2-3 章一个爽点、过渡章不超 2 章、10 章一中高潮"）。
+        rhythm_block = ""
+        try:
+            from app.agents.platform_rules import format_rhythm_skeleton
+            from app.services.rhythm_service import (
+                compute_rhythm_dashboard,
+                format_stage_card,
+            )
+
+            try:
+                cur_no = int(params.get("chapter_no") or 0)
+            except (TypeError, ValueError):
+                cur_no = 0
+            from app.agents.context import get_active_blueprint
+
+            blueprint = get_active_blueprint(self.db, novel_id)
+            skeleton = format_rhythm_skeleton(
+                getattr(novel, "background_type", None) if novel else None,
+                (getattr(novel, "genres", None) if novel else None) or [],
+            )
+            dashboard = compute_rhythm_dashboard(self.db, novel_id, cur_no)
+            stage_card = format_stage_card(blueprint, cur_no)
+            rhythm_block = (
+                "\n\n【全书节奏参照·规划本章前必读】本章节奏标签（rhythm_tag）的判定依据："
+                "既要贴合本章自身功能，也要顾全书节奏密度——以下为参考坐标：\n"
+                f"{skeleton}\n\n{dashboard}"
+                + (f"\n\n{stage_card}" if stage_card else "")
+            )
+        except Exception:  # 节奏统计失败不影响规划主流程
+            pass
+
         task_instruction = f"""
 【本次任务】
 在下面 {len(PLAN_DIMENSIONS)} 个维度中，你负责生成第 {idx + 1} 个维度「{dim['label']}」的候选选项。
@@ -717,7 +758,7 @@ class ChapterPlannerAgent(Agent[ChapterPlanDimensionProposal]):
 请基于素材并顺着上面已定取值，为「{dim['label']}」生成恰好 3 个相互区分、覆盖不同走向的候选选项，
 输出严格的 JSON：{{"dimension": {{"key": "{dim['key']}", "label": "{dim['label']}", "hint": "{dim['hint']}", "options": [3 个选项]}}}}。
 """
-        user_content = base.messages[-1]["content"] + "\n\n" + task_instruction
+        user_content = base.messages[-1]["content"] + "\n\n" + rhythm_block + "\n\n" + task_instruction
         return ContextPack(
             novel_id=novel_id,
             agent="chapter_planner",

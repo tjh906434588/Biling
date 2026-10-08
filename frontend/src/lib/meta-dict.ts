@@ -12,6 +12,7 @@ export type MetaDictKey =
   | "task_types"
   | "genre_aliases"
   | "chapter_functions"
+  | "rhythm_tags"
   | "setting_types"
   | "role_ranks"
   | "stages"

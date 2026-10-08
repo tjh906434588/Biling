@@ -364,6 +364,34 @@ class NovelistAgent(Agent[NovelChapter]):
                     PRIORITY_SETTING,
                 )
             )
+        # 节奏参照（主线二）：本章节奏标签 + 全书节奏坐标（拆书密度：2-3 章一个爽点、
+        # 过渡章连排≤2、每 10 章一个中高潮）。本章大纲已含作者确认的「节奏标签」，
+        # 这里补全书视角——若全书正处"连续过渡/久无爽点"，本章正文不宜写得太轻。
+        try:
+            from app.agents.platform_rules import format_rhythm_skeleton
+            from app.services.rhythm_service import (
+                compute_rhythm_dashboard,
+                format_stage_card,
+            )
+
+            rhythm_tag = str(params.get("rhythm_tag") or "").strip()
+            skeleton = format_rhythm_skeleton(
+                getattr(novel, "background_type", None) if novel else None,
+                (novel.genres if novel else None) or [],
+            )
+            dashboard = compute_rhythm_dashboard(self.db, novel_id, chapter_no)
+            stage_card = format_stage_card(get_active_blueprint(self.db, novel_id), chapter_no)
+            tag_line = f"本章节奏标签：{rhythm_tag}。" if rhythm_tag else "本章节奏标签：未标注（按大纲节奏功能把握情绪浓度）。"
+            components.append(
+                ComponentBlock(
+                    "rhythm",
+                    f"【全书节奏参照（正文情绪浓度参考，非硬约束）】\n{tag_line}\n{skeleton}\n{dashboard}"
+                    + (f"\n\n{stage_card}" if stage_card else ""),
+                    PRIORITY_BASE,
+                )
+            )
+        except Exception:  # 节奏统计失败不影响写作主流程
+            pass
         # 作者对本章的历史修改意见（意见持久化）：作者在之前版本优化/批注时指出过的问题，
         # 本次重新生成/续写必须规避或修正。放在最靠近"开始写"的位置，硬约束不埋在中间。
         author_directives = get_chapter_author_directives(self.db, novel_id, chapter_no)

@@ -83,6 +83,16 @@ def _build_chapter_functions() -> list[dict[str, str]]:
     ]
 
 
+def _build_rhythm_tags() -> list[dict[str, str]]:
+    """章节奏标签（value + 中文含义说明）：确认弹窗展示/统计口径的单一源。
+    value 集合与 app/services/rhythm_service.py 的 RHYTHM_TAGS 一致（LLM 输出约束）；
+    label 为每类标签的判定说明，前端经字典下发、避免各端文案过时。
+    """
+    from app.services.rhythm_service import RHYTHM_TAG_LABELS, RHYTHM_TAGS
+
+    return [{"value": t, "label": RHYTHM_TAG_LABELS.get(t, t)} for t in RHYTHM_TAGS]
+
+
 def _build_setting_types() -> list[dict[str, str]]:
     """设定类型规格（key + label/hint/示例/判定标准/填写建议）：设定表单与类型栏的单一源。
     key 集合与 schemas/agents.py / schemas/novel.py 的设定类型约束一致。"""
@@ -251,6 +261,7 @@ DICT_BUILDERS: dict[str, object] = {
     "task_types": _build_task_types,
     "genre_aliases": _build_genre_aliases,
     "chapter_functions": _build_chapter_functions,
+    "rhythm_tags": _build_rhythm_tags,
     "setting_types": _build_setting_types,
     "role_ranks": _build_role_ranks,
     "stages": _build_stages,

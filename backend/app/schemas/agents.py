@@ -617,6 +617,7 @@ class ChapterPlanDimensionOption(BaseModel):
     entry: Optional[str] = None  # narrative 维度：进入方式（由谁/哪句话/哪个细节触发）
     ending_hook: Optional[str] = None  # execution 维度：结尾钩子
     satisfaction: Optional[str] = None  # execution 维度：爽点类型
+    rhythm_tag: Optional[str] = None  # execution 维度：节奏标签（爽点/冲突/过渡/钩子/高潮），全书节奏密度统计用
 
 
 class ChapterPlanDimension(BaseModel):

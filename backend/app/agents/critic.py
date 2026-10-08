@@ -124,10 +124,61 @@ SYSTEM_PROMPT = """你是「评价师」，一位严苛的小说编辑。对照�
 - 【必改优先】评审最后必须回答"如果本章只能改一个地方，改哪里？"：从全部 issues 中选出最关键的一条，在 revision_hints 首位写"必改优先：<具体位置 + 怎么改>"，其余建议按重要性依次排列；选不出则写"必改优先：无，维持现状"。
 """
 
+# 跨章节奏体检（critic 专属，依赖运行时注入的【节奏体检组件】）：
+# 与 PLATFORM_SIGNING_REVIEW 的单章核查互补——单章查"这章钩子强不强"，
+# 这里查"章与章之间的编排"（连续过渡、久无爽点、中高潮缺位、爽点量级递增）。
+# 拆书节奏规律落地为评价侧体检：事前约束（规划拦截）+ 事后体检（评价纠偏）双保险。
+RHYTHM_REVIEW_ITEMS = """【跨章节奏体检（对照下方【节奏体检组件】逐项核查，发现问题写入 issues，type 填 "pacing"）】
+- 连续过渡章：本章节奏标签为「过渡」且组件标明最近已连续 ≥2 章过渡 → 即连续第 3 个过渡章，必须写入 issues（至少 medium）——节奏纪律：过渡章连排不超过 2 章；
+- 久无爽点/高潮：组件标明距上一个爽点/高潮章 ≥4 章且本章不是爽点/高潮章 → 写入 pacing 提醒（若本章正在蓄势、后文有大兑现则说明理由，不强制）；
+- 中高潮缺位：组件标明距上一个高潮章 ≥9 章（或到第 10 章仍无高潮章）且本章不是高潮/爽点章 → 提醒本章或紧邻下章应安排一个比常规爽点更大的情绪峰值；
+- 爽点量级递增：本章是爽点/高潮章时，对照【最近章节全文】中最近一个爽点/高潮章的可量化回报量级（金额/境界/口碑/地位/数值等），判断本次是否升级：同级或降级 → 写入 issues（至少 medium，type "pacing"，建议量级上台阶，如 2000→20000→200000 的升级感）；本章为全书首个爽点/高潮章（无对照）时跳过此项。"""
+
 # 系统级固定段：平台签约标准（全系统最高优先级，任何写作指令/风格画像/蓝图/设定库都不得覆盖、削弱或删除）
-SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + PLATFORM_SIGNING_HEADER + "\n\n" + PLATFORM_SIGNING_REVIEW
+SYSTEM_PROMPT = (
+    SYSTEM_PROMPT + "\n\n" + PLATFORM_SIGNING_HEADER + "\n\n" + PLATFORM_SIGNING_REVIEW + "\n\n" + RHYTHM_REVIEW_ITEMS
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _rhythm_review_context(db: Session, novel_id, params: dict) -> str:
+    """评价侧节奏体检上下文：本章节奏标签 + 题材族节奏骨架 + 全书节奏仪表盘（不含本章）。
+
+    供【节奏体检组件】使用：评价师据它做跨章节奏体检（连续过渡/久无爽点/中高潮缺位/量级递增）。
+    统计失败不影响评价主流程，返回空态占位。
+    """
+    try:
+        from app.agents.platform_rules import format_rhythm_skeleton
+        from app.services.rhythm_service import (
+            compute_rhythm_dashboard,
+            get_approved_rhythm_tags,
+        )
+
+        novel = get_novel(db, novel_id)
+        try:
+            cur_no = int(params.get("chapter_no") or 0)
+        except (TypeError, ValueError):
+            cur_no = 0
+        # 本章节奏标签（approved 大纲里与本章同章号的那条）
+        cur_tag = ""
+        if cur_no:
+            for no, t in get_approved_rhythm_tags(db, novel_id):
+                if no == cur_no:
+                    cur_tag = t or ""
+                    break
+        skeleton = format_rhythm_skeleton(
+            getattr(novel, "background_type", None) if novel else None,
+            (getattr(novel, "genres", None) if novel else None) or [],
+        )
+        dashboard = (
+            compute_rhythm_dashboard(db, novel_id, cur_no)
+            if cur_no
+            else compute_rhythm_dashboard(db, novel_id)
+        )
+        return f"本章节奏标签：{cur_tag or '未标注'}。\n{skeleton}\n\n{dashboard}"
+    except Exception:  # 节奏统计失败不影响评价主流程
+        return "本章节奏标签：未标注。（节奏体检组件生成失败）"
 
 
 class CriticAgent(Agent[ReviewOutput]):
@@ -296,6 +347,12 @@ class CriticAgent(Agent[ReviewOutput]):
                 "readthrough_hooks",
                 f"【追读钩子扫描·程序确定性信号，评 reader_retention 时逐条对照】\n"
                 f"{format_readthrough_report(scan_readthrough_hooks(chapter_text_raw))}",
+                PRIORITY_BASE,
+            ),
+            ComponentBlock(
+                "rhythm_review",
+                "【节奏体检组件（跨章节奏对照依据；无已确认标签时为空态，跳过对应体检项）】\n"
+                + _rhythm_review_context(self.db, novel_id, params),
                 PRIORITY_BASE,
             ),
             ComponentBlock(

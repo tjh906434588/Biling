@@ -559,6 +559,8 @@ def _plan_to_outline_text(plan: dict) -> str:
         wt.append(f"核心冲突：{plan['core_conflict']}")
     if plan.get("satisfaction"):
         wt.append(f"爽点类型：{plan['satisfaction']}")
+    if plan.get("rhythm_tag"):
+        wt.append(f"节奏标签：{plan['rhythm_tag']}（本章在全书节奏里的情绪功能，正文按此收束情绪回报）")
     if wt:
         parts.append("写法要点（作者定向，不得替换演法）：" + "；".join(wt))
     return "\n".join(p for p in parts if p)
@@ -630,6 +632,7 @@ async def _propose_chapter_plan(
         "protagonist_arc": "",
         "core_conflict": "",
         "satisfaction": "",
+        "rhythm_tag": "",
     }
     selections: dict[str, str] = {}  # 维度key → 取值（选项 text 或作者自定义文本）
     note = ""
@@ -680,7 +683,44 @@ async def _propose_chapter_plan(
             overlap = options_overlap(options, key=key)
             compliance = dimension_compliance_check(key, options, prev_goal=str(selections.get("goal") or ""))
             extra = goal_extra_check(goal_blueprint, chapter_no, options) if key == "goal" else None
-            reason = extra or compliance or overlap
+            # 节奏纪律拦截（execution）：①最近已连续 ≥2 章过渡章；②距上一个高潮章 ≥9 章
+            # （或到第 10 章仍无高潮，每 10 章一个中高潮）时，候选不得全为过渡章。
+            # 拆书节奏规律：过渡章永远不超过两章 + 每 10 章一个中等级别高潮。
+            # 软拦截——至少留一个非过渡候选（冲突/爽点/钩子/高潮）给作者选。
+            # 口径说明：本硬校验以「高潮」标签为准（中高潮缺位=峰值硬纪律）；
+            # 节奏仪表盘的每 10 章稀疏检测以「爽点/高潮」为准（密度软提示）——两层刻意分开。
+            rhythm_reason = None
+            if key == "execution":
+                try:
+                    from app.services.rhythm_service import (
+                        consecutive_transition_count,
+                        get_approved_rhythm_tags,
+                        high_spot_gap,
+                    )
+
+                    prev_tags = [t for no, t in get_approved_rhythm_tags(db, novel_id) if no < chapter_no]
+                    hard_transition = consecutive_transition_count(prev_tags) >= 2
+                    high_gap = high_spot_gap(prev_tags)
+                    hard_high = (high_gap is not None and high_gap >= 9) or (high_gap is None and chapter_no >= 10)
+                    if hard_transition or hard_high:
+                        cand_tags = [str(o.get("rhythm_tag") or "") for o in options]
+                        if cand_tags and all(t == "过渡" for t in cand_tags):
+                            causes = []
+                            if hard_transition:
+                                causes.append("最近已连续 ≥2 章为过渡章")
+                            if hard_high:
+                                if high_gap is not None:
+                                    causes.append(f"距上一个高潮章已 {high_gap} 章（每 10 章一个中高潮）")
+                                else:
+                                    causes.append(f"到第 {chapter_no} 章仍无高潮章（每 10 章一个中高潮）")
+                            rhythm_reason = (
+                                "、".join(causes) + "——节奏纪律要求本章不宜再是过渡章，"
+                                "execution 的 3 个候选却全部是过渡章：至少安排一个非过渡候选"
+                                "（冲突/爽点/钩子/高潮），并让节奏标签与候选内容一致"
+                            )
+                except Exception:  # 节奏统计失败不阻断校验
+                    pass
+            reason = extra or rhythm_reason or compliance or overlap
             if not reason:
                 break  # 合规，使用当前 options
             if _attempt >= 3:
@@ -821,6 +861,8 @@ async def _propose_chapter_plan(
                     plan["ending_hook"] = str(opt["ending_hook"]).strip()
                 if opt.get("satisfaction"):
                     plan["satisfaction"] = str(opt["satisfaction"]).strip()
+                if opt.get("rhythm_tag"):
+                    plan["rhythm_tag"] = str(opt["rhythm_tag"]).strip()
         else:
             value = answer
         plan[key] = value
@@ -1454,6 +1496,7 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
                     payload.params["outline"] = _plan_to_outline_text(plan)
                     payload.params["chapter_function"] = plan.get("chapter_function") or "progression"
                     payload.params["goal"] = plan.get("goal") or ""
+                    payload.params["rhythm_tag"] = plan.get("rhythm_tag") or ""
                     if plan.get("title"):
                         payload.params["title"] = plan.get("title")
                     payload.params["writing_mode"] = "outline_guided"
