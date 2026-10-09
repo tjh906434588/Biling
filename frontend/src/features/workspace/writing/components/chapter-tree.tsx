@@ -133,10 +133,6 @@ interface ChapterSidebarProps {
   hasVersionEdits: boolean;
   /** 把当前临时修改真正保存为一个新的人工版本（原版本保留不变）。 */
   onSaveAsNewVersion: () => void;
-  /** 「格式化排版」可用性：已选中版本且正文非空。 */
-  canFormat: boolean;
-  /** 纯文本排版格式化（首行缩进/段落空行，不调 AI、不改文字）。 */
-  onFormat: () => void;
   /** 当前预览选中的正文版本（null=未选中）。 */
   selectedVersion: ChapterVersion | null;
   /** 选中版本是否已定稿（激活）：决定「定稿」/「提取」按钮可用性。 */
@@ -178,8 +174,6 @@ export function ChapterSidebar({
   onExpand,
   hasVersionEdits,
   onSaveAsNewVersion,
-  canFormat,
-  onFormat,
   selectedVersion,
   selectedIsFinal,
   extractPending,
@@ -388,19 +382,6 @@ export function ChapterSidebar({
                 title="基于当前人工版本正文调用 AI 扩写，生成一个 AI 子版本"
               >
                 AI 扩写
-              </button>
-            )}
-            {/* 格式化排版：仅人工版本展示（AI 生成内容自带规范排版，无需格式化）；
-                纯文本整理（首行缩进/段落空行），不调 AI、不改文字内容 */}
-            {selectedVersion?.source === "user_edit" && (
-              <button
-                type="button"
-                onClick={onFormat}
-                disabled={activeNo == null || aiBusy || !canFormat}
-                className="btn btn-ghost w-full"
-                title="把正文整理成 AI 生成稿的排版：每段首行缩进两格、段落之间空一行（不改文字内容）"
-              >
-                格式化排版
               </button>
             )}
             {/* 定稿：把当前选中的草稿版本定稿激活（同一时间只能定稿一个版本）；选中已定稿版本时隐藏 */}

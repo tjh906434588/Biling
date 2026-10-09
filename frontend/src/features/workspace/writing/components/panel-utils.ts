@@ -76,21 +76,6 @@ export function summarizeOutline(o: Outline): string {
   return parts.join("\n");
 }
 
-/**
- * 纯文本排版格式化（不调用 AI、不改文字内容）：把正文整理成 AI 生成稿的统一排版——
- * 统一换行符、每行去首尾空白（含全角空格）、去掉空行、每个自然段首行缩进两个全角空格、
- * 段落之间空一行。供「本章操作 · 格式化排版」按钮使用。
- */
-export function formatChapterText(text: string): string {
-  return text
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((line) => line.replace(/^[ \s　]+/u, "").replace(/[ \s　]+$/u, ""))
-    .filter((line) => line.length > 0)
-    .map((line) => `　　${line}`)
-    .join("\n\n");
-}
-
 /** 提取记忆层前置校验：返回错误提示文案（null=通过）。供「弹确认前」与「确认后执行」两处复用。 */
 export function validateExtractFor(
   activeChapter: ChapterListItem | null,

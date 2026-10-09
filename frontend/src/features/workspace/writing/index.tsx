@@ -71,7 +71,6 @@ import { ChapterContent } from "./components/chapter-content";
 import Modal from "@/components/modal";
 import { InfoModal } from "./components/info-modal";
 import {
-  formatChapterText,
   summarizeOutline,
   type AiRunState,
   type ConfirmDialogState,
@@ -249,7 +248,6 @@ export default function WritingPanel({ novelId }: Props) {
     saveState,
     flushSave,
     saveAsNewVersion,
-    saveFormattedText,
     handleUserEdit,
     editTextRef,
     editTargetRef,
@@ -274,22 +272,6 @@ export default function WritingPanel({ novelId }: Props) {
       showToast("已把当前修改保存为一个新的人工版本，原版本保留不变。", "success");
     }
   }, [saveAsNewVersion]);
-
-  /**
-   * 「格式化排版」：纯文本排版整理（首行缩进/段落空行，不调 AI、不改文字），整理后立即原地
-   * 保存到当前版本（含 AI 版本，不派生新版本、不触发确认式版本化与其他流程）。
-   */
-  const handleFormat = useCallback(async () => {
-    const formatted = formatChapterText(editText);
-    if (formatted === editText) {
-      showToast("正文排版已符合格式，无需调整。", "success");
-      return;
-    }
-    setEditText(formatted);
-    if (await saveFormattedText(formatted)) {
-      showToast("已完成排版格式化。", "success");
-    }
-  }, [editText, setEditText, saveFormattedText, showToast]);
 
   // 弹窗开关：新增章节 / 信息控制 仍用弹窗；评价与优化、版本树已改为右侧常驻内联面板（见下方）
   const [showAddModal, setShowAddModal] = useState(false);
@@ -858,8 +840,6 @@ export default function WritingPanel({ novelId }: Props) {
         }}
         hasVersionEdits={hasVersionEdits}
         onSaveAsNewVersion={() => void handleSaveAsNewVersion()}
-        canFormat={!!selectedVersion && !!editText.trim()}
-        onFormat={handleFormat}
         selectedVersion={selectedVersion}
         selectedIsFinal={selectedIsFinal}
         extractPending={extractPending}

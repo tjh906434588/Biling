@@ -133,37 +133,6 @@ export function useChapterEditor({
   );
 
   /**
-   * 「格式化排版」专用保存：格式化只整理排版、不改文字内容，因此允许直接原地写回当前版本
-   * （含 AI 版本，绕过确认式版本化——不派生新版本，也不触发「存为新版本」）。
-   * 保存后对齐落盘基线、清掉该版本暂存，避免后续被误判为未确认修改。
-   */
-  const saveFormattedText = useCallback(
-    async (formatted: string): Promise<boolean> => {
-      const target = editTargetRef.current;
-      if (!target) return false;
-      try {
-        const updated = await updateChapterVersion(novelId, target.chapterNo, target.versionId, {
-          content: formatted,
-          format_only: true,
-        });
-        setDetail((d) => {
-          if (!d || d.chapter_no !== target.chapterNo) return d;
-          const exists = d.versions.some((v) => v.id === updated.id);
-          return { ...d, versions: exists ? d.versions.map((v) => (v.id === updated.id ? updated : v)) : [...d.versions, updated] };
-        });
-        lastSavedTextRef.current = updated.content;
-        userEditedRef.current.delete(target.versionId);
-        setSaveState("saved");
-        return true;
-      } catch (e) {
-        showToast((e as Error).message, "error");
-        return false;
-      }
-    },
-    [novelId, setDetail, showToast],
-  );
-
-  /**
    * AI 流程（定稿/提取/评价/优化）前的落盘钩子：
    * - 无改动 → 直接返回当前文本；
    * - 人工版本 → 原地 PATCH 落盘，返回落库后文本；
@@ -314,7 +283,6 @@ export function useChapterEditor({
     saveState,
     flushSave,
     saveAsNewVersion,
-    saveFormattedText,
     editTextRef,
     editTargetRef,
     lastDerivedVersionIdRef,
