@@ -1486,7 +1486,16 @@ async def stream_agent_run(agent: str, payload: AgentRunRequest, db: Session = D
         # 重新生成=新增，照常咨询（方向由作者重新定夺）；
         # 仅批量自动重写（auto_rewrite，无人工确认环节）跳过咨询，避免打断批量自动化；
         # 作者忽略/超时则不注入（novelist 按既有方式续写）。
-        if agent == "novelist" and not payload.dry_run and not (payload.params or {}).get("auto_rewrite"):
+        # 扩写（expand）同样跳过：扩写不是从零写新章，而是直接基于作者选定的版本原地增补细节，
+        # 无需重新规划本章目标/叙事/执行，也不该弹逐维度确认——否则扩写被「选项修复重试 +
+        # 作者确认等待」拖到十几分钟，且前置阶段只转发思考文字，弹窗里看不到正文输出。
+        is_expand = (payload.params or {}).get("mode") == "expand" or (payload.params or {}).get("writing_mode") == "expand"
+        if (
+            agent == "novelist"
+            and not payload.dry_run
+            and not (payload.params or {}).get("auto_rewrite")
+            and not is_expand
+        ):
             try:
                 plan = await _propose_chapter_plan(
                     task_db, payload.novel_id, payload.params, task.id,
