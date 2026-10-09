@@ -206,6 +206,14 @@ class NovelistAgent(Agent[NovelChapter]):
                 "不得总结、重写成另一种故事、删去原稿信息或覆盖原稿。输出完整扩写后的正文。"
                 f"\n【待扩写原稿】\n{source_content}"
             )
+            expand_directive = str(params.get("expand_directive") or "").strip()
+            if expand_directive:
+                l3 += (
+                    "\n【作者扩写指令（最高优先级）】作者指定本次扩写的内容与方向，必须严格遵循："
+                    f"{expand_directive}\n"
+                    "（指令只圈定增补范围/方向，仍须遵守上方扩写模式约束：保留原稿事件顺序与事实、不覆盖原稿结论；"
+                    "指令未涉及的部分保持原稿不变，不要整章无差别增补。）"
+                )
 
         # 时间线提示：当前章节号 + 所处阶段（有蓝图可推导时），约束 AI 不提前引入后期设定
         if chapter_no > 0:

@@ -117,8 +117,9 @@ export async function handleManualRewrite(ctx: FlowCtx) {
 }
 
 /** 基于当前版本发起 AI 扩写：使用 novelist + mode=expand，后端统一落为 expanded 子版本，
- *  完成后自动切到新生成的扩写版本。扩写前先处理未保存编辑（人工版本落盘；AI 版本弹三选一确认）。 */
-export async function handleExpand(ctx: FlowCtx) {
+ *  完成后自动切到新生成的扩写版本。扩写前先处理未保存编辑（人工版本落盘；AI 版本弹三选一确认）。
+ *  @param directive 作者扩写意见（可选）：指定本次扩写的内容/方向，非空则作为最高优先级传给后端；留空=默认整章扩写。 */
+export async function handleExpand(ctx: FlowCtx, directive?: string) {
   const { detail: detailCtx, selectedVersion: selectedCtx, novelId, liveNovelRef, mountedRef } = ctx;
   // 扩写前先落盘未保存编辑 / 弹确认（存为新版本则派生人工子版本并切过去）；取消或失败则中止
   const savedText = await ctx.flushSave();
@@ -141,6 +142,7 @@ export async function handleExpand(ctx: FlowCtx) {
   ctx.setGenerating(true);
   ctx.setGenStartAt(Date.now());
   ctx.setGenRun({ thinking: "", output: "", running: true });
+  const expandDirective = (directive ?? "").trim();
   try {
     ctx.ensureReady();
     await runAgent("novelist", novelId, {
@@ -151,6 +153,7 @@ export async function handleExpand(ctx: FlowCtx) {
       parent_version_id: selectedVersion.id,
       source: "expand",
       title: selectedVersion.title ?? undefined,
+      ...(expandDirective ? { expand_directive: expandDirective } : {}),
     }, (ev) => {
       if (liveNovelRef.current !== novelId || !mountedRef.current) return;
       const d = ev.data as { delta?: string; message?: string };

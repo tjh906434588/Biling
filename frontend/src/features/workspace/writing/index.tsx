@@ -68,6 +68,7 @@ import {
 } from "./components/notifications";
 import { AddChapterDrawer } from "./components/add-chapter-drawer";
 import { ChapterContent } from "./components/chapter-content";
+import Modal from "@/components/modal";
 import { InfoModal } from "./components/info-modal";
 import {
   formatChapterText,
@@ -293,6 +294,9 @@ export default function WritingPanel({ novelId }: Props) {
   // 弹窗开关：新增章节 / 信息控制 仍用弹窗；评价与优化、版本树已改为右侧常驻内联面板（见下方）
   const [showAddModal, setShowAddModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
+  /** AI 扩写意见弹窗：打开状态 + 本次扩写意见草稿（留空=默认整章扩写） */
+  const [showExpandModal, setShowExpandModal] = useState(false);
+  const [expandDirective, setExpandDirective] = useState("");
   /** 评价栏占正文区域剩余宽度的比例：窄/中/宽三档预设，xl 起生效。 */
   const [reviewRatio, setReviewRatio] = useState(REVIEW_RATIO_DEFAULT);
 
@@ -847,8 +851,10 @@ export default function WritingPanel({ novelId }: Props) {
           setCreationMode("ai");
         }}
         onExpand={() => {
-          // 扩写前由 handleExpand 内部 flushSave 处理未保存编辑：人工版本落盘、AI 版本弹三选一确认
-          void handleExpand(flowCtx);
+          // 先弹「扩写意见」弹窗：可输入本次扩写的内容/方向（留空=默认整章扩写）；
+          // 确认后 handleExpand 内部 flushSave 处理未保存编辑（人工版本落盘、AI 版本弹三选一确认）
+          setExpandDirective("");
+          setShowExpandModal(true);
         }}
         hasVersionEdits={hasVersionEdits}
         onSaveAsNewVersion={() => void handleSaveAsNewVersion()}
@@ -978,6 +984,41 @@ export default function WritingPanel({ novelId }: Props) {
         onSubmit={() => setInfoView(null)}
         readonly
       />
+
+      {/* ── AI 扩写意见弹窗：可输入本次扩写的内容/方向（留空=默认整章扩写） ── */}
+      <Modal
+        open={showExpandModal}
+        title="AI 扩写"
+        subtitle="可输入本次扩写的内容或方向（如：扩写第2段的战斗细节 / 在两个段落之间插入一段心理描写）。留空则按默认整章扩写。"
+        onClose={() => setShowExpandModal(false)}
+        maxWidth="max-w-xl"
+        footer={
+          <>
+            <button type="button" className="btn btn-ghost" onClick={() => setShowExpandModal(false)}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={generating}
+              onClick={() => {
+                setShowExpandModal(false);
+                void handleExpand(flowCtx, expandDirective);
+              }}
+            >
+              开始扩写
+            </button>
+          </>
+        }
+      >
+        <textarea
+          value={expandDirective}
+          onChange={(e) => setExpandDirective(e.target.value)}
+          rows={6}
+          className="w-full resize-y rounded-md border border-zinc-300 bg-white p-2 text-sm text-zinc-900 outline-none focus:border-blue-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+          placeholder="例：在第2段与第3段之间插入主角的心理活动；或：把神域死寂氛围那段描写扩充得更具体（含感官细节）"
+        />
+      </Modal>
 
       {/* 评价与优化、版本树已改为右侧常驻内联面板，不再使用弹窗 */}
 
