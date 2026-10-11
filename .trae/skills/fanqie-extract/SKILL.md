@@ -1,6 +1,6 @@
 ---
 name: fanqie-extract
-description: 提取番茄小说前十章并统一归纳进题材族规则库，流程、落位、格式完全固定。当用户要求提取番茄中的某本小说、做题材族校准、或新增题材族样本时使用。不用于非番茄内容抓取或普通网页爬取。
+description: 提取番茄小说前三十章并统一归纳进题材族规则库，流程、落位、格式完全固定。当用户要求提取番茄中的某本小说、做题材族校准、或新增题材族样本时使用。不用于非番茄内容抓取或普通网页爬取。
 ---
 
 # 番茄小说提取与题材族校准
@@ -34,9 +34,9 @@ description: 提取番茄小说前十章并统一归纳进题材族规则库，�
 2. **验证/重建字库映射**：按 `extract_template.js` 抓 1 章测试解码：
    - 解码通顺 → 直接用 `tools/fanqie_crawler/font/mapping_ocr.json`；
    - 大量乱码 → 下载 woff2 到 `tools/fanqie_crawler/font/` → 从仓库根执行 `python tools/fanqie_crawler/build_mapping.py`（默认重建 `font/mapping_ocr.json`；如需指定路径，参数用**仓库根绝对路径**，勿用相对路径）。
-3. **抓前十章**：取前十章章节 id（详情页目录数组，或 `preItemId` 逐章回退，**全程字符串勿转 Number**），逐章抓取 → 落盘 `corpus/<书名>/raw_ch{n}.txt`（n=1..10）。
+3. **抓前三十章**：取前三十章章节 id（详情页目录数组，或 `preItemId` 逐章回退，**全程字符串勿转 Number**），逐章抓取 → 落盘 `corpus/<书名>/raw_ch{n}.txt`（n=1..30）。
 4. **解码**：从仓库根执行 `python tools/fanqie_crawler/batch_decode.py "<书名>"`（书名带引号，含特殊字符时不会出错；不带参数则处理全部）→ 生成 `dec_ch{n}.txt`（已有 dec 跳过）。
-5. **精读归纳**：逐章精读前十章，按 `rules/fanqie_rules.md` 的「逐本观察记录模板」写该书的观察，追加到该文件的「逐本观察记录」节。
+5. **精读归纳**：逐章精读前三十章，按 `rules/fanqie_rules.md` 的「逐本观察记录模板」写该书的观察，追加到该文件的「逐本观察记录」节。
 6. **归类与融合**：
    - **先读 `rules/fanqie_rules.md` 的「待校准的空白题材族」表，确认目标族当前的样本数与校准状态**，再决定分级。
    - 题材族 key 全表（以 `platform_rules.py` 的 GENRE_FAMILY_REGISTRY 为准）：`realistic_career`（现实事业）· `strong_flow`（玄幻/仙侠/奇幻/西幻/武侠/异能）· `urban_high_wu`（都市+超凡，background=alternate）· `mystery`（悬疑/推理/灵异）· `romance`（言情/甜宠）· `sci_fi`（科幻）· `historical`（历史）· `military`（军事）· `gaming`（游戏）· `fanfic`（同人）· `campus`（校园）。
